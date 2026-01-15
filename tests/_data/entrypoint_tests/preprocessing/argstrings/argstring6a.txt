@@ -1,0 +1,1 @@
+-i msas/msa06.faa -o preprocessing_out6a --syms ABCD --gap_truncation_thresh 0.4 --sequence_gap_thresh 0.2 --sequence_similarity_thresh 0.8 --reference msa06_sequence0 --reference_similarity_thresh 0.2 --position_gap_thresh 0.2

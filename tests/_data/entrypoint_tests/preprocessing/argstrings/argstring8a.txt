@@ -1,0 +1,1 @@
+-i msas/msa08.faa -o preprocessing_out8a --syms ABCD --gap_truncation_thresh 0.4 --sequence_gap_thresh 0.45 --sequence_similarity_thresh 0.8 --reference msa08_sequence0 --reference_similarity_thresh 0.0 --position_gap_thresh 0.2

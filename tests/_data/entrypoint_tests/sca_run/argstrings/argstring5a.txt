@@ -1,0 +1,1 @@
+-i preprocessing_out5a -o scarun_out5a --regularization 0.03 --background entrypoint_tests/sca_run/backgrounds/background5.json

@@ -1,4 +1,4 @@
-# soil-sca
+# mysca
 
 ## About
 

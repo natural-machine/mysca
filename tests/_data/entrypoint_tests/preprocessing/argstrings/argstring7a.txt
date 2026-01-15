@@ -1,0 +1,1 @@
+-i msas/msa07.faa -o preprocessing_out7a --syms ACDE --gap_truncation_thresh 0.4 --sequence_gap_thresh 0.6 --sequence_similarity_thresh 0.8 --reference msa07_sequence0 --reference_similarity_thresh 0.20 --position_gap_thresh 0.2

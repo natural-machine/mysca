@@ -13,7 +13,8 @@ from mysca.mappings import SymMap, DEFAULT_MAP
 def preprocess_msa(
         msa: NDArray[np.int_], 
         seqids: list[str], 
-        mapping: SymMap = DEFAULT_MAP,
+        mapping: SymMap = DEFAULT_MAP, 
+        *, 
         gap_truncation_thresh: float = 0.4,
         sequence_gap_thresh: float = 0.2, 
         reference_id: str = None,
@@ -48,16 +49,26 @@ def preprocess_msa(
     
     Returns:
         (MultSeqAlignment) processed MSA.
-        (NDArray[bool]) boolean MSA matrix after processing.
-        (list[str]) retained sequence IDs.
-        (NDArray[float]) sequence weights.
-        (NDArray[float]) gap frequency fi0.
-        (NDArray[int]) retained sequences.
-        (NDArray[int]) retained positions.
-        (dict): reference similarity results. If a reference ID is specified,
-            will contain keys reference_id, ref_idx, and ref_similarity.
-            
+        (dict[str, *]) dictionary mapping following keys to results:
+            msa_binary3d: (NDArray[bool]) boolean MSA matrix after processing.
+            retained_sequences: (NDArray[int]) retained sequences.
+            retained_positions: (NDArray[int]) retained positions.
+            retained_sequences_ids: (list[str]) retained sequence IDs.
+            sequence_weights: (NDArray[float]) sequence weights.
+            fi0_pretruncation: (NDArray[float]) gap frequency fi0.
+            reference_results: (dict): reference similarity results. If a 
+                reference ID is specified, contains keys reference_id, ref_idx, 
+                and ref_similarity.
     """
+
+    args = {
+        "gap_truncation_thresh": gap_truncation_thresh,
+        "sequence_gap_thresh": sequence_gap_thresh,
+        "reference_id": reference_id,
+        "reference_similarity_thresh": reference_similarity_thresh,
+        "sequence_similarity_thresh": sequence_similarity_thresh,
+        "position_gap_thresh": position_gap_thresh,
+    }
     
     if verbosity:
         print("Preprocessing with parameters:")
@@ -126,7 +137,7 @@ def preprocess_msa(
         if verbosity:
             print(f"Found reference seq {reference_id} at position {ref_idx}.")
         refrow = msa[ref_idx,:]
-        ref_similarity = np.sum(msa == refrow, axis = 1) / msa.shape[1]
+        ref_similarity = np.sum(msa == refrow, axis=1) / msa.shape[1]
         ref_results = {}
         ref_results["reference_id"] = reference_id
         ref_results["ref_idx"] = ref_idx
@@ -136,7 +147,7 @@ def preprocess_msa(
         if verbosity:
             print("Removing sequences too dissimilar from reference...")
         screen = ref_similarity >= reference_similarity_thresh
-        msa = msa[screen,:]  # keep rows with gap freq < reference_similarity_thresh
+        msa = msa[screen,:]  # keep rows with similarity >= reference_similarity_thresh
         xmsa = xmsa[screen,:,:]
         retained_sequences = retained_sequences[screen]
         seqids = np.array([seqids_orig[i] for i in retained_sequences])
@@ -181,7 +192,18 @@ def preprocess_msa(
     if verbosity:
         print(f"Effective sample size (sum of weights): {ws.sum()}")
 
-    return msa, xmsa.astype(int), seqids, ws, fi0, retained_sequences, retained_positions, ref_results
+    preprocessing_results = {
+        "msa_binary3d": xmsa.astype(int),
+        "retained_sequences": retained_sequences,
+        "retained_positions": retained_positions,
+        "retained_sequence_ids": seqids,
+        "sequence_weights": ws,
+        "fi0_pretruncation": fi0, 
+        "reference_results": ref_results,
+        "args": args,
+    }
+
+    return msa, preprocessing_results
 
 
 def compute_background_freqs(msa_obj, gapstr="-"):

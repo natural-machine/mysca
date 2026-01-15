@@ -202,7 +202,7 @@ def test_run_sca(
         fa_fpath, format="fasta", mapping=symmap,
     )
 
-    results = preprocess_msa(
+    msa, preprocessing_results = preprocess_msa(
         msa_orig, msa_ids_orig, 
         mapping=symmap, 
         gap_truncation_thresh=gap_truncation_thresh,
@@ -213,8 +213,8 @@ def test_run_sca(
         position_gap_thresh=position_gap_thresh,
         verbosity=2
     )
-
-    msa, xmsa, seqids, weights, fi0, ret_seqs, ret_pos, _ = results
+    xmsa = preprocessing_results["msa_binary3d"]
+    weights = preprocessing_results["sequence_weights"]
 
     sca_res = run_sca(
         xmsa, weights, background_map,

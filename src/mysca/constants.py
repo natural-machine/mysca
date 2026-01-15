@@ -1,6 +1,16 @@
-"""MSA Constants
+"""Constants
 
 """
+
+AA_STD20 = "ACDEFGHIKLMNPQRSTVWY"
+
+DEFAULT_BACKGROUND_FREQ = {
+    'A': 0.073, 'C': 0.025, 'D': 0.050, 'E': 0.061,
+    'F': 0.042, 'G': 0.072, 'H': 0.023, 'I': 0.053,
+    'K': 0.064, 'L': 0.089, 'M': 0.023, 'N': 0.043,
+    'P': 0.052, 'Q': 0.040, 'R': 0.052, 'S': 0.073,
+    'T': 0.056, 'V': 0.063, 'W': 0.013, 'Y': 0.033,
+}
 
 SECTOR_COLORS = [
     "#e377c2",
@@ -23,68 +33,4 @@ SECTOR_COLORS = [
     "#31a354",
     "#756bb1",
     "#636363",
-]
-
-VARIANT_GROUP_COLORS = [
-    "#1F3FB4",
-    "#DA6E0F",
-    "#128E12",
-    "#D21111",
-    "#FFAA00",
-    "#CC00FF",
-    "#BFFF00",
-    "#FF5F1F",
-    "#FFFF1D",
-    "#FF6EC7",
-    "#FF3131",
-]
-
-# VARIANT_GROUP_COLORS = [
-#     "#FF088C",
-#     "#39FF14",
-#     "#00FFFF",
-#     "#1F51FF",
-#     "#FFAA00",
-#     "#FFFF1D",
-#     "#FF6EC7",
-#     "#FF5F1F",
-#     "#BFFF00",
-#     "#CC00FF",
-#     "#FF3131",
-# ]
-
-AA_COLORS = {
-    'A': '#CCFF00',  # Alanine
-    'R': '#0000FF',  # Arginine
-    'N': '#CC00FF',  # Asparagine
-    'D': '#FF0000',  # Aspartic acid
-    'C': '#FFFF00',  # Cysteine
-    'Q': '#FF00FF',  # Glutamine
-    'E': '#FF6666',  # Glutamic acid
-    'G': '#FF9900',  # Glycine
-    'H': '#66FFCC',  # Histidine
-    'I': '#00FF00',  # Isoleucine
-    'L': '#33FF33',  # Leucine
-    'K': '#3366FF',  # Lysine
-    'M': '#00CC99',  # Methionine
-    'F': '#6600CC',  # Phenylalanine
-    'P': '#FF9933',  # Proline
-    'S': '#FF66CC',  # Serine
-    'T': '#33CCFF',  # Threonine
-    'W': '#3300FF',  # Tryptophan
-    'Y': '#FF3399',  # Tyrosine
-    'V': '#66FF00',  # Valine
-    '-': '#FFFFFF',  # Gap
-}
-
-
-PASTEL_COLORS = [
-    "#FFB3BA",
-    "#FFD8B1",
-    "#FFFFBA",
-    "#BAFFC9",
-    "#AECBFA",
-    "#E1BAFF",
-    "#FFB3DE",
-    "#B9FFF8",
 ]

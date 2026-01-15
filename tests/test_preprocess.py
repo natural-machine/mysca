@@ -217,7 +217,7 @@ def test_preprocessing(
     msa_orig_shape = msa_orig.shape
     msa_ids_orig_length = len(msa_ids_orig)
 
-    results = preprocess_msa(
+    msa, preprocessing_results = preprocess_msa(
         msa_orig, msa_ids_orig, 
         mapping=symmap, 
         gap_truncation_thresh=gap_truncation_thresh,
@@ -229,7 +229,10 @@ def test_preprocessing(
         verbosity=2
     )
 
-    _, _, seqids, weights, _, retained_sequences, retained_positions, _ = results
+    retained_sequences = preprocessing_results["retained_sequences"]
+    retained_positions = preprocessing_results["retained_positions"]
+    seqids = preprocessing_results["retained_sequence_ids"]
+    weights = preprocessing_results["sequence_weights"]
 
     errors = []
     # Check retained sequences
