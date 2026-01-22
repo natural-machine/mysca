@@ -1,21 +1,32 @@
 # mysca
 
-## About
+## Description
+
+<!-- TODO: Add description -->
 
 ## Setup
 
-Create a project environment as follows:
+
+Create either a global or local conda environment as follows:
 
 ```bash
+# Local project environment
 mamba env create -p ./env -f environment.yml
 conda activate env
 ```
 
-Next install the project source code.
-From the project directory, activate the environment and run:
+```bash
+# Global project environment (replace mysca-env if desired)
+mamba env create -n mysca-env -f environment.yml
+conda activate env
+```
+
+Next, install the project source code.
+<!-- TODO: Add instructions for direct pip install via github -->
+Clone the repository, and then from the project directory, activate the environment and run:
 
 ```bash
-conda activate env
+conda activate <env-name>
 python -m pip install -e '.[dev]'
 ```
 
@@ -25,29 +36,55 @@ Verify things have installed successfully by running:
 pytest tests
 ```
 
-We use a separate environment with an installation of [ClustalOmega](http://www.clustal.org/omega) in order to create Multiple Sequence Alginments (MSAs). Specifically, we download the [precompiled binary](http://www.clustal.org/omega/#Download), and link this to an empty conda environment as so:
+If plotting results with `pymol` is desired, this must be installed separately.
+We use the open source project, installable via conda:
 
 ```bash
-# Download the binary to a specific directory
-cd <software-directory>
-wget http://www.clustal.org/omega/clustalo-1.2.4-Ubuntu-x86_64
-# Initialize an empty conda environment
-conda create -n clustalo-env
-conda activate clustalo-env
-ln -s <software-directory>/clustalo-1.2.4-Ubuntu-x86_64 $CONDA_PREFIX/bin/clustalo
+conda install conda-forge::pymol-open-source
 ```
 
-## Directories
+## Usage
 
-## Links
+There are three entrypoints to this project: `sca-preprocess`, `sca-core`, and `sca-pymol`.
+See the demo directory for example usage.
 
-* [ClustalOmega](https://www.ebi.ac.uk/jdispatcher/msa/clustalo?stype=protein&outfmt=fa)
-* [pySCA and tutorial](https://ranganathanlab.gitlab.io/pySCA/)
-* [pySCA repo](https://github.com/ranganathanlab/pySCA)
-* [pySCA data](https://github.com/ranganathanlab/pySCA-data)
-* [pySCA S1A notebook](https://github.com/ranganathanlab/pySCA/blob/master/notebooks/SCA_S1A.ipynb)
-* [About Protein Family Models](https://www.ncbi.nlm.nih.gov/genome/annotation_prok/evidence/)
-* [nirB PFM](https://www.ncbi.nlm.nih.gov/genome/annotation_prok/evidence/TIGR02374/)
+### Preprocessing
+
+```bash
+sca-preprocess \
+    -i <input-msa> \
+    -o <preprocessing-outdir> \
+    --gap_truncation_thresh 0.4 \
+    --sequence_gap_thresh 0.2 \
+    --reference <reference-id> \
+    --reference_similarity_thresh 0.2 \
+    --sequence_similarity_thresh 0.8 \
+    --position_gap_thresh 0.2
+```
+
+### SCA Core
+
+```bash
+sca-core \
+    -i <preprocessing-outdir> \
+    -o <core-outdir> \
+    --regularization 0.03 \
+    --seed 42
+```
+
+### Pymol plots
+
+```bash
+sca-pymol \
+    -s <scaffold> \
+    -r <reference> \
+    --pdb_dir <pdb-directory> \
+    --modes <core-outdir>/statsectors_seq.npz \
+    --outdir <pymol-outdir> \
+    --features <features-fpath> \
+    --groups "-1" \
+    --animate 
+```
 
 ## References
 
