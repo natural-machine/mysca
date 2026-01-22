@@ -28,8 +28,9 @@ dependencies = [
 ]
 
 [project.scripts]
-mysca = "mysca.__main__:main"
-runsca = "mysca.__main__:run_sca"
+sca-preprocess = "mysca.__main__:run_preprocessing"
+sca-core = "mysca.__main__:run_sca"
+sca-pymol = "mysca.__main__:run_pymol"
 
 [project.optional-dependencies]
 dev = [

@@ -66,10 +66,10 @@ images/
 -------------------------------------------------------------------------------
 EXAMPLE USAGE:
 
-sca-run -i </path/to/preprocessed/data> -o </path/to/outdir> \
+sca-core -i </path/to/preprocessed/data> -o </path/to/outdir> \
     --regularization 0.03 --background </path/to/background.json>
 
-sca-run -i </path/to/preprocessed/data> -o </path/to/outdir> \
+sca-core -i </path/to/preprocessed/data> -o </path/to/outdir> \
     --regularization 0.03 --load_data </path/to/existing/data>
 
 """
@@ -229,7 +229,8 @@ def main(args):
 
     msa_obj_orig = AlignIO.read(
         os.path.join(indir, PREP_MSAORIG_FNAME), "fasta"
-    )    
+    )
+    NUM_POS_ORIG = msa_obj_orig.get_alignment_length()
     
     # Create subdirectories within the specified output directory.
     SCADIR = os.path.join(OUTDIR, "sca_results")
@@ -510,6 +511,28 @@ def main(args):
         **pdb_stat_sectors_data
     )
 
+    make_plots(
+        retained_positions, 
+        Di, 
+        NUM_POS_ORIG,
+        IMGDIR, 
+        DENDRO,
+        msa_binary3d,
+        Cij_raw,
+        Cij,
+        evals_shuff,
+        evals_sca,
+        cutoff,
+        N_BOOT,
+        kstar,
+        v_ica_normalized,
+        t_dists_info,
+        groups,
+        sig_evecs_sca,
+        sca_mat_imp,
+        sector_color_set,
+    )
+
     printv("Done!")
 
 
@@ -617,252 +640,270 @@ def shuffle_columns(m, rng=None):
     return m[idx, np.arange(c)]
 
 
-# def make_plots(
+def make_plots(
+        retained_positions, 
+        Di, 
+        NUM_POS_ORIG,
+        IMGDIR, 
+        DENDRO,
+        msa_binary3d,
+        Cij_raw,
+        Cij,
+        evals_shuff,
+        evals_sca,
+        cutoff,
+        N_BOOT,
+        kstar,
+        v_ica_normalized,
+        t_dists_info,
+        groups,
+        sig_evecs_sca,
+        sca_mat_imp,
+        sector_color_set,
+):
+    
+    # Plot conservation
+    fig, ax = plt.subplots(1, 1, figsize=(10,4))
+    ax.plot(
+        retained_positions, Di, "o",
+        color="Blue",
+        alpha=0.2
+    )
+    ax.set_xlim(0, NUM_POS_ORIG)
+    ax.set_xlabel(f"Position")
+    ax.set_ylabel("Relative Entropy $D_i$")
+    ax.set_title(f"Conservation")
+    plt.savefig(f"{IMGDIR}/top_conservation.png")
+    plt.close()
+
+    # Plot conservation as a bar graph
+    fig, ax = plt.subplots(1, 1, figsize=(10,4))
+    ax.bar(
+        retained_positions, Di,
+        color="Blue",
+        width=1.0,
+        align="center",
+    )
+    ax.set_xlim(0, NUM_POS_ORIG)
+    ax.set_xlabel(f"Position")
+    ax.set_ylabel("Relative Entropy $D_i$")
+    ax.set_title(f"Conservation")
+    plt.savefig(f"{IMGDIR}/positional_conservation.png")
+    plt.close()
+
+    # Plot conservation as a bar graph, without mapping to original positions
+    fig, ax = plt.subplots(1, 1, figsize=(10,4))
+    ax.bar(
+        np.arange(len(Di)), Di,
+        color="Blue",
+        width=1.0,
+        align="center",
+    )
+    ax.set_xlabel(f"Position")
+    ax.set_ylabel("Relative Entropy $D_i$")
+    ax.set_title(f"Conservation")
+    plt.savefig(f"{IMGDIR}/conservation.png")
+    plt.close()
+
+    # Plot sequence similarity
+    if DENDRO:
+        plot_sequence_similarity(
+            msa_binary3d, IMGDIR,
+        )
+
+
+    # Plot Covariance Matrix
+    if Cij_raw is not None:
+        fig, ax = plt.subplots(1, 1)
+        sc = ax.imshow(
+            Cij_raw, 
+            cmap="Blues", 
+            origin="lower",
+            interpolation="none",
+            vmax=None,
+        )
+        fig.colorbar(sc, label="Covariation")
+        ax.set_xlabel("(Retained) Position i")
+        ax.set_ylabel("(Retained) Position j")
+        ax.set_title("Covariance Matrix")
+        plt.savefig(f"{IMGDIR}/covariance_matrix.png")
+        plt.close()
+
+    # Plot SCA Matrix
+    fig, ax = plt.subplots(1, 1)
+    sc = ax.imshow(
+        Cij, 
+        cmap="Blues", 
+        origin="lower",
+        interpolation="none",
+        vmax=None,
+    )
+    fig.colorbar(sc, label="Covariation")
+    ax.set_xlabel("(Retained) Position i")
+    ax.set_ylabel("(Retained) Position j")
+    ax.set_title("SCA Matrix")
+    plt.savefig(f"{IMGDIR}/sca_matrix.png")
+    plt.close()
+
+
+    # Plot SCA matrix spectrum null vs data
+    fig, ax = plt.subplots(1, 1)
+    for e in evals_shuff:
+        ax.plot(
+            1 + np.arange(len(e)), e, ".",
+            markersize=3
+        )
+    ax.plot(
+        1 + np.arange(len(evals_sca)), evals_sca,
+        "k.",
+        markersize=2,
+        label="data",
+    )
+    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    ax.set_xlabel(f"$\\lambda$ index")
+    ax.set_ylabel(f"$\\lambda$")
+    ax.set_title(f"$\\tilde{{C}}_{{ij}}$ Spectrum (data vs null)")
+    plt.savefig(f"{IMGDIR}/sca_matrix_spectrum.png")
+    plt.close()
+
+
+    # Plot eigenvalue distribution null vs data
+    fig, ax = plt.subplots(1, 1)
+    # Histogram of data eigenvalues
+    counts, bins, patches = ax.hist(
+        evals_sca, bins=100, color="black", alpha=0.8, log=True, label="Data"
+    )
+    bin_centers = 0.5 * (bins[1:] + bins[:-1])
+    h, bin_edges = np.histogram(evals_shuff.flatten(), bins=bins)
+    ax.axvline(cutoff, 0, 1, linestyle="--", color="grey")
+    ax.plot(
+        bin_centers, h / N_BOOT, 
+        color="red", 
+        lw=1.5, 
+        label="Null"
+    )
+    ax.legend()
+    ax.set_xlabel(f"$\\lambda$")
+    ax.set_ylabel(f"Count")
+    ax.set_title(f"Spectral decomposition")
+    plt.savefig(f"{IMGDIR}/sca_matrix_spectrum_vs_null.png")
+    plt.close()
+
+
+    # Dendrogram of SCA matrix
+    if DENDRO:
+        plot_dendrogram(Cij, nclusters=kstar, imgdir=IMGDIR)
+
+
+    # Plot t-distributions
+    plot_t_distributions(v_ica_normalized, t_dists_info, IMGDIR)
+
+
+
+    # Plot data and groups in EV coords (2-dimensional)
+    EVIDXS_AND_GROUP_IDXS = [  # ((EVi, EVj), [group_indices])
+        ((0, 1), "all"),
+        ((1, 2), "all"),
+        ((2, 3), "all"),
+        ((3, 4), "all"),
+        ((4, 5), "all"),
+        ((5, 6), "all"),
+        ((0, 1), [0, 1, 2]),
+        ((1, 2), [0, 1, 2]),
+    ]
+    for evidxs, group_idxs in EVIDXS_AND_GROUP_IDXS:
+        plot_data_2d(
+            "ev", evidxs, group_idxs, groups, sig_evecs_sca, IMGDIR,
+        )
+    
+    # Plot data and groups in EV coords (3-dimensional)
+    EVIDXS_AND_GROUP_IDXS = [  # ((EVi, EVj, EVk), [group_indices])
+        ((0, 1, 2), "all"),
+        ((1, 2, 3), "all"),
+        ((0, 1, 2), [0, 1, 2]),
+        ((1, 2, 3), [0, 1, 2]),
+    ]
+    for evidxs, group_idxs in EVIDXS_AND_GROUP_IDXS:
+        plot_data_3d(
+            "ev", evidxs, group_idxs, groups, sig_evecs_sca, IMGDIR,
+        )
+    
+    # Plot data and groups in IC coords (2-dimensional)
+    ICIDXS_AND_GROUP_IDXS = [  # ((ICi, ICj), [group_indices])
+        ((0, 1), "all"),
+        ((1, 2), "all"),
+        ((2, 3), "all"),
+        ((3, 4), "all"),
+        ((4, 5), "all"),
+        ((5, 6), "all"),
+        ((0, 1), [0, 1, 2]),
+        ((1, 2), [0, 1, 2]),
+    ]
+    for icidxs, group_idxs in ICIDXS_AND_GROUP_IDXS:
+        plot_data_2d(
+            "ic", icidxs, group_idxs, groups, v_ica_normalized, IMGDIR,
+        )
+    
+    # Plot data and groups in IC coords (3-dimensional)
+    ICIDXS_AND_GROUP_IDXS = [  # ((ICi, ICj, ICk), [group_indices])
+        ((0, 1, 2), "all"),
+        ((1, 2, 3), "all"),
+        ((0, 1, 2), [0, 1, 2]),
+        ((1, 2, 3), [0, 1, 2]),
+    ]
+    for icidxs, group_idxs in ICIDXS_AND_GROUP_IDXS:
+        plot_data_3d(
+            "ic", icidxs, group_idxs, groups, v_ica_normalized, IMGDIR,
+        )
+
+    # Plot SCA Matrix "Important" subset
+    fig, ax = plt.subplots(1, 1)
+    sc = ax.imshow(
+        sca_mat_imp, 
+        cmap="Blues", 
+        origin="lower",
+        interpolation="none",
+        vmax=None,
+    )
+    fig.colorbar(sc, label="Covariation")
+    ax.set_xlabel("(Important) Position i")
+    ax.set_ylabel("(Important) Position j")
+    ax.set_title("SCA Matrix (Groups)")
+
+    # Add sector divisions if specified
+    group_lengths = [len(g) for g in groups]
+    if sector_color_set and np.sum(group_lengths) > 0:
+        group_colors = np.concatenate([
+            len(g) * [colors.to_rgb(sector_color_set[i])] 
+            for i, g in enumerate(groups) if len(g) > 0
+        ], axis=0)       
         
-# ):
-    
-#     # Plot conservation
-#     fig, ax = plt.subplots(1, 1, figsize=(10,4))
-#     ax.plot(
-#         retained_positions, Di, "o",
-#         color="Blue",
-#         alpha=0.2
-#     )
-#     ax.set_xlim(0, NUM_POS_ORIG)
-#     ax.set_xlabel(f"Position")
-#     ax.set_ylabel("Relative Entropy $D_i$")
-#     ax.set_title(f"Conservation")
-#     plt.savefig(f"{IMGDIR}/top_conservation.png")
-#     plt.close()
+        divider = make_axes_locatable(ax)
+        # Top rug
+        ax_top = divider.append_axes("top", size="2%", pad=0.0, sharex=ax)
+        ax_top.imshow(
+            group_colors[None,:,:], 
+            aspect="auto", 
+            extent=(0, len(group_colors), 0, 1)
+        )
+        ax_top.set_xticks([])
+        ax_top.set_yticks([])
+        ax_top.set_title(ax.get_title())
+        ax.set_title("")
+        # Right rug
+        ax_right = divider.append_axes("right", size="2%", pad=0.0, sharey=ax)
+        ax_right.imshow(
+            np.flip(group_colors, axis=0)[:,None,:], 
+            aspect="auto", 
+            extent=(0, 1, 0, len(group_colors))
+        )
+        ax_right.set_xticks([])        
+        ax_right.set_yticks([])
 
-#     # Plot conservation as a bar graph
-#     fig, ax = plt.subplots(1, 1, figsize=(10,4))
-#     ax.bar(
-#         retained_positions, Di,
-#         color="Blue",
-#         width=1.0,
-#         align="center",
-#     )
-#     ax.set_xlim(0, NUM_POS_ORIG)
-#     ax.set_xlabel(f"Position")
-#     ax.set_ylabel("Relative Entropy $D_i$")
-#     ax.set_title(f"Conservation")
-#     plt.savefig(f"{IMGDIR}/positional_conservation.png")
-#     plt.close()
+    plt.savefig(f"{IMGDIR}/sca_matrix_important_subset.png")
+    plt.close()
 
-#     # Plot conservation as a bar graph, without mapping to original positions
-#     fig, ax = plt.subplots(1, 1, figsize=(10,4))
-#     ax.bar(
-#         np.arange(len(Di)), Di,
-#         color="Blue",
-#         width=1.0,
-#         align="center",
-#     )
-#     ax.set_xlabel(f"Position")
-#     ax.set_ylabel("Relative Entropy $D_i$")
-#     ax.set_title(f"Conservation")
-#     plt.savefig(f"{IMGDIR}/conservation.png")
-#     plt.close()
-
-#     # Plot sequence similarity
-#     if DENDRO:
-#         plot_sequence_similarity(
-#             msa_binary3d, IMGDIR,
-#         )
-
-
-#     # Plot Covariance Matrix
-#     if Cij_raw is not None:
-#         fig, ax = plt.subplots(1, 1)
-#         sc = ax.imshow(
-#             Cij_raw, 
-#             cmap="Blues", 
-#             origin="lower",
-#             interpolation="none",
-#             vmax=None,
-#         )
-#         fig.colorbar(sc, label="Covariation")
-#         ax.set_xlabel("(Retained) Position i")
-#         ax.set_ylabel("(Retained) Position j")
-#         ax.set_title("Covariance Matrix")
-#         plt.savefig(f"{IMGDIR}/covariance_matrix.png")
-#         plt.close()
-
-#     # Plot SCA Matrix
-#     fig, ax = plt.subplots(1, 1)
-#     sc = ax.imshow(
-#         Cij, 
-#         cmap="Blues", 
-#         origin="lower",
-#         interpolation="none",
-#         vmax=None,
-#     )
-#     fig.colorbar(sc, label="Covariation")
-#     ax.set_xlabel("(Retained) Position i")
-#     ax.set_ylabel("(Retained) Position j")
-#     ax.set_title("SCA Matrix")
-#     plt.savefig(f"{IMGDIR}/sca_matrix.png")
-#     plt.close()
-
-
-#     # Plot SCA matrix spectrum null vs data
-#     fig, ax = plt.subplots(1, 1)
-#     for e in evals_shuff:
-#         ax.plot(
-#             1 + np.arange(len(e)), e, ".",
-#             markersize=3
-#         )
-#     ax.plot(
-#         1 + np.arange(len(evals_sca)), evals_sca,
-#         "k.",
-#         markersize=2,
-#         label="data",
-#     )
-#     ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-#     ax.set_xlabel(f"$\\lambda$ index")
-#     ax.set_ylabel(f"$\\lambda$")
-#     ax.set_title(f"$\\tilde{{C}}_{{ij}}$ Spectrum (data vs null)")
-#     plt.savefig(f"{IMGDIR}/sca_matrix_spectrum.png")
-#     plt.close()
-
-
-#     # Plot eigenvalue distribution null vs data
-#     fig, ax = plt.subplots(1, 1)
-#     # Histogram of data eigenvalues
-#     counts, bins, patches = ax.hist(
-#         evals_sca, bins=100, color="black", alpha=0.8, log=True, label="Data"
-#     )
-#     bin_centers = 0.5 * (bins[1:] + bins[:-1])
-#     h, bin_edges = np.histogram(evals_shuff.flatten(), bins=bins)
-#     ax.axvline(cutoff, 0, 1, linestyle="--", color="grey")
-#     ax.plot(
-#         bin_centers, h / N_BOOT, 
-#         color="red", 
-#         lw=1.5, 
-#         label="Null"
-#     )
-#     ax.legend()
-#     ax.set_xlabel(f"$\\lambda$")
-#     ax.set_ylabel(f"Count")
-#     ax.set_title(f"Spectral decomposition")
-#     plt.savefig(f"{IMGDIR}/sca_matrix_spectrum_vs_null.png")
-#     plt.close()
-
-
-#     # Dendrogram of SCA matrix
-#     if DENDRO:
-#         plot_dendrogram(Cij, nclusters=kstar, imgdir=IMGDIR)
-
-
-#     # Plot t-distributions
-#     plot_t_distributions(v_ica_normalized, t_dists_info, IMGDIR)
-
-
-
-#     # Plot data and groups in EV coords (2-dimensional)
-#     EVIDXS_AND_GROUP_IDXS = [  # ((EVi, EVj), [group_indices])
-#         ((0, 1), "all"),
-#         ((1, 2), "all"),
-#         ((2, 3), "all"),
-#         ((3, 4), "all"),
-#         ((4, 5), "all"),
-#         ((5, 6), "all"),
-#         ((0, 1), [0, 1, 2]),
-#         ((1, 2), [0, 1, 2]),
-#     ]
-#     for evidxs, group_idxs in EVIDXS_AND_GROUP_IDXS:
-#         plot_data_2d(
-#             "ev", evidxs, group_idxs, groups, sig_evecs_sca, IMGDIR,
-#         )
-    
-#     # Plot data and groups in EV coords (3-dimensional)
-#     EVIDXS_AND_GROUP_IDXS = [  # ((EVi, EVj, EVk), [group_indices])
-#         ((0, 1, 2), "all"),
-#         ((1, 2, 3), "all"),
-#         ((0, 1, 2), [0, 1, 2]),
-#         ((1, 2, 3), [0, 1, 2]),
-#     ]
-#     for evidxs, group_idxs in EVIDXS_AND_GROUP_IDXS:
-#         plot_data_3d(
-#             "ev", evidxs, group_idxs, groups, sig_evecs_sca, IMGDIR,
-#         )
-    
-#     # Plot data and groups in IC coords (2-dimensional)
-#     ICIDXS_AND_GROUP_IDXS = [  # ((ICi, ICj), [group_indices])
-#         ((0, 1), "all"),
-#         ((1, 2), "all"),
-#         ((2, 3), "all"),
-#         ((3, 4), "all"),
-#         ((4, 5), "all"),
-#         ((5, 6), "all"),
-#         ((0, 1), [0, 1, 2]),
-#         ((1, 2), [0, 1, 2]),
-#     ]
-#     for icidxs, group_idxs in ICIDXS_AND_GROUP_IDXS:
-#         plot_data_2d(
-#             "ic", icidxs, group_idxs, groups, v_ica_normalized, IMGDIR,
-#         )
-    
-#     # Plot data and groups in IC coords (3-dimensional)
-#     ICIDXS_AND_GROUP_IDXS = [  # ((ICi, ICj, ICk), [group_indices])
-#         ((0, 1, 2), "all"),
-#         ((1, 2, 3), "all"),
-#         ((0, 1, 2), [0, 1, 2]),
-#         ((1, 2, 3), [0, 1, 2]),
-#     ]
-#     for icidxs, group_idxs in ICIDXS_AND_GROUP_IDXS:
-#         plot_data_3d(
-#             "ic", icidxs, group_idxs, groups, v_ica_normalized, IMGDIR,
-#         )
-
-#     # Plot SCA Matrix "Important" subset
-#     fig, ax = plt.subplots(1, 1)
-#     sc = ax.imshow(
-#         sca_mat_imp, 
-#         cmap="Blues", 
-#         origin="lower",
-#         interpolation="none",
-#         vmax=None,
-#     )
-#     fig.colorbar(sc, label="Covariation")
-#     ax.set_xlabel("(Important) Position i")
-#     ax.set_ylabel("(Important) Position j")
-#     ax.set_title("SCA Matrix (Groups)")
-
-#     # Add sector divisions if specified
-#     group_lengths = [len(g) for g in groups]
-#     if sector_color_set and np.sum(group_lengths) > 0:
-#         group_colors = np.concatenate([
-#             len(g) * [colors.to_rgb(sector_color_set[i])] 
-#             for i, g in enumerate(groups) if len(g) > 0
-#         ], axis=0)       
-        
-#         divider = make_axes_locatable(ax)
-#         # Top rug
-#         ax_top = divider.append_axes("top", size="2%", pad=0.0, sharex=ax)
-#         ax_top.imshow(
-#             group_colors[None,:,:], 
-#             aspect="auto", 
-#             extent=(0, len(group_colors), 0, 1)
-#         )
-#         ax_top.set_xticks([])
-#         ax_top.set_yticks([])
-#         ax_top.set_title(ax.get_title())
-#         ax.set_title("")
-#         # Right rug
-#         ax_right = divider.append_axes("right", size="2%", pad=0.0, sharey=ax)
-#         ax_right.imshow(
-#             np.flip(group_colors, axis=0)[:,None,:], 
-#             aspect="auto", 
-#             extent=(0, 1, 0, len(group_colors))
-#         )
-#         ax_right.set_xticks([])        
-#         ax_right.set_yticks([])
-
-#     plt.savefig(f"{IMGDIR}/sca_matrix_important_subset.png")
-#     plt.close()
-
-#     return
+    return
     
 
 if __name__ == "__main__":

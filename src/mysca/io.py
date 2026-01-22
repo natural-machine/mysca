@@ -41,6 +41,10 @@ def load_msa(
         SymMap: Mapping from amino acids to index used to compute MSA matrix. 
     """
     msa_obj = AlignIO.read(fpath, format)
+    
+    # Convert all symbols to uppercase
+    for entry in msa_obj:
+        entry.seq = Seq(str(entry.seq).upper())
 
     GAPSYM = "-"
     if mapping is None:
