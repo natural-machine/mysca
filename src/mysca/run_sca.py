@@ -291,8 +291,11 @@ def main(args):
         )        
         del sca_results  # relieve memory
     else:
-        Di = np.load(os.path.join(LOAD_DATA, "conservation.npy"))
-        Cij = np.load(os.path.join(LOAD_DATA, "sca_matrix.npy"))
+        existing_results = np.load(os.path.join(LOAD_DATA, OUTPUT_RESULTS_FNAME))
+        # Di = np.load(os.path.join(LOAD_DATA, "conservation.npy"))
+        # Cij = np.load(os.path.join(LOAD_DATA, "sca_matrix.npy"))
+        Di = existing_results["conservation"]
+        Cij = existing_results["sca_matrix"]
         Cij_raw = None
 
     # Eigendecomposition of SCA matrix
