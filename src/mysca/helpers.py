@@ -2,6 +2,8 @@
 
 """
 
+import math
+import tqdm
 import numpy as np
 from numpy.typing import NDArray
 from Bio.Align import MultipleSeqAlignment
@@ -251,3 +253,61 @@ def get_group_rawseq_scores_by_entry(
                 np.array(group_rawseq_scores[i][groupidx])
             )
     return group_rawseq_scores_by_entry
+
+
+def iterblocks(x, block_size, use_pbar=False):
+    """
+    Iterate over the first axis of an array in contiguous blocks.
+
+    This generator yields slices of `x` along its first dimension, along with
+    the corresponding start and stop indices. It is useful for blockwise
+    computation on large arrays where operating on the full array at once
+    would be memory- or compute-intensive.
+
+    Parameters
+    ----------
+    x : array-like
+        Input array to iterate over. Blocks are taken along the first axis.
+    block_size : int
+        Number of rows to include in each block.
+
+    Yields
+    ------
+    start : int
+        Starting index (inclusive) of the block along the first axis.
+    stop : int
+        Ending index (exclusive) of the block along the first axis.
+    block : array-like
+        View of `x[start:stop]`.
+
+    Notes
+    -----
+    The final block may contain fewer than `block_size` rows if the size of
+    the first dimension is not divisible by `block_size`.
+
+    Examples
+    --------
+    >>> for start, stop, block in iterblocks(x, 1000):
+    ...     result[start:stop] = process(block)
+
+    This pattern is useful for blockwise matrix operations, such as computing
+    similarities between a full matrix and subsets of its rows.
+    """
+    n = x.shape[0]
+    starts = range(0, n, block_size)
+    if use_pbar:
+        starts = tqdm.tqdm(starts, total=math.ceil(n / block_size))
+    for start in starts:
+        stop = min(start + block_size, n)
+        yield start, stop, x[start:stop]
+
+
+def iterblockpairs(x, block_size):
+    n = x.shape[0]
+    for i_start in range(0, n, block_size):
+        i_stop = min(i_start + block_size, n)
+        block_i = x[i_start:i_stop]
+        for j_start in range(0, n, block_size):
+            j_stop = min(j_start + block_size, n)
+            block_j = x[j_start:j_stop]
+            yield (i_start, i_stop, block_i), (j_start, j_stop, block_j)

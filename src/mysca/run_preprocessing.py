@@ -158,6 +158,8 @@ def main(args):
         sym_map = SymMap(aa_syms=syms, gapsym=gapsym)
 
     # Load MSA
+    if verbosity:
+        print(f"Loading MSA from: {msa_fpath}")
     msa_obj_orig, msa_orig, seqids_orig, sym_map = load_msa(
         msa_fpath, format="fasta", 
         mapping=sym_map,

@@ -8,6 +8,7 @@ from collections import Counter
 import tqdm
 
 from mysca.mappings import SymMap, DEFAULT_MAP
+from mysca.helpers import iterblocks
 
 
 def preprocess_msa(
@@ -103,6 +104,7 @@ def preprocess_msa(
 
     # Constuct the boolean MSA matrix
     xmsa = np.eye(NUM_SYMS, dtype=bool)[msa][:,:,:-1]
+    xmsa = xmsa.astype(np.int16)
 
     #~~~ Remove columns (i.e. positions) with too many gaps
     if verbosity:
@@ -161,11 +163,35 @@ def preprocess_msa(
     #~~~ Compute sequence weights
     if verbosity:
         print("Computing sequence weights (round 1)...")
-    ws = np.nan * np.ones(msa.shape[0])
-    for i, s in tqdm.tqdm(enumerate(msa), total=len(msa), disable=not use_pbar):
-        similarities = np.sum(s == msa, axis=1) / msa.shape[1]
-        screen = similarities >= sequence_similarity_thresh
-        ws[i] = 1 / screen.sum()
+    # ws = np.nan * np.ones(msa.shape[0])
+    # for i, s in tqdm.tqdm(enumerate(msa), total=len(msa), disable=not use_pbar):
+    #     similarities = np.sum(s == msa, axis=1) / msa.shape[1]
+    #     screen = similarities >= sequence_similarity_thresh
+    #     ws[i] = 1 / screen.sum()
+    
+    weight_comp_version = "v3"
+    block_size = 100
+
+    if weight_comp_version == "v1":
+        ws = compute_weights(
+            version="v1", 
+            msa=msa, use_pbar=use_pbar, 
+            seqsim_thresh=sequence_similarity_thresh
+        )
+    elif weight_comp_version == "v2":
+        ws = compute_weights(
+            version="v2",
+            xmsa=xmsa, use_pbar=use_pbar, 
+            seqsim_thresh=sequence_similarity_thresh,
+            block_size=block_size
+        )
+    elif weight_comp_version == "v3":
+        ws = compute_weights(
+            version="v3",
+            msa=msa, use_pbar=use_pbar, 
+            seqsim_thresh=sequence_similarity_thresh,
+            block_size=block_size
+        )
 
     #~~~ Remove positions with too many (weighted) gaps
     if verbosity:
@@ -183,11 +209,30 @@ def preprocess_msa(
     #~~~ Re-compute sequence weights
     if verbosity:
         print("Computing sequence weights (round 2)...")
-    ws = np.nan * np.ones(msa.shape[0])
-    for i, s in tqdm.tqdm(enumerate(msa), total=len(msa), disable=not use_pbar):
-        similarities = np.sum(s == msa, axis=1) / msa.shape[1]
-        screen = similarities >= sequence_similarity_thresh
-        ws[i] = 1 / screen.sum()
+    # ws = np.nan * np.ones(msa.shape[0])
+    # for i, s in tqdm.tqdm(enumerate(msa), total=len(msa), disable=not use_pbar):
+    #     similarities = np.sum(s == msa, axis=1) / msa.shape[1]
+    #     screen = similarities >= sequence_similarity_thresh
+    #     ws[i] = 1 / screen.sum()
+    if weight_comp_version == "v1":
+        ws = compute_weights(
+            version="v1", 
+            msa=msa, use_pbar=use_pbar, seqsim_thresh=sequence_similarity_thresh
+        )
+    elif weight_comp_version == "v2":
+        ws = compute_weights(
+            version="v2",
+            xmsa=xmsa, use_pbar=use_pbar, 
+            seqsim_thresh=sequence_similarity_thresh,
+            block_size=block_size
+        )
+    elif weight_comp_version == "v3":
+        ws = compute_weights(
+            version="v3",
+            msa=msa, use_pbar=use_pbar, 
+            seqsim_thresh=sequence_similarity_thresh,
+            block_size=block_size
+        )
     
     if verbosity:
         print(f"Effective sample size (sum of weights): {ws.sum()}")
@@ -222,3 +267,56 @@ def compute_background_freqs(msa_obj, gapstr="-"):
     for k in background_freqs:
         background_freqs[k] /= total
     return background_freqs
+
+
+def compute_weights(version="v1", **kwargs):
+    if version == "v1":
+        return _compute_weights_v1(**kwargs)
+    if version == "v2":
+        return _compute_weights_v2(**kwargs)
+    if version == "v3":
+        return _compute_weights_v3(**kwargs)
+    else:
+        raise RuntimeError(f"Weight computation {version} not found")
+
+
+def _compute_weights_v1(msa, seqsim_thresh, use_pbar):
+    nseqs = msa.shape[0]
+    npos = msa.shape[1]
+    ws = np.nan * np.ones(nseqs)
+    for i, s in tqdm.tqdm(enumerate(msa), total=nseqs, disable=not use_pbar):
+        similarities = np.sum(s == msa, axis=1) / npos
+        screen = similarities >= seqsim_thresh
+        ws[i] = 1 / screen.sum()
+    return ws
+
+
+def _compute_weights_v2(xmsa, seqsim_thresh, use_pbar, block_size=1000):
+    assert isinstance(xmsa[0,0,0], np.uint16), \
+        f"Expected xmsa to have np.uint16 data. Got {xmsa.dtype}"
+    nseqs = xmsa.shape[0]
+    npos = xmsa.shape[1]
+    nalph = xmsa.shape[2]
+    xmsa = xmsa.reshape([nseqs, -1])
+    ws = np.nan * np.ones(nseqs)
+    for idx1_start, idx1_stop, block1 in iterblocks(xmsa, block_size, use_pbar=use_pbar):
+        block_sims = (xmsa @ block1.T / npos).T
+        assert block_sims.shape == (len(block1), nseqs), f"Expected {(len(block1), nseqs)}. Got {block_sims.shape}"
+        block_screen = block_sims >= seqsim_thresh
+        ws[idx1_start:idx1_stop] = 1 / block_screen.sum(axis=1)
+    return ws
+
+
+def _compute_weights_v3(msa, seqsim_thresh, use_pbar, block_size=1000):
+    assert isinstance(msa[0,0], (np.int_)), \
+        f"Expected msa to have int data. Got {msa.dtype}"
+    nseqs = msa.shape[0]
+    npos = msa.shape[1]
+    ws = np.nan * np.ones(nseqs)
+    for idx1_start, idx1_stop, block1 in iterblocks(msa, block_size, use_pbar=use_pbar):
+        # Compute pairwise similarity between sequences in block and all sequences in msa
+        block_sims = (block1[:, None, :] == msa[None, :, :]).sum(axis=2) / npos
+        assert block_sims.shape == (len(block1), nseqs), f"Expected {(len(block1), nseqs)}. Got {block_sims.shape}"
+        block_screen = block_sims >= seqsim_thresh
+        ws[idx1_start:idx1_stop] = 1 / block_screen.sum(axis=1)
+    return ws
