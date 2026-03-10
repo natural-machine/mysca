@@ -336,7 +336,7 @@ def main(args):
             evals_shuff[iteridx] = np.flip(evals)
         np.save(evals_shuff_fpath, evals_shuff)
     elif LOAD_DATA:
-        evals_shuff_fpath_toload = os.path.join(LOAD_DATA, EVALS_SHUFF_SAVEAS)
+        evals_shuff_fpath_toload = os.path.join(LOAD_DATA, "sca_results", EVALS_SHUFF_SAVEAS)
         printv("Skipping bootstrap. Loading existing null evals at: {}".format(
                 evals_shuff_fpath_toload
         ))
