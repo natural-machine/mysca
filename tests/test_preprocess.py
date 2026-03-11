@@ -28,6 +28,7 @@ TEST_MSA3 = f"{DATDIR}/msas/msa03.faa"
 TEST_MSA4 = f"{DATDIR}/msas/msa04.faa"
 TEST_MSA5 = f"{DATDIR}/msas/msa05.faa"
 TEST_MSA6 = f"{DATDIR}/msas/msa06.faa"
+TEST_MSA7 = f"{DATDIR}/msas/msa07.faa"
 
         
 ###############################################################################
@@ -195,7 +196,25 @@ TEST_MSA6 = f"{DATDIR}/msas/msa06.faa"
         [f"msa06_sequence{i}" for i in np.arange(20)],
     ],
 
+    # Test MSA: msa07.faa  # msa07b in excel sheet
+    [
+        TEST_MSA7, SYMMAP2,
+        0.4, 0.6, 
+        "msa07_sequence0", 0.2, 
+        0.4, 0.2, 
+        np.arange(20),
+        np.array([0,1,2]), 
+        np.array([
+            0.125,0.125,0.125,0.125,0.25,0.25,0.25,0.25,0.5,
+            1/3, 1/3,1, 1/3,1,0.25, 1/3,
+            0.125,0.125,0.125,0.125
+        ]),
+        [f"msa07_sequence{i}" for i in np.arange(20)],
+    ],
+
 ])
+@pytest.mark.parametrize("weight_computation_version", ["v3", "v4", "v5"])
+@pytest.mark.parametrize("block_size", [1, 2, 20])
 def test_preprocessing(
     fa_fpath, symmap, 
     gap_truncation_thresh,
@@ -208,6 +227,8 @@ def test_preprocessing(
     retained_positions_exp,
     weights_exp,
     seqids_exp,
+    weight_computation_version,
+    block_size,
 ):
     
     msa_obj, msa_orig, msa_ids_orig, _ = load_msa(
@@ -226,7 +247,9 @@ def test_preprocessing(
         reference_similarity_thresh=reference_similarity_thresh,
         sequence_similarity_thresh=sequence_similarity_thresh,
         position_gap_thresh=position_gap_thresh,
-        verbosity=2
+        verbosity=2,
+        weight_computation_version=weight_computation_version,
+        block_size=block_size,
     )
 
     retained_sequences = preprocessing_results["retained_sequences"]
