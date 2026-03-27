@@ -174,7 +174,8 @@ def preprocess_msa(
 
     #~~~ Compute sequence weights
     if verbosity:
-        print("Computing sequence weights (round 1)...")
+        print(f"Computing weights with version: {weight_computation_version}")
+        print(f"Computing sequence weights (round 1)...")
 
     ws = compute_weights(
         version=weight_computation_version,
@@ -521,10 +522,11 @@ def _compute_weights_torch(**kwargs):
             counts += (matches >= thresh).sum(dim=1)
         neigh[i0:i1] = counts[:]
 
-    neigh = neigh.cpu().numpy().astype(float)   
-    neigh[neigh == 0] = 1.0
+    neigh_cpu = neigh.cpu().numpy().astype(float)
+    del neigh
+    neigh_cpu[neigh_cpu == 0] = 1.0
 
-    ws = 1.0 / neigh
+    ws = 1.0 / neigh_cpu
     return ws
 
 
