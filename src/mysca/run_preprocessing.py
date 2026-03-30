@@ -62,20 +62,18 @@ import argparse
 import os, sys
 import numpy as np
 import tqdm as tqdm
-import json
-from scipy import sparse
-from Bio import AlignIO
 
 from mysca.io import load_msa
 from mysca.mappings import SymMap
 from mysca.constants import AA_STD20
 from mysca.preprocess import preprocess_msa
-
-# Quick reference for saved files
-OUTPUT_RESULTS_FNAME = "preprocessing_results.npz"
-OUTPUT_SYMMAP_FNAME = "sym2int.json"
-OUTPUT_ARGS_FNAME = "preprocessing_args.json"
-OUTPUT_MSAORIG_FNAME = "msa_orig.fasta-aln"
+from mysca.results import (
+    PreprocessingResults,
+    PREPROCESSING_RESULTS_FNAME as OUTPUT_RESULTS_FNAME,
+    PREPROCESSING_SYMMAP_FNAME as OUTPUT_SYMMAP_FNAME,
+    PREPROCESSING_ARGS_FNAME as OUTPUT_ARGS_FNAME,
+    PREPROCESSING_MSAORIG_FNAME as OUTPUT_MSAORIG_FNAME,
+)
 
 
 def parse_args(args):
@@ -194,62 +192,18 @@ def main(args):
         block_size=block_size,
     )
 
-    msa_binary3d = preprocessing_results["msa_binary3d"]
-    retained_sequences = preprocessing_results["retained_sequences"]
-    retained_positions = preprocessing_results["retained_positions"]
-    seqids = preprocessing_results["retained_sequence_ids"]
-    weights = preprocessing_results["sequence_weights"]
-    fi0_pretrunc = preprocessing_results["fi0_pretruncation"]
-    preprocessing_args = preprocessing_results["args"]
-
-    # Save a single, compressed version of the numpy result files
-    np.savez(
-        os.path.join(outdir, OUTPUT_RESULTS_FNAME),
-        msa=msa,
-        retained_sequences=retained_sequences,
-        retained_positions=retained_positions,
-        retained_sequence_ids=seqids,
-        sequence_weights=weights,
-        fi0_pretruncation=fi0_pretrunc,
+    results = PreprocessingResults.from_preprocess_output(
+        msa, preprocessing_results,
+        sym_map=sym_map,
+        msa_obj_orig=msa_obj_orig,
     )
-
-    # Save the command line arguments for reproducibility
-    with open(os.path.join(outdir, OUTPUT_ARGS_FNAME), "w") as f:
-        json.dump(preprocessing_args, f)
-
-    # Save symbolic mapping (amino acid to integer)
-    with open(os.path.join(outdir, OUTPUT_SYMMAP_FNAME), "w") as f:
-        json.dump(sym_map.sym2int, f)
-
-    AlignIO.write(
-        msa_obj_orig, 
-        os.path.join(outdir, OUTPUT_MSAORIG_FNAME), 
-        format="fasta"
-    )
-
-    # Save 3d MSA (M x L x 20) in sparse 2d format (M x 20L)
-    sparse.save_npz(
-        f"{outdir}/msa_binary2d_sp.npz", 
-        sparse.csr_matrix(msa_binary3d.reshape([msa_binary3d.shape[0], -1]))
-    )
+    results.save(outdir)
 
     if verbosity:
         print(f"Output saved to {outdir}")
         print(f"Preprocessing complete!")
 
-    # # Save processed results in the output directory as individual files
-    # np.save(f"{outdir}/retained_sequences.npy", retained_sequences)
-    # np.save(f"{outdir}/retained_positions.npy", retained_positions)
-    # np.save(f"{outdir}/retained_sequence_ids.npy", seqids)
-    # np.save(f"{outdir}/fi0_pretrunc.npy", fi0_pretrunc)
-    # np.save(f"{outdir}/sequence_weights.npy", weights)
-    # np.save(f"{outdir}/msa.npy", msa)
 
-    # Save miscellaneous info
-    # np.savetxt(f"{outdir}/position_gap_thresh.txt", [position_gap_thresh])
-    # np.savetxt(f"{outdir}/npos_original.txt", [num_pos_orig], fmt="%d")
-    
-    
 if __name__ == "__main__":
     args = parse_args(sys.argv[1:])
     main(args)

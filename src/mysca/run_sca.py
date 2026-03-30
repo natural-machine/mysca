@@ -85,16 +85,20 @@ from matplotlib import colors
 from mpl_toolkits.mplot3d import Axes3D
 import tqdm as tqdm
 import json
-from Bio import AlignIO
 
 import scipy
-from scipy import sparse
 import scipy.cluster.hierarchy as sch
 from scipy.spatial.distance import pdist, squareform
 
-from mysca.run_preprocessing import OUTPUT_RESULTS_FNAME as PREP_RESULTS_FNAME
-from mysca.run_preprocessing import OUTPUT_SYMMAP_FNAME as PREP_SYMMAP_FNAME
-from mysca.run_preprocessing import OUTPUT_MSAORIG_FNAME as PREP_MSAORIG_FNAME
+from mysca.results import (
+    PreprocessingResults,
+    SCAResults,
+    SCARUN_RESULTS_FNAME as OUTPUT_RESULTS_FNAME,
+    SCARUN_ARGS_FNAME as OUTPUT_ARGS_FNAME,
+    STATSECTORS_MSA_FNAME as OUTPUT_STATSECTORS_MSA_FNAME,
+    STATSECTORS_SEQ_FNAME as OUTPUT_STATSECTORS_SEQ_FNAME,
+    EVALS_SHUFF_FNAME as EVALS_SHUFF_SAVEAS,
+)
 from mysca.core import run_sca, run_ica
 from mysca.helpers import get_rawseq_positions_in_groups
 from mysca.helpers import get_rawseq_scores_in_groups
@@ -105,12 +109,6 @@ from mysca.constants import SECTOR_COLORS, DEFAULT_BACKGROUND_FREQ
 
 from mysca.pl.plotting import plot_sequence_similarity, plot_dendrogram
 from mysca.pl.plotting import plot_t_distributions, plot_data_2d, plot_data_3d
-
-OUTPUT_RESULTS_FNAME = "scarun_results.npz"
-OUTPUT_ARGS_FNAME = "scarun_args.json"
-OUTPUT_STATSECTORS_MSA_FNAME = "statsectors_msa.npz"
-OUTPUT_STATSECTORS_SEQ_FNAME = "statsectors_seq.npz"
-EVALS_SHUFF_SAVEAS = "evals_shuff.npy"
 
 
 def parse_args(args):
@@ -211,25 +209,15 @@ def main(args):
     if not os.path.isdir(indir):
         msg = f"Preprocessed data directory not found! {indir}"
         raise FileNotFoundError(msg)
-    with open(os.path.join(indir, PREP_SYMMAP_FNAME), "rb") as f:
-        sym_map = json.load(f)
-    
-    preprocessed_results = np.load(os.path.join(indir, PREP_RESULTS_FNAME))
-    msa = preprocessed_results["msa"]
-    retained_sequences = preprocessed_results["retained_sequences"]
-    retained_positions = preprocessed_results["retained_positions"]
-    weights = preprocessed_results["sequence_weights"]
-    
-    msa_binary3d = sparse.load_npz(
-        os.path.join(indir, "msa_binary2d_sp.npz")
-    ).toarray().reshape([
-        len(retained_sequences), len(retained_positions), -1
-    ])
+    prep = PreprocessingResults.load(indir)
+    sym_map = prep.sym_map
+    msa = prep.msa
+    retained_sequences = prep.retained_sequences
+    retained_positions = prep.retained_positions
+    weights = prep.sequence_weights
+    msa_binary3d = prep.msa_binary3d
     NSYMS = msa_binary3d.shape[-1]
-
-    msa_obj_orig = AlignIO.read(
-        os.path.join(indir, PREP_MSAORIG_FNAME), "fasta"
-    )
+    msa_obj_orig = prep.msa_obj_orig
     NUM_POS_ORIG = msa_obj_orig.get_alignment_length()
     
     # Create subdirectories within the specified output directory.
@@ -266,36 +254,17 @@ def main(args):
             use_jax=USE_JAX,
             verbosity=verbosity,
         )
-        Dia = sca_results["Dia"]
-        Di = sca_results["Di"]
-        Cij_raw = sca_results["Cij_raw"]
-        Cij = sca_results["Cij_corr"]
-
-        # Save SCA results
-        tosave = {
-            "Dia": Dia,
-            "conservation": Di,
-            "sca_matrix": Cij,
-            "phi_ia": sca_results["phi_ia"],
-            "fi0": sca_results["fi0"],
-            "fia": sca_results["fia"],
-        }
-        if SAVE_ALL:
-            tosave.update({
-                "Cijab_raw": sca_results["Cijab_raw"],
-                "fijab": sca_results["fijab"],
-            })
-        np.savez_compressed(
-            os.path.join(OUTDIR, OUTPUT_RESULTS_FNAME),
-            **tosave
-        )        
+        results = SCAResults.from_core_output(sca_results)
+        Dia = results.Dia
+        Di = results.conservation
+        Cij_raw = results.Cij_raw
+        Cij = results.sca_matrix
         del sca_results  # relieve memory
     else:
-        existing_results = np.load(os.path.join(LOAD_DATA, OUTPUT_RESULTS_FNAME))
-        # Di = np.load(os.path.join(LOAD_DATA, "conservation.npy"))
-        # Cij = np.load(os.path.join(LOAD_DATA, "sca_matrix.npy"))
-        Di = existing_results["conservation"]
-        Cij = existing_results["sca_matrix"]
+        existing = SCAResults.load(LOAD_DATA)
+        results = existing
+        Di = existing.conservation
+        Cij = existing.sca_matrix
         Cij_raw = None
 
     # Eigendecomposition of SCA matrix
@@ -376,40 +345,29 @@ def main(args):
     sig_evals_sca = evals_sca[:kstar]
     sig_evecs_sca = evecs_sca[:,:kstar]
 
-    # Save kstar, full eigendecomp, and significant eigendecomp
-    # TODO: save as a consolidated file bootstrap_results.npz
-    np.savetxt(f"{SCADIR}/kstar_identified.txt", [kstar_id], fmt="%d")
-    np.savetxt(f"{SCADIR}/kstar.txt", [kstar], fmt="%d")
-    np.savetxt(f"{SCADIR}/eigenvalue_cutoff.txt", [cutoff])
-    np.save(f"{SCADIR}/all_evals_sca.npy", evals_sca)
-    np.save(f"{SCADIR}/all_evecs_sca.npy", evecs_sca)
-    np.save(f"{SCADIR}/significant_evals_sca.npy", sig_evals_sca)
-    np.save(f"{SCADIR}/significant_evecs_sca.npy", sig_evecs_sca)
+    # Populate eigendecomposition on results
+    results.evals_sca = evals_sca
+    results.evecs_sca = evecs_sca
+    results.significant_evals_sca = sig_evals_sca
+    results.significant_evecs_sca = sig_evecs_sca
+    results.kstar = kstar
+    results.kstar_identified = kstar_id
+    results.cutoff = cutoff
+    results.evals_shuff = evals_shuff
 
-    tosave = {
-        "evals_sca": evals_sca,
-        "evecs_sca": evecs_sca,
-        "significant_evals_sca": sig_evals_sca,
-        "significant_evecs_sca": sig_evecs_sca,
-    }
-    np.savez_compressed(
-        os.path.join(OUTDIR, "sca_eigendecomp.npz"),
-        **tosave
-    )
-    
     # Apply Independent Component Analysis (ICA)
     ica_rho = 1e-1
     ica_tol = 1e-7
     ica_maxiter = 1E6
     ica_max_attempts = 5
     v_ica_normalized, _, w_ica = apply_ica(
-        sig_evecs_sca, 
-        rho=ica_rho, tol=ica_tol, maxiter=ica_maxiter, 
-        max_attempts=ica_max_attempts, 
+        sig_evecs_sca,
+        rho=ica_rho, tol=ica_tol, maxiter=ica_maxiter,
+        max_attempts=ica_max_attempts,
         verbosity=verbosity,
     )
-    np.save(os.path.join(SCADIR, "v_ica_normalized.npy"), v_ica_normalized)
-    np.save(os.path.join(SCADIR, "w_ica.npy"), w_ica)
+    results.v_ica = v_ica_normalized
+    results.w_ica = w_ica
 
     # Fit t-distribution to each IC
     t_dists_info, top_idxs = fit_t_distributions(v_ica_normalized, p=pstar)
@@ -417,15 +375,9 @@ def main(args):
     all_imp_idxs_unique = np.unique(all_imp_idxs)
     printv(f"Identified {len(all_imp_idxs)} important positions (with repeats).")
     printv(f"Identified {len(all_imp_idxs_unique)} important positions (w/o repeats).")
-    
-    np.save(
-        os.path.join(SCADIR, "all_important_positions.npy"), 
-        all_imp_idxs_unique
-    )
-    with open(os.path.join(SCADIR, "t_dists_info.json"), "w") as f:
-        json.dump(t_dists_info, f)
-    
-    # Call statistical sectors, i.e. groups of "co-evolving" positions. 
+    results.t_dists_info = t_dists_info
+
+    # Call statistical sectors, i.e. groups of "co-evolving" positions.
     # Define groups from top p% empirical distribution.
     # TODO: Compartmentalize this section and test.
     groups = []
@@ -451,35 +403,22 @@ def main(args):
                 raise RuntimeError("Index should be found amoung all...")
         groups.append(np.array(group, dtype=int))
         group_scores.append(np.array(group_score))
-    
+
     # Subset the SCA matrix into grouped important positions
     group_idxs_all = np.concatenate(groups, axis=0)
     sca_mat_imp = Cij[group_idxs_all,:]
     sca_mat_imp = sca_mat_imp[:,group_idxs_all]
-    np.save(os.path.join(SCADIR, "sca_matrix_sector_subset.npy"), sca_mat_imp)
 
-    # Save groups and group_scores in MSA coordinates
-    subdir1 = os.path.join(OUTDIR, "groups")
-    subdir2 = os.path.join(SCADIR, "msa_sectors")
-    os.makedirs(subdir1, exist_ok=True)
-    os.makedirs(subdir2, exist_ok=True)
-    for i in range(len(groups)):
-        np.save(os.path.join(subdir1, f"group_{i}_msapos.npy"), groups[i])
-        np.save(os.path.join(subdir2, f"sector_{i}_msapos.npy"), groups[i])
-        np.save(os.path.join(subdir2, f"sector_{i}_scores.npy"), group_scores[i])
-    # As a single file:
-    msapos_to_groupidx = np.vstack([
-        group_idxs_all,
-        np.concatenate([len(g) * [i] for i, g in enumerate(groups)], axis=0)
-    ])
-    np.save(os.path.join(SCADIR, "msapos_to_groupidx.npy"), msapos_to_groupidx)
+    results.groups = groups
+    results.group_scores = group_scores
+    results.sca_matrix_sector_subset = sca_mat_imp
 
     # Map processed MSA positions to original sequence positions
     rawseq_idxs = get_rawseq_indices_of_msa(msa_obj_orig)
     rawseq_idxs = rawseq_idxs[retained_sequences,:]
     rawseq_idxs = rawseq_idxs[:,retained_positions]
-    
-    # Save residue groups by raw sequence position
+
+    # Compute residue groups by raw sequence position
     group_rawseq_positions = get_rawseq_positions_in_groups(
         rawseq_idxs, groups
     )
@@ -503,16 +442,19 @@ def main(args):
             msa_stat_sectors_data[f"group_{gidx}_{id}"] = group_arr
             pdb_stat_sectors_data[f"sector_{gidx}_pdbpos_{id}"] = group_arr
             pdb_stat_sectors_data[f"sector_{gidx}_scores_{id}"] = group_scores_arr
-    
-    np.savez_compressed(
-        os.path.join(OUTDIR, OUTPUT_STATSECTORS_MSA_FNAME),
-        **msa_stat_sectors_data
-    )
 
-    np.savez_compressed(
-        os.path.join(OUTDIR, OUTPUT_STATSECTORS_SEQ_FNAME),
-        **pdb_stat_sectors_data
-    )
+    results.statsectors_msa = msa_stat_sectors_data
+    results.statsectors_seq = pdb_stat_sectors_data
+
+    # Save all results
+    results.args = {
+        "regularization": float(regularization),
+        "n_boot": int(N_BOOT),
+        "seed": int(SEED),
+        "kstar": int(kstar),
+        "pstar": int(pstar),
+    }
+    results.save(OUTDIR, save_all=SAVE_ALL)
 
     make_plots(
         retained_positions, 
