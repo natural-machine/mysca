@@ -16,6 +16,10 @@ COMMAND LINE ARGUMENTS:
         results and use these to determine the significance cutoff. If -1, will 
         will skip bootstrapping and treat all components as significant.
     --load_data : (Optional) Path to existing output with SCA results, to load.
+    --sectors_for : (Default None) Which sequences to generate per-sequence
+        sector mappings for. Default: only the reference sequence. Use 'all'
+        for every retained sequence, or provide a path to a text file
+        containing one sequence ID per line.
 
 -------------------------------------------------------------------------------
 OUTPUTS:
@@ -144,8 +148,15 @@ def parse_args(args):
                     help="Value of k_start to override bootstrap estimate.")
     sca_params.add_argument("-p", "--pstar", type=int, default=95, 
                     help="Percentile defining IC groups.")
-    sca_params.add_argument("--weak_assignment", type=int, nargs="*", 
+    sca_params.add_argument("--weak_assignment", type=int, nargs="*",
                         default=[])
+
+    parser.add_argument("--sectors_for", type=str, default=None,
+                        help="Which sequences to generate per-sequence sector "
+                             "mappings for. Default: only the reference "
+                             "sequence. 'all' for every retained sequence, "
+                             "or a path to a text file with one sequence ID "
+                             "per line.")
 
     return parser.parse_args(args)
 
@@ -165,6 +176,7 @@ def main(args):
     SAVE_ALL = args.save_all
     sector_cmap = args.sector_cmap
     weak_assignment = args.weak_assignment
+    sectors_for = args.sectors_for
 
     regularization = args.regularization
     background_freq = args.background
@@ -413,28 +425,75 @@ def main(args):
     results.group_scores = group_scores
     results.sca_matrix_sector_subset = sca_mat_imp
 
+    # Determine which sequences to generate per-sequence sector mappings for.
+    # IDs that were filtered out during preprocessing are silently skipped.
+    retained_ids = set(
+        msa_obj_orig[int(sidx)].id for sidx in retained_sequences
+    )
+    if sectors_for is not None and sectors_for.lower() == "all":
+        sector_seqidxs = retained_sequences
+    elif sectors_for is not None:
+        with open(sectors_for, "r") as f:
+            requested_ids = set(
+                line.strip() for line in f if line.strip()
+            )
+        missing_ids = requested_ids - retained_ids
+        if missing_ids:
+            printv(f"Note: {len(missing_ids)} requested sequence(s) not found "
+                   f"among retained sequences (filtered during preprocessing): "
+                   f"{', '.join(sorted(missing_ids))}")
+        found_ids = requested_ids & retained_ids
+        sector_seqidxs = np.array([
+            sidx for sidx in retained_sequences
+            if msa_obj_orig[int(sidx)].id in found_ids
+        ])
+        printv(f"Generating per-sequence sectors for "
+               f"{len(sector_seqidxs)}/{len(retained_sequences)} sequences.")
+    else:
+        # Default: only the reference sequence
+        ref_id = prep.args.get("reference_id") if prep.args else None
+        if ref_id is not None and ref_id in retained_ids:
+            sector_seqidxs = np.array([
+                sidx for sidx in retained_sequences
+                if msa_obj_orig[int(sidx)].id == ref_id
+            ])
+            printv(f"Generating per-sequence sectors for reference "
+                   f"sequence: {ref_id}")
+        else:
+            sector_seqidxs = np.array([], dtype=int)
+            if ref_id is not None:
+                printv(f"Reference sequence '{ref_id}' was filtered out "
+                       f"during preprocessing. "
+                       f"Skipping per-sequence sector mappings.")
+            else:
+                printv("No reference sequence specified. "
+                       "Skipping per-sequence sector mappings.")
+
     # Map processed MSA positions to original sequence positions
     rawseq_idxs = get_rawseq_indices_of_msa(msa_obj_orig)
     rawseq_idxs = rawseq_idxs[retained_sequences,:]
     rawseq_idxs = rawseq_idxs[:,retained_positions]
 
-    # Compute residue groups by raw sequence position
+    # Compute residue groups by raw sequence position (for subset only)
+    sector_rawseq_idxs = rawseq_idxs[
+        np.isin(retained_sequences, sector_seqidxs)
+    ]
     group_rawseq_positions = get_rawseq_positions_in_groups(
-        rawseq_idxs, groups
+        sector_rawseq_idxs, groups
     )
     group_rawseq_scores = get_rawseq_scores_in_groups(
-        rawseq_idxs, groups, group_scores
+        sector_rawseq_idxs, groups, group_scores
     )
     group_rawseq_positions_by_entry = get_group_rawseq_positions_by_entry(
-        msa_obj_orig, retained_sequences, groups, group_rawseq_positions
+        msa_obj_orig, sector_seqidxs, groups, group_rawseq_positions
     )
     group_rawseq_scores_by_entry = get_group_rawseq_scores_by_entry(
-        msa_obj_orig, retained_sequences, groups, group_rawseq_scores
+        msa_obj_orig, sector_seqidxs, groups, group_rawseq_scores
     )
     msa_stat_sectors_data = {}
     pdb_stat_sectors_data = {}
     for gidx in range(len(groups)):
-        for i, seqidx in enumerate(retained_sequences):
+        for i, seqidx in enumerate(sector_seqidxs):
             entry = msa_obj_orig[int(seqidx)]
             id = entry.id
             group_arr = group_rawseq_positions_by_entry[id][gidx]
