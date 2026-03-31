@@ -41,10 +41,12 @@ sca-preprocess -i <input-msa> -o <output-dir> [options]
 | `--plot` | off | Generate plots |
 | `--syms` | "default" | Symbol set ("default" or custom) |
 | `--gapsym` | "-" | Gap symbol |
-| `--weight_method` | "v5" | Method for computing sequence weights. Choices: `v3`, `v4`, `v5`, `gpu` |
+| `--weight_method` | "v5" | Method for computing sequence weights. Choices: `v3`, `v4`, `v5`, `gpu`. See [weight methods](weight_methods.md) for details |
 | `--block_size` | 512 | Block size for weight computations |
 
 ### Weight Methods
+
+See [weight_methods.md](weight_methods.md) for full details, including method internals and known issues.
 
 | Method | Description |
 |--------|-------------|
