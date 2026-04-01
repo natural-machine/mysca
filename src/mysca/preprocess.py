@@ -321,7 +321,7 @@ def _compute_weights_v3(**kwargs):
     for idx1_start, idx1_stop, block1 in iterblocks(msa, block_size, use_pbar=use_pbar):
         # Compute pairwise similarity between sequences in block and all sequences in msa
         block_sims = (
-            (block1[:,None,:] == msa[None,:,:]) & (block1[:,None,:] != gap) & (msa[None,:,:] != gap)
+            (block1[:,None,:] == msa[None,:,:]) #& (block1[:,None,:] != gap) & (msa[None,:,:] != gap)
         ).sum(axis=2) / npos
         rows = np.arange(len(block1))
         cols = idx1_start + rows
@@ -515,9 +515,9 @@ def _compute_weights_torch(**kwargs):
             block_j = msa_t[j0:j1]
             # broadcast comparison
             matches = (
-                (block_i[:, None, :] == block_j[None, :, :]) &
-                (block_i[:, None, :] != gap) &
-                (block_j[None, :, :] != gap)
+                block_i[:, None, :] == block_j[None, :, :]
+                # & (block_i[:, None, :] != gap)
+                # & (block_j[None, :, :] != gap)
             ).sum(dim=2)
             counts += (matches >= thresh).sum(dim=1)
         neigh[i0:i1] = counts[:]
@@ -532,7 +532,48 @@ def _compute_weights_torch(**kwargs):
 
 def get_onehotmsa_sparse(msa, num_aa, gap):
     """
-    Convert a numeric alignment (Nseq x Npos) to a sparse binary one-hot matrix.
+    Convert a numeric alignment (Nseq x Npos) to a sparse binary one-hot matrix,
+    including the gap as its own symbol in the one-hot encoding.
+
+    Parameters
+    ----------
+    msa : np.ndarray, shape (Nseq, Npos)
+        Numeric alignment where amino acids are 0..num_aa-1 and num_aa means "other"/gap.
+    num_aa : int
+        Number of amino-acid states (not counting the GAP state).
+    gap: int
+        Integer value representing gaps.
+
+    Returns
+    -------
+    Abin : scipy.sparse.csr_matrix, shape (Nseq, (num_aa + 1) * Npos)
+        One-hot encoding (sparse), with gaps encoded as their own symbol.
+    """
+    msa = np.asarray(msa)
+    if msa.ndim != 2:
+        raise ValueError("get_onehotmsa_sparse expects a 2D array (Nseq x Npos).")
+    if gap != num_aa:
+        msg = "get_onehotmsa_sparse expects gap == num_aa."
+        msg += f"Got gap={gap} when num_aas={num_aa}"
+        raise ValueError(msg)
+    num_symbols = num_aa + 1  # include gap
+    nseqs, npos = msa.shape
+    a = msa.astype(np.int8, copy=False).ravel()
+    rows = np.repeat(np.arange(nseqs, dtype=np.uint16), npos)
+    pos = np.tile(np.arange(npos, dtype=np.uint16), nseqs)
+    cols = pos * num_symbols + a
+    data = np.ones(cols.shape[0], dtype=np.int16)
+    onehotmsa = sp.csr_matrix(
+        (data, (rows, cols)),
+        shape=(nseqs, num_symbols * npos)
+    )
+    return onehotmsa
+
+
+def get_onehotmsa_sparse_nogap(msa, num_aa, gap):
+    """
+    Convert a numeric alignment (Nseq x Npos) to a sparse binary one-hot matrix,
+    where gaps are treated as missing, and not as a one-hot encoded symbol.
 
     Parameters
     ----------

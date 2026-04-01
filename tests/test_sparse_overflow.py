@@ -38,7 +38,7 @@ class TestSparseOneHotOverflow:
         assert counts[0, 1] == npos
 
     def test_dot_product_with_gaps(self):
-        """Gaps are excluded from one-hot, so they don't contribute to counts."""
+        """Gaps are included in one-hot as their own symbol, contributing to counts."""
         npos = 300
         msa = np.zeros((2, npos), dtype=int)
         # Insert gaps at 50 positions
@@ -46,7 +46,7 @@ class TestSparseOneHotOverflow:
         sp = get_onehotmsa_sparse(msa, NUM_AA, GAP)
 
         counts = (sp @ sp.T).toarray()
-        expected = npos - 50  # 250 matching non-gap positions
+        expected = npos  # all positions match, including gaps
 
         assert counts[0, 0] == expected
         assert counts[0, 1] == expected
