@@ -74,6 +74,13 @@ def run_sca(
         for a in background_map:
             qa[mapping[a]] = background_map[a]
         qa = qa / qa.sum()
+    
+    
+    # Separate frequencies for Dia, Di, and phi_ia, regularized with UniProt
+    # background (lam * qa) to match pySCA's posWeights. This differs from fia
+    # (line 62) which uses uniform regularization (lam / nsyms) to match pySCA's
+    # scaMat covariance. See docs/pysca_frequency_inconsistency.md for details.
+    #fia_pw = (1 - lam) * np.sum(ws_norm[:,None,None] * xmsa, axis=0) + lam * qa
 
     Dia = np.nan * np.ones([npos, naas])
     Dia[:] = fia * np.log(fia / qa) + (1 - fia) * np.log((1 - fia) / (1 - qa))
