@@ -186,7 +186,8 @@ def _compute_fijab_v1(xmsa, ws_norm, lam, nsyms, pbar=False, leave_pbar=False):
         ci = xmsa[:,i,:]
         for j in range(i, npos):
             cj = xmsa[:,j,:]
-            f = (1 - lam) * (ci.T @ (ws_norm[:, None] * cj)) + lam / nsyms**2
+            f = (1 - lam) * (ci.T @ (ws_norm[:, None] * cj)) \
+                + lam / (nsyms**2 * (i != j) + nsyms * (i == j))
             fijab[i,j,:,:] = f
             fijab[j,i,:,:] = f.T
     return fijab
@@ -198,14 +199,18 @@ def _compute_fijab_v2(xmsa, ws_norm, lam, nsyms, pbar=False, leave_pbar=False):
     fijab = np.full([npos, npos, naas, naas], np.nan)
 
     @jax.jit
-    def compute_f(ci, cj, ws_norm, lam, nsyms):
-        return (1 - lam) * (ci.T @ (ws_norm[:, None] * cj)) + lam / nsyms**2
+    def compute_f(ci, cj, ws_norm, lam, nsyms, regterm):
+        return (1 - lam) * (ci.T @ (ws_norm[:, None] * cj)) + regterm
     
     for i in tqdm.trange(npos, disable=not pbar, leave=leave_pbar):
         ci = xmsa[:,i,:]
         for j in range(i, npos):
             cj = xmsa[:,j,:]
-            f = compute_f(ci, cj, ws_norm, lam, nsyms)
+            if i == j:
+                regterm = np.array(lam / nsyms)
+            else:
+                regterm = np.array(lam / (nsyms * nsyms))
+            f = compute_f(ci, cj, ws_norm, lam, nsyms, regterm)
             fijab[i,j,:,:] = f
             fijab[j,i,:,:] = f.T
     return fijab

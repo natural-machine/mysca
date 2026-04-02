@@ -226,7 +226,7 @@ def test_run_sca(
 
     errors = []
     for key in expected_results:
-        print(key)
+        print(key, np.array(expected_results[key]).shape, np.array(sca_res[key]).shape)
         if np.shape(expected_results[key]) != np.shape(sca_res[key]):
             msg = f"Shape mismatch in {key}\n"
             msg += f"Expected: {np.shape(expected_results[key])}\n"
@@ -234,7 +234,8 @@ def test_run_sca(
             errors.append(msg)
         if not np.allclose(expected_results[key], sca_res[key]):
             msg = f"Mismatch in {key}\n"
-            msg += f"Expected:\n{expected_results[key]}\n"
-            msg += f"     Got:\n{sca_res[key]}\n"
+            msg += f"{np.max(np.abs(np.array(expected_results[key]) - np.array(sca_res[key])))}"
+            # msg += f"Expected:\n{expected_results[key]}\n"
+            # msg += f"     Got:\n{sca_res[key]}\n"
             errors.append(msg)
     assert not errors, "Errors occurred:\n{}".format("\n".join(errors))
