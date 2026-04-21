@@ -199,6 +199,120 @@ def plot_sequence_similarity(
     return
 
 
+def plot_filter_history(filter_history, imgdir):
+    """Plot the change in MSA size (sequences and positions) across filter stages.
+
+    Args:
+        filter_history: list of dicts as emitted by preprocess_msa. Each entry
+            must have `label`, `n_sequences`, `n_positions`, `n_filtered`,
+            and `axis` ("sequences", "positions", or None for "initial").
+        imgdir: output directory.
+    """
+    labels = [entry["label"] for entry in filter_history]
+    n_seqs = [entry["n_sequences"] for entry in filter_history]
+    n_pos = [entry["n_positions"] for entry in filter_history]
+    n_stages = len(filter_history)
+    x = np.arange(n_stages)
+
+    fig, (ax_seq, ax_pos) = plt.subplots(2, 1, figsize=(max(7, 1.5 * n_stages), 7))
+
+    def _draw(ax, counts, affected_axis, axis_label, color):
+        bar_colors = [
+            color if (entry["stage"] == "initial" or entry["axis"] == affected_axis)
+            else "lightgray"
+            for entry in filter_history
+        ]
+        ax.bar(x, counts, color=bar_colors, edgecolor="k")
+        for i, (xi, ci) in enumerate(zip(x, counts)):
+            ax.text(xi, ci, f"{ci:,}", ha="center", va="bottom", fontsize=9)
+            if i > 0 and filter_history[i]["axis"] == affected_axis:
+                delta = counts[i] - counts[i - 1]
+                if delta != 0:
+                    ax.text(
+                        xi, ci * 0.5, f"{delta:+,}",
+                        ha="center", va="center", fontsize=9, color="white",
+                        fontweight="bold",
+                    )
+        ax.plot(x, counts, "k-", alpha=0.3, zorder=0)
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=30, ha="right")
+        ax.set_ylabel(axis_label)
+        ax.set_ylim(0, max(counts) * 1.12 if max(counts) > 0 else 1)
+        ax.spines[["top", "right"]].set_visible(False)
+
+    _draw(ax_seq, n_seqs, "sequences", "# sequences", "steelblue")
+    _draw(ax_pos, n_pos, "positions", "# positions", "indianred")
+    ax_seq.set_title("MSA size across filter stages")
+
+    plt.tight_layout()
+    plt.savefig(f"{imgdir}/filter_history.png", bbox_inches="tight")
+    plt.close()
+    return
+
+
+def plot_filter_distributions(filter_history, imgdir):
+    """Plot the distribution of the per-stage filter statistic with threshold.
+
+    For each filtering stage (skipping the 'initial' record), draw a histogram
+    of the statistic used to decide the filter (e.g. per-position gap
+    frequency), with the threshold marked and the excluded region shaded.
+
+    Args:
+        filter_history: list of dicts as emitted by preprocess_msa.
+        imgdir: output directory.
+    """
+    entries = [e for e in filter_history if e.get("stat_values") is not None]
+    if not entries:
+        return
+
+    n = len(entries)
+    fig, axes = plt.subplots(n, 1, figsize=(7, 2.8 * n))
+    if n == 1:
+        axes = [axes]
+
+    for ax, entry in zip(axes, entries):
+        values = np.asarray(entry["stat_values"])
+        thresh = entry["threshold"]
+        direction = entry["filter_direction"]
+        n_filtered = entry["n_filtered"]
+        n_total = values.size
+
+        nbins = min(60, max(10, int(np.sqrt(n_total))))
+        counts, bins, patches = ax.hist(
+            values, bins=nbins, color="steelblue", edgecolor="k", alpha=0.75,
+        )
+        # Shade patches whose bin lies in the rejected region
+        for patch, left, right in zip(patches, bins[:-1], bins[1:]):
+            center = 0.5 * (left + right)
+            rejected = (
+                (direction == "above" and center >= thresh)
+                or (direction == "below" and center < thresh)
+            )
+            if rejected:
+                patch.set_facecolor("lightcoral")
+                patch.set_alpha(0.8)
+
+        ax.axvline(
+            thresh, color="k", linestyle="--", linewidth=1.5,
+            label=f"{entry['threshold_symbol']} = {thresh}",
+        )
+        comparator = "≥" if direction == "above" else "<"
+        ax.set_title(
+            f"{entry['label']} — filter {entry['axis']} with "
+            f"{entry['stat_name']} {comparator} {entry['threshold_symbol']} "
+            f"({n_filtered:,} / {n_total:,} removed)"
+        )
+        ax.set_xlabel(entry["stat_name"])
+        ax.set_ylabel("count")
+        ax.legend(loc="upper right")
+        ax.spines[["top", "right"]].set_visible(False)
+
+    plt.tight_layout()
+    plt.savefig(f"{imgdir}/filter_distributions.png", bbox_inches="tight")
+    plt.close()
+    return
+
+
 def plot_t_distributions(v, t_dists_info, imgdir):
     """Plot t distributions"""
     npos, nics = v.shape

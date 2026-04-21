@@ -72,9 +72,14 @@ def preprocess_msa(
             retained_sequences_ids: (list[str]) retained sequence IDs.
             sequence_weights: (NDArray[float]) sequence weights.
             fi0_pretruncation: (NDArray[float]) gap frequency fi0.
-            reference_results: (dict): reference similarity results. If a 
-                reference ID is specified, contains keys reference_id, ref_idx, 
+            reference_results: (dict): reference similarity results. If a
+                reference ID is specified, contains keys reference_id, ref_idx,
                 and ref_similarity.
+            filter_history: (list[dict]) per-stage record of dataset size and
+                the pre-filter statistic distribution with its threshold, used
+                for diagnostic plotting. Each entry has keys: stage, label,
+                n_sequences, n_positions, n_filtered, axis, stat_name,
+                stat_values, threshold, threshold_symbol, filter_direction.
     """
 
     args = {
@@ -121,6 +126,21 @@ def preprocess_msa(
     retained_sequences = np.arange(num_seqs)
     retained_positions = np.arange(num_pos)
 
+    # Record dataset size and the pre-filter statistic at each stage
+    filter_history = [{
+        "stage": "initial",
+        "label": "initial",
+        "n_sequences": num_seqs,
+        "n_positions": num_pos,
+        "n_filtered": 0,
+        "axis": None,
+        "stat_name": None,
+        "stat_values": None,
+        "threshold": None,
+        "threshold_symbol": None,
+        "filter_direction": None,
+    }]
+
     # Constuct the boolean MSA matrix
     xmsa = np.eye(NUM_SYMS, dtype=bool)[msa][:,:,:-1]
     xmsa = xmsa.astype(np.int16)
@@ -132,6 +152,19 @@ def preprocess_msa(
     msa = msa[:,screen]  # keep columns with gap freq < gap_truncation_thresh
     xmsa = xmsa[:,screen,:]
     retained_positions = retained_positions[screen]
+    filter_history.append({
+        "stage": "position_gap",
+        "label": "position gap (τ)",
+        "n_sequences": msa.shape[0],
+        "n_positions": msa.shape[1],
+        "n_filtered": int(np.sum(~screen)),
+        "axis": "positions",
+        "stat_name": "gap frequency per position",
+        "stat_values": gapfreqs.copy(),
+        "threshold": gap_truncation_thresh,
+        "threshold_symbol": "τ",
+        "filter_direction": "above",
+    })
     logger.info(
         "Filtered %d positions at threshold τ=%s.",
         int(np.sum(~screen)), gap_truncation_thresh,
@@ -147,6 +180,19 @@ def preprocess_msa(
     xmsa = xmsa[screen,:,:]
     retained_sequences = retained_sequences[screen]
     seqids = np.array([seqids_orig[i] for i in retained_sequences])
+    filter_history.append({
+        "stage": "sequence_gap",
+        "label": "sequence gap (γ_seq)",
+        "n_sequences": msa.shape[0],
+        "n_positions": msa.shape[1],
+        "n_filtered": int(np.sum(~screen)),
+        "axis": "sequences",
+        "stat_name": "gap frequency per sequence",
+        "stat_values": gapfreqs.copy(),
+        "threshold": sequence_gap_thresh,
+        "threshold_symbol": "γ_seq",
+        "filter_direction": "above",
+    })
     logger.info(
         "Filtered %d sequences at threshold γ_seq=%s.",
         int(np.sum(~screen)), sequence_gap_thresh,
@@ -174,6 +220,19 @@ def preprocess_msa(
         xmsa = xmsa[screen,:,:]
         retained_sequences = retained_sequences[screen]
         seqids = np.array([seqids_orig[i] for i in retained_sequences])
+        filter_history.append({
+            "stage": "reference_similarity",
+            "label": "reference similarity (Δ)",
+            "n_sequences": msa.shape[0],
+            "n_positions": msa.shape[1],
+            "n_filtered": int(np.sum(~screen)),
+            "axis": "sequences",
+            "stat_name": "similarity to reference",
+            "stat_values": ref_similarity.copy(),
+            "threshold": reference_similarity_thresh,
+            "threshold_symbol": "Δ",
+            "filter_direction": "below",
+        })
         logger.info(
             "Filtered %d sequences at threshold Δ=%s.",
             int(np.sum(~screen)), reference_similarity_thresh,
@@ -207,6 +266,19 @@ def preprocess_msa(
     msa = msa[:,screen]
     xmsa = xmsa[:,screen,:]
     retained_positions = retained_positions[screen]
+    filter_history.append({
+        "stage": "position_weighted_gap",
+        "label": "weighted position gap (γ_pos)",
+        "n_sequences": msa.shape[0],
+        "n_positions": msa.shape[1],
+        "n_filtered": int(np.sum(~screen)),
+        "axis": "positions",
+        "stat_name": "weighted gap frequency per position",
+        "stat_values": fi0.copy(),
+        "threshold": position_gap_thresh,
+        "threshold_symbol": "γ_pos",
+        "filter_direction": "above",
+    })
     logger.info(
         "Filtered %d positions at threshold γ_pos=%s.",
         int(np.sum(~screen)), position_gap_thresh,
@@ -236,9 +308,10 @@ def preprocess_msa(
         "retained_positions": retained_positions,
         "retained_sequence_ids": seqids,
         "sequence_weights": ws,
-        "fi0_pretruncation": fi0, 
+        "fi0_pretruncation": fi0,
         "reference_results": ref_results,
         "args": args,
+        "filter_history": filter_history,
     }
 
     return msa, preprocessing_results
