@@ -67,6 +67,7 @@ from mysca.io import load_msa
 from mysca.mappings import SymMap
 from mysca.constants import AA_STD20
 from mysca.preprocess import preprocess_msa
+from mysca.pl.plotting import plot_filter_history, plot_filter_distributions
 from mysca.results import (
     PreprocessingResults,
     PREPROCESSING_RESULTS_FNAME as OUTPUT_RESULTS_FNAME,
@@ -198,6 +199,14 @@ def main(args):
         msa_obj_orig=msa_obj_orig,
     )
     results.save(outdir)
+
+    if do_plot:
+        filter_history = preprocessing_results.get("filter_history", [])
+        if filter_history:
+            if verbosity:
+                print(f"Writing filter diagnostic plots to {imgdir}")
+            plot_filter_history(filter_history, imgdir)
+            plot_filter_distributions(filter_history, imgdir)
 
     if verbosity:
         print(f"Output saved to {outdir}")
