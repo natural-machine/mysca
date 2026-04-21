@@ -9,6 +9,7 @@ sca-pymol -s Soil14.scaffold_576820813_c1_40 \
 """
 
 import argparse
+import logging
 import os
 import sys
 import shutil
@@ -21,6 +22,11 @@ import tqdm as tqdm
 import json
 
 from mysca.constants import SECTOR_COLORS
+from mysca.logging_config import configure_logging
+
+PYMOL_LOG_FNAME = "pymol.log"
+
+logger = logging.getLogger("mysca.run_pymol")
 
 MO_COLOR = None
 SF4_COLOR = None
@@ -103,7 +109,13 @@ def main(args):
 
     if outdir:
         os.makedirs(outdir, exist_ok=True)
-    
+        configure_logging(
+            verbosity=verbosity,
+            logfile=os.path.join(outdir, PYMOL_LOG_FNAME),
+        )
+    else:
+        configure_logging(verbosity=verbosity)
+
     # Colors and styles
     struct_color = DEFAULT_STRUCT_COLOR
     struct_style = DEFAULT_STRUCT_STYLE
@@ -113,8 +125,7 @@ def main(args):
     background_color = DEFAULT_BG_COLOR
 
     # Load the specified structure
-    if verbosity:
-        print("Scaffold:", scaffold)
+    logger.info("Scaffold: %s", scaffold)
     pdbfile = f"{pdb_dir}/{scaffold}.pdb"
     cmd.load(pdbfile, "struct")
 
@@ -142,54 +153,46 @@ def main(args):
     cmd.zoom(complete=1)
 
     if multisector:
-        if verbosity:
-            print(f"Plotting {scaffold} with all sectors...")
-        
+        logger.info("Plotting %s with all sectors...", scaffold)
         plot_scaffold_with_multiple_sectors(
-            scaffold, group_idxs, mode_data, 
-            struct_color=struct_color, 
-            sector_colors=sector_colors, 
-            sector_style=sector_style, 
-            ref_scaffold=ref_scaffold, 
+            scaffold, group_idxs, mode_data,
+            struct_color=struct_color,
+            sector_colors=sector_colors,
+            sector_style=sector_style,
+            ref_scaffold=ref_scaffold,
             features=features,
             views=views,
-            outdir=outdir, 
-            verbosity=verbosity,
+            outdir=outdir,
         )
     else:
-        if verbosity:
-            print(f"Plotting {scaffold} by sector...")
-        
+        logger.info("Plotting %s by sector...", scaffold)
         plot_scaffold_by_sectors(
             scaffold, group_idxs, mode_data,
-            struct_color=struct_color, 
-            sector_colors=sector_colors, 
-            sector_style=sector_style, 
-            ref_scaffold=ref_scaffold, 
+            struct_color=struct_color,
+            sector_colors=sector_colors,
+            sector_style=sector_style,
+            ref_scaffold=ref_scaffold,
             features=features,
             views=views,
             animate=animate,
             nframes=nframes,
             duration=duration,
-            outdir=outdir, 
-            verbosity=verbosity,
+            outdir=outdir,
         )
-    
-    if verbosity:
-        print("Done!")
+
+    logger.info("Done!")
 
 
 def plot_scaffold_by_sectors(
         scaffold, group_idxs, mode_data, *,
-        struct_color, 
-        sector_colors, 
-        sector_style, 
-        ref_scaffold, 
-        outdir, 
-        verbosity=1,
+        struct_color,
+        sector_colors,
+        sector_style,
+        ref_scaffold,
+        outdir,
         features=None,
         views=True,
-        animate=False, 
+        animate=False,
         **kwargs
 ):
     nframes = kwargs.get("nframes", 24)
@@ -217,8 +220,10 @@ def plot_scaffold_by_sectors(
         else:
             group_selection = None
             group = None
-            if verbosity:
-                print(f"Structure {scaffold} group {gidx} data not found: {groupkey}")
+            logger.info(
+                "Structure %s group %s data not found: %s",
+                scaffold, gidx, groupkey,
+            )
         
         # Load scores, if a directory is specified
         scorekey = f"sector_{gidx}_scores_{scaffold}"
@@ -233,14 +238,15 @@ def plot_scaffold_by_sectors(
             alphas = (a1 - a0) / (s1 - s0) * (svals - s1) + a1
         if alphas is not None:
             # Apply transparency per residue
-            if verbosity > 1:
-                print(f"Applying alphas [{alphas.min():.4g}, {alphas.max():.4g}]")
+            logger.debug(
+                "Applying alphas [%.4g, %.4g]", alphas.min(), alphas.max()
+            )
             for resi, alpha in zip(res_idxs, alphas):
                 cmd.set(
                     {"spheres": "sphere_transparency"}.get(
                         sector_style, DEFAULT_SECTOR_STYLE
-                    ), 
-                    1 - alpha, 
+                    ),
+                    1 - alpha,
                     f"{group_selection} and resi {resi}"
                 )
 
@@ -320,13 +326,12 @@ def plot_scaffold_by_sectors(
 
 
 def plot_scaffold_with_multiple_sectors(
-        scaffold, group_idxs, mode_data, *, 
-        struct_color, 
-        sector_colors, 
-        sector_style, 
-        ref_scaffold, 
-        outdir, 
-        verbosity=1, 
+        scaffold, group_idxs, mode_data, *,
+        struct_color,
+        sector_colors,
+        sector_style,
+        ref_scaffold,
+        outdir,
         features=None,
         views=True,
 ):
@@ -349,8 +354,7 @@ def plot_scaffold_with_multiple_sectors(
         else:
             group_selection = None
             group = None
-            if verbosity:
-                print(f"Group {gidx} data not found: {groupkey}")
+            logger.info("Group %s data not found: %s", gidx, groupkey)
 
         # Load scores, if a directory is specified
         scorekey = f"sector_{gidx}_scores_{scaffold}"
@@ -365,8 +369,9 @@ def plot_scaffold_with_multiple_sectors(
             alphas = (a1 - a0) / (s1 - s0) * (svals - s1) + a1
         if alphas is not None:
             # Apply transparency per residue
-            if verbosity > 1:
-                print(f"Applying alphas [{alphas.min():.4g}, {alphas.max():.4g}]")
+            logger.debug(
+                "Applying alphas [%.4g, %.4g]", alphas.min(), alphas.max()
+            )
             for resi, alpha in zip(res_idxs, alphas):
                 cmd.set(
                     {"spheres": "sphere_transparency"}.get(

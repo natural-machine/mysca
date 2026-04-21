@@ -59,11 +59,13 @@ sca-preprocess -i </path/to/msa.fasta> -o </path/to/outdir> \
 """
 
 import argparse
+import logging
 import os, sys
 import numpy as np
 import tqdm as tqdm
 
 from mysca.io import load_msa
+from mysca.logging_config import configure_logging
 from mysca.mappings import SymMap
 from mysca.constants import AA_STD20
 from mysca.preprocess import preprocess_msa
@@ -74,6 +76,10 @@ from mysca.results import (
     PREPROCESSING_ARGS_FNAME as OUTPUT_ARGS_FNAME,
     PREPROCESSING_MSAORIG_FNAME as OUTPUT_MSAORIG_FNAME,
 )
+
+PREPROCESSING_LOG_FNAME = "preprocessing.log"
+
+logger = logging.getLogger("mysca.run_preprocessing")
 
 
 def parse_args(args):
@@ -143,13 +149,16 @@ def main(args):
     sequence_similarity_thresh = args.sequence_similarity_thresh
     position_gap_thresh = args.position_gap_thresh
     
+    os.makedirs(outdir, exist_ok=True)
+    configure_logging(
+        verbosity=verbosity,
+        logfile=os.path.join(outdir, PREPROCESSING_LOG_FNAME),
+    )
+
     # Housekeeping
     if reference_id is None or reference_id.lower() == "none":
-        if verbosity:
-            print("No reference entry specified.")
+        logger.info("No reference entry specified.")
         reference_id = None
-    
-    os.makedirs(outdir, exist_ok=True)
 
     if do_plot:
         imgdir = os.path.join(outdir, "images")
@@ -158,23 +167,26 @@ def main(args):
     if syms.lower() in ["default"]:
         sym_map = SymMap(aa_syms=AA_STD20, gapsym=gapsym)
     elif syms.lower() in ["none"]:
+        logger.warning(
+            "--syms none disables excluded-symbol filtering; "
+            "using auto-detected alphabet."
+        )
         sym_map = None
     else:
         sym_map = SymMap(aa_syms=syms, gapsym=gapsym)
 
     # Load MSA
-    if verbosity:
-        print(f"Loading MSA from: {msa_fpath}")
+    logger.info("Loading MSA from: %s", msa_fpath)
     msa_obj_orig, msa_orig, seqids_orig, sym_map = load_msa(
-        msa_fpath, format="fasta", 
+        msa_fpath, format="fasta",
         mapping=sym_map,
-        verbosity=1
     )
     num_seq_orig, num_pos_orig = msa_orig.shape
-    
-    if verbosity:
-        print(f"Loaded MSA. shape: {msa_orig.shape} (sequences x positions)")
-        print(f"Symbols: {sym_map.aa_list}")
+
+    logger.info(
+        "Loaded MSA. shape: %s (sequences x positions)", msa_orig.shape
+    )
+    logger.info("Symbols: %s", sym_map.aa_list)
 
     # Run preprocessing script
     msa, preprocessing_results = preprocess_msa(
@@ -199,9 +211,8 @@ def main(args):
     )
     results.save(outdir)
 
-    if verbosity:
-        print(f"Output saved to {outdir}")
-        print(f"Preprocessing complete!")
+    logger.info("Output saved to %s", outdir)
+    logger.info("Preprocessing complete!")
 
 
 if __name__ == "__main__":

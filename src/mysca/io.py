@@ -2,6 +2,8 @@
 
 """
 
+import logging
+
 import numpy as np
 from numpy.typing import NDArray
 from Bio import AlignIO
@@ -11,7 +13,10 @@ from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 from Bio.AlignIO import MultipleSeqAlignment
 
+from mysca.constants import AA_STD20
 from mysca.mappings import SymMap, DEFAULT_MAP
+
+logger = logging.getLogger(__name__)
 
 
 def load_msa(
@@ -54,6 +59,12 @@ def load_msa(
             seq_join += seq
         aa_syms = np.sort(np.unique([c for c in seq_join if c != GAPSYM]))
         aa_syms = "".join(aa_syms)
+        non_canon = sorted(set(aa_syms) - set(AA_STD20))
+        if non_canon:
+            logger.warning(
+                "Auto-detected alphabet contains non-canonical symbols: %s "
+                "— no filtering applied.", non_canon
+            )
         mapping = SymMap(aa_syms, gapsym=GAPSYM, exclude_syms="")
 
     # Keep records in the MSA not containing excluded symbols.
@@ -70,8 +81,13 @@ def load_msa(
 
     msa_obj = MultipleSeqAlignment(keep_records)
 
-    if verbosity > 1:
-        print(f"Removed {exc_recs_screen.sum()} seqs with excluded symbols.")
+    n_removed = int(exc_recs_screen.sum())
+    if n_removed > 0:
+        logger.warning(
+            "Removed %d sequences containing excluded symbols.", n_removed
+        )
+    else:
+        logger.debug("No sequences removed during excluded-symbol filtering.")
 
     # Construct the MSA matrix.
     msa_matrix = np.array([
