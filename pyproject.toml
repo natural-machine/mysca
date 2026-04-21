@@ -7,7 +7,8 @@ name = "mysca"
 dynamic = ["version"]
 requires-python = ">= 3.8"
 readme = "README.md"
-license = { file = "LICENSE.txt" }
+license = "MIT"
+license-files = ["LICENSE"]
 description = "An implementation of the SCA pipeline."
 authors = [
   {name = "Addison Howe"},
@@ -27,11 +28,6 @@ dependencies = [
   "ipywidgets",
 ]
 
-[project.scripts]
-sca-preprocess = "mysca.__main__:run_preprocessing"
-sca-core = "mysca.__main__:run_sca"
-sca-pymol = "mysca.__main__:run_pymol"
-
 [project.optional-dependencies]
 dev = [
   "pytest",
@@ -39,3 +35,14 @@ dev = [
 pymol = [
   "pymol-open-source",
 ]
+
+[tool.setuptools.dynamic]
+version = {attr = "mysca.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+sca-preprocess = "mysca.__main__:run_preprocessing"
+sca-core = "mysca.__main__:run_sca"
+sca-pymol = "mysca.__main__:run_pymol"

@@ -2,8 +2,12 @@
 
 """
 
+import logging
+
 from Bio import SeqIO
 from Bio import AlignIO
+
+logger = logging.getLogger(__name__)
 
 
 def convert_msa(infile, outfile, itype, otype):
@@ -25,6 +29,8 @@ def remove_sequences_with_X(input_fasta, output_fasta):
         )
         count = SeqIO.write(kept_records, outfile, "fasta")
 
-    print(f"Wrote {count} sequences (removed those containing 'X').")
+    logger.info(
+        "Wrote %d sequences (removed those containing 'X').", count
+    )
         
     

@@ -79,6 +79,7 @@ sca-core -i </path/to/preprocessed/data> -o </path/to/outdir> \
 """
 
 import argparse
+import logging
 import os, sys
 import warnings
 import numpy as np
@@ -94,6 +95,7 @@ import scipy
 import scipy.cluster.hierarchy as sch
 from scipy.spatial.distance import pdist, squareform
 
+from mysca.logging_config import configure_logging
 from mysca.results import (
     PreprocessingResults,
     SCAResults,
@@ -113,6 +115,10 @@ from mysca.constants import SECTOR_COLORS, DEFAULT_BACKGROUND_FREQ
 
 from mysca.pl.plotting import plot_sequence_similarity, plot_dendrogram
 from mysca.pl.plotting import plot_t_distributions, plot_data_2d, plot_data_3d
+
+SCARUN_LOG_FNAME = "scarun.log"
+
+logger = logging.getLogger("mysca.run_sca")
 
 
 def parse_args(args):
@@ -190,27 +196,38 @@ def main(args):
     ##  Housekeeping  ##
     ####################
 
-    printv = get_printv(verbosity)
-    
+    # Create subdirectories within the specified output directory.
+    SCADIR = os.path.join(OUTDIR, "sca_results")
+    IMGDIR = os.path.join(OUTDIR, "images")
+    os.makedirs(OUTDIR, exist_ok=True)
+    os.makedirs(SCADIR, exist_ok=True)
+    os.makedirs(IMGDIR, exist_ok=True)
+
+    configure_logging(
+        verbosity=verbosity,
+        logfile=os.path.join(OUTDIR, SCARUN_LOG_FNAME),
+    )
+
     if SEED is None or SEED <= 0:
         SEED = np.random.randint(2**32)
     rng = np.random.default_rng(seed=SEED)
 
     # Load background frequencies or use the default
     use_default_background = (background_freq is None) or (
-        isinstance(background_freq, str) and 
+        isinstance(background_freq, str) and
             background_freq.lower() in ["default", "none"]
     )
     if use_default_background:
         background_freq = DEFAULT_BACKGROUND_FREQ
     elif isinstance(background_freq, str):
-        if verbosity:
-            print(f"Loading background frequencies from file: {background_freq}")
+        logger.info(
+            "Loading background frequencies from file: %s", background_freq
+        )
         background_freq = load_background(background_freq)
     else:
         msg = f"Cannot handle given argument for background: {background_freq}"
         raise RuntimeError(msg)
-    
+
     # Predefined colors for the sectors
     sector_color_set = {
         "default": SECTOR_COLORS,
@@ -231,28 +248,23 @@ def main(args):
     NSYMS = msa_binary3d.shape[-1]
     msa_obj_orig = prep.msa_obj_orig
     NUM_POS_ORIG = msa_obj_orig.get_alignment_length()
-    
-    # Create subdirectories within the specified output directory.
-    SCADIR = os.path.join(OUTDIR, "sca_results")
-    IMGDIR = os.path.join(OUTDIR, "images")
-    os.makedirs(OUTDIR, exist_ok=True)
-    os.makedirs(SCADIR, exist_ok=True)
-    os.makedirs(IMGDIR, exist_ok=True)
 
     # Create the background frequency distribution q
-    printv("Background frequencies:")
-    printv("  ", ", ".join([
-        f"{k}: {background_freq[k]:.3g}" 
-        for k in np.sort(list(background_freq.keys()))
-    ]))
+    logger.info("Background frequencies:")
+    logger.info(
+        "  %s",
+        ", ".join(
+            f"{k}: {background_freq[k]:.3g}"
+            for k in np.sort(list(background_freq.keys()))
+        ),
+    )
     background_freq_array = np.zeros(len(background_freq))
     for a in background_freq:
         background_freq_array[sym_map[a]] = background_freq[a]    
     background_freq_array = background_freq_array / background_freq_array.sum()
     
     # Run SCA
-    if verbosity:
-        print("Running SCA...")
+    logger.info("Running SCA...")
     if not LOAD_DATA:
         sca_results = run_sca(
             msa_binary3d, weights,
@@ -264,7 +276,6 @@ def main(args):
             pbar=PBAR,
             leave_pbar=True,
             use_jax=USE_JAX,
-            verbosity=verbosity,
         )
         results = SCAResults.from_core_output(sca_results)
         Dia = results.Dia
@@ -284,9 +295,10 @@ def main(args):
     evals_sca = np.flip(evals_sca)
     evecs_sca = np.flip(evecs_sca, axis=1)
 
-    printv("Eigenvalue spectrum of SCA Matrix: {:.3g}, {:.3g}".format(
-        evals_sca.min(), evals_sca.max()
-    ))
+    logger.info(
+        "Eigenvalue spectrum of SCA Matrix: %.3g, %.3g",
+        evals_sca.min(), evals_sca.max(),
+    )
     
     # Perform bootstrapping to get eigenvalue null distribution
     # If N_BOOT is positive, we perform the specified number of bootstrap 
@@ -318,38 +330,44 @@ def main(args):
         np.save(evals_shuff_fpath, evals_shuff)
     elif LOAD_DATA:
         evals_shuff_fpath_toload = os.path.join(LOAD_DATA, "sca_results", EVALS_SHUFF_SAVEAS)
-        printv("Skipping bootstrap. Loading existing null evals at: {}".format(
-                evals_shuff_fpath_toload
-        ))
+        logger.info(
+            "Skipping bootstrap. Loading existing null evals at: %s",
+            evals_shuff_fpath_toload,
+        )
         evals_shuff = np.load(evals_shuff_fpath_toload)
         N_BOOT = evals_shuff.shape[0]
     elif os.path.isfile(evals_shuff_fpath):
-        printv("Skipping bootstrap. Loading existing null evals at: {}".format(
-            evals_shuff_fpath
-        ))
+        logger.info(
+            "Skipping bootstrap. Loading existing null evals at: %s",
+            evals_shuff_fpath,
+        )
         evals_shuff = np.load(evals_shuff_fpath)
         # Determine the bootstrap size from the loaded data
         N_BOOT = evals_shuff.shape[0]
     else:
         evals_shuff = []
         N_BOOT = 0
-        printv("Skipping bootstrap. No existing eigenvalue data found.")
-    
+        logger.info("Skipping bootstrap. No existing eigenvalue data found.")
+
     # Determine kstar, the number of significant eigenvalues. See SI G of [1]
     cutoff = np.mean(evals_shuff[:,1]) + 2 * np.std(evals_shuff[:,1])
     kstar_id = np.sum(evals_sca > cutoff)
-    printv("significant eigenvalue cutoff:", cutoff)
-    printv(f"Identified {kstar_id} significant eigenvalues:\n", evals_sca[:kstar_id])
+    logger.info("significant eigenvalue cutoff: %s", cutoff)
+    logger.info(
+        "Identified %d significant eigenvalues:\n%s",
+        kstar_id, evals_sca[:kstar_id],
+    )
     if kstar <= 0:
         kstar = kstar_id
-        printv(f"Setting kstar={kstar}")
+        logger.info("Setting kstar=%d", kstar)
     else:
         kstar = min(kstar, len(evals_sca))
-        printv(f"Overriding kstar from command line input!")
-        printv(f"Setting kstar={kstar}")
-    
+        logger.info("Overriding kstar from command line input!")
+        logger.info("Setting kstar=%d", kstar)
+
     if kstar == 0:
-        msg = f"No significant eigenvalues (kstar=0). Proceeding with kstar=1"
+        msg = "No significant eigenvalues (kstar=0). Proceeding with kstar=1"
+        logger.warning(msg)
         warnings.warn(msg)
         kstar = 1
 
@@ -376,7 +394,6 @@ def main(args):
         sig_evecs_sca,
         rho=ica_rho, tol=ica_tol, maxiter=ica_maxiter,
         max_attempts=ica_max_attempts,
-        verbosity=verbosity,
     )
     results.v_ica = v_ica_normalized
     results.w_ica = w_ica
@@ -385,8 +402,14 @@ def main(args):
     t_dists_info, top_idxs = fit_t_distributions(v_ica_normalized, p=pstar)
     all_imp_idxs = np.concatenate(top_idxs, axis=0)
     all_imp_idxs_unique = np.unique(all_imp_idxs)
-    printv(f"Identified {len(all_imp_idxs)} important positions (with repeats).")
-    printv(f"Identified {len(all_imp_idxs_unique)} important positions (w/o repeats).")
+    logger.info(
+        "Identified %d important positions (with repeats).",
+        len(all_imp_idxs),
+    )
+    logger.info(
+        "Identified %d important positions (w/o repeats).",
+        len(all_imp_idxs_unique),
+    )
     results.t_dists_info = t_dists_info
 
     # Call statistical sectors, i.e. groups of "co-evolving" positions.
@@ -439,16 +462,20 @@ def main(args):
             )
         missing_ids = requested_ids - retained_ids
         if missing_ids:
-            printv(f"Note: {len(missing_ids)} requested sequence(s) not found "
-                   f"among retained sequences (filtered during preprocessing): "
-                   f"{', '.join(sorted(missing_ids))}")
+            logger.info(
+                "Note: %d requested sequence(s) not found among retained "
+                "sequences (filtered during preprocessing): %s",
+                len(missing_ids), ", ".join(sorted(missing_ids)),
+            )
         found_ids = requested_ids & retained_ids
         sector_seqidxs = np.array([
             sidx for sidx in retained_sequences
             if msa_obj_orig[int(sidx)].id in found_ids
         ])
-        printv(f"Generating per-sequence sectors for "
-               f"{len(sector_seqidxs)}/{len(retained_sequences)} sequences.")
+        logger.info(
+            "Generating per-sequence sectors for %d/%d sequences.",
+            len(sector_seqidxs), len(retained_sequences),
+        )
     else:
         # Default: only the reference sequence
         ref_id = prep.args.get("reference_id") if prep.args else None
@@ -457,17 +484,23 @@ def main(args):
                 sidx for sidx in retained_sequences
                 if msa_obj_orig[int(sidx)].id == ref_id
             ])
-            printv(f"Generating per-sequence sectors for reference "
-                   f"sequence: {ref_id}")
+            logger.info(
+                "Generating per-sequence sectors for reference sequence: %s",
+                ref_id,
+            )
         else:
             sector_seqidxs = np.array([], dtype=int)
             if ref_id is not None:
-                printv(f"Reference sequence '{ref_id}' was filtered out "
-                       f"during preprocessing. "
-                       f"Skipping per-sequence sector mappings.")
+                logger.info(
+                    "Reference sequence '%s' was filtered out during "
+                    "preprocessing. Skipping per-sequence sector mappings.",
+                    ref_id,
+                )
             else:
-                printv("No reference sequence specified. "
-                       "Skipping per-sequence sector mappings.")
+                logger.info(
+                    "No reference sequence specified. "
+                    "Skipping per-sequence sector mappings."
+                )
 
     # Map processed MSA positions to original sequence positions
     rawseq_idxs = get_rawseq_indices_of_msa(msa_obj_orig)
@@ -537,7 +570,7 @@ def main(args):
         sector_color_set,
     )
 
-    printv("Done!")
+    logger.info("Done!")
 
 
 def load_background(fpath):
@@ -547,38 +580,37 @@ def load_background(fpath):
 
 
 def apply_ica(
-        sig_evecs_sca, *, 
+        sig_evecs_sca, *,
         rho,
         tol,
-        maxiter, 
+        maxiter,
         max_attempts,
-        verbosity=1,
 ):
     n_attempts = 0
     while n_attempts < max_attempts:
         n_attempts += 1
         w_ica, ica_delta = run_ica(
-            sig_evecs_sca.T, 
+            sig_evecs_sca.T,
             rho=rho,
             tol=tol,
             maxiter=maxiter,
         )
         if w_ica is None:
-            # ICA failed to converge
-            if verbosity:
-                msg = f"ICA did not converge with parameters rho={rho:3g}, " + \
-                        f"tol={tol:.3g}, maxiter={maxiter}. " + \
-                        f"(Reached tol={ica_delta:.3})"
-                print(msg)
+            logger.warning(
+                "ICA did not converge with parameters rho=%.3g, tol=%.3g, "
+                "maxiter=%s. (Reached tol=%.3g)",
+                rho, tol, maxiter, ica_delta,
+            )
             maxiter *= 2
             rho /= 2
         else:
-            # ICA succeeded
             v_ica = sig_evecs_sca @ w_ica.T
-            if verbosity:
-                print(f"ICA succeeded after {n_attempts} attempts. (tol={tol:.2g})")
+            logger.info(
+                "ICA succeeded after %d attempts. (tol=%.2g)",
+                n_attempts, tol,
+            )
             break
-    
+
     # Check success
     if w_ica is None:
         raise RuntimeError(f"ICA failed to converge in {max_attempts} attempts.")
@@ -627,14 +659,6 @@ def get_groups(v, p=95, method="t-dist"):
         to_be_assigned[top_p_idxs] = False
         groups.append(top_p_idxs)
     return groups
-
-
-def get_printv(verbosity=1) -> callable:
-    """Print wrapper to print only at a given verbosity level."""
-    def printv(*args, v=1, **kwargs):
-        if v <= verbosity:
-            print(*args, **kwargs)
-    return printv
 
 
 def shuffle_columns(m, rng=None):

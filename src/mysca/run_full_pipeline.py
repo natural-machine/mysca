@@ -6,6 +6,7 @@ See references:
 """
 
 import argparse
+import logging
 import os, sys
 import numpy as np
 import matplotlib.pyplot as plt
@@ -22,6 +23,7 @@ import scipy.cluster.hierarchy as sch
 from scipy.spatial.distance import pdist, squareform
 
 from mysca.io import load_msa
+from mysca.logging_config import configure_logging
 from mysca.preprocess import preprocess_msa
 from mysca.preprocess import compute_background_freqs
 from mysca.core import run_sca, run_ica
@@ -34,6 +36,10 @@ from mysca.helpers import get_rawseq_indices_of_msa
 from mysca.constants import SECTOR_COLORS
 
 from mysca.pl import plot_sequence_similarity, plot_dendrogram
+
+FULL_PIPELINE_LOG_FNAME = "full_pipeline.log"
+
+logger = logging.getLogger("mysca.run_full_pipeline")
 
 DEFAULT_BACKGROUND_FREQ = {
         'A': 0.073, 'C': 0.025, 'D': 0.050, 'E': 0.061,
@@ -126,13 +132,23 @@ def main(args):
     pstar = args.pstar
     
     # Housekeeping
+    SCADIR = os.path.join(OUTDIR, "sca_results")
+    IMGDIR = os.path.join(OUTDIR, "images")
+    os.makedirs(OUTDIR, exist_ok=True)
+    os.makedirs(SCADIR, exist_ok=True)
+    os.makedirs(IMGDIR, exist_ok=True)
+
+    configure_logging(
+        verbosity=verbosity,
+        logfile=os.path.join(OUTDIR, FULL_PIPELINE_LOG_FNAME),
+    )
+
     if SEED is None or SEED <= 0:
         SEED = np.random.randint(2**32)
     rng = np.random.default_rng(seed=SEED)
 
     if reference_id is None or reference_id.lower() == "none":
-        if verbosity:
-            print("No reference entry specified.")
+        logger.info("No reference entry specified.")
         reference_id = None
 
     do_compute_background = False
@@ -145,40 +161,33 @@ def main(args):
         do_compute_background = True
         background_freq = None
     elif isinstance(background_freq, str):
-        if verbosity:
-            print(f"Loading background frequencies: {background_freq}")
+        logger.info("Loading background frequencies: %s", background_freq)
         background_freq = load_background(background_freq)
     else:
         msg = f"Cannot handle given argument for background: {background_freq}"
         raise RuntimeError(msg)
-    
+
     sector_color_set = {
         "default": SECTOR_COLORS,
         "none": None,
     }[sector_cmap]
 
-    SCADIR = os.path.join(OUTDIR, "sca_results")
-    IMGDIR = os.path.join(OUTDIR, "images")
-    os.makedirs(OUTDIR, exist_ok=True)
-    os.makedirs(SCADIR, exist_ok=True)
-    os.makedirs(IMGDIR, exist_ok=True)
-
     # Load MSA
     msa_obj_orig, msa_orig, seqids_orig, sym_map = load_msa(
-        MSA_FPATH, format="fasta", 
+        MSA_FPATH, format="fasta",
         mapping=None,  # TODO: consider allowing for specified mapping
-        verbosity=1
     )
     _, NUM_POS_ORIG = msa_orig.shape
     NSYMS = len(sym_map)
-    
-    if verbosity:
-        print(f"Loaded MSA. shape: {msa_orig.shape} (sequences x positions)")
-        print(f"Symbols: {sym_map.aa_list}")
+
+    logger.info(
+        "Loaded MSA. shape: %s (sequences x positions)", msa_orig.shape
+    )
+    logger.info("Symbols: %s", sym_map.aa_list)
 
     # Preprocessing
     msa, preprocessing_results = preprocess_msa(
-        msa_orig, seqids_orig, 
+        msa_orig, seqids_orig,
         mapping=sym_map,
         gap_truncation_thresh=gap_truncation_thresh,
         sequence_gap_thresh=sequence_gap_thresh,
@@ -187,7 +196,6 @@ def main(args):
         sequence_similarity_thresh=sequence_similarity_thresh,
         position_gap_thresh=position_gap_thresh,
         use_pbar=PBAR,
-        verbosity=1,
     )
 
     msa_binary3d = preprocessing_results["msa_binary3d"]
@@ -233,15 +241,16 @@ def main(args):
 
     # Compute the background frequencies if needed and store as an array
     if do_compute_background:
-        if verbosity:
-            print("Computing background frequency from full MSA")
+        logger.info("Computing background frequency from full MSA")
         background_freq = compute_background_freqs(msa_obj_orig, gapstr="-")
-    if verbosity:
-        print("Background frequencies:")
-        print("  ", ", ".join([
-            f"{k}: {background_freq[k]:.3g}" 
+    logger.info("Background frequencies:")
+    logger.info(
+        "  %s",
+        ", ".join(
+            f"{k}: {background_freq[k]:.3g}"
             for k in np.sort(list(background_freq.keys()))
-        ]))
+        ),
+    )
     background_freq_array = np.zeros(len(background_freq))
     for a in background_freq:
         background_freq_array[sym_map[a]] = background_freq[a]    
@@ -254,8 +263,7 @@ def main(args):
         )
     
     # Run SCA
-    if verbosity:
-        print("Running SCA...")
+    logger.info("Running SCA...")
     if not LOAD_DATA:
         sca_results = run_sca(
             msa_binary3d, weights,
@@ -267,7 +275,6 @@ def main(args):
             pbar=PBAR,
             leave_pbar=True,
             use_jax=USE_JAX,
-            verbosity=verbosity,
         )
         Dia = sca_results["Dia"]
         Di = sca_results["Di"]
@@ -299,8 +306,9 @@ def main(args):
     np.save(f"{SCADIR}/topk_conserved_msa_pos.npy", topk_conserved_msa_pos)
     np.save(f"{SCADIR}/top_conserved_Di.npy", top_conserved_Di)
 
-    if verbosity:
-        print("top k conserved MSA positions:", topk_conserved_msa_pos)
+    logger.info(
+        "top k conserved MSA positions: %s", topk_conserved_msa_pos
+    )
 
     # Plot conservation
     fig, ax = plt.subplots(1, 1, figsize=(10,4))
@@ -356,9 +364,10 @@ def main(args):
     evals_sca = np.flip(evals_sca)
     evecs_sca = np.flip(evecs_sca, axis=1)
 
-    if verbosity:
-        print(f"Eigenvalue spectrum of SCA Matrix: " + 
-            f"{evals_sca.min():.3g}, {evals_sca.max():.3f}")
+    logger.info(
+        "Eigenvalue spectrum of SCA Matrix: %.3g, %.3f",
+        evals_sca.min(), evals_sca.max(),
+    )
     
     # Plot Covariance Matrix
     if Cij_raw is not None:
@@ -423,23 +432,22 @@ def main(args):
             evals_shuff[iteridx] = np.flip(evals)
         np.save(f"{SCADIR}/{evals_shuff_saveas}", evals_shuff)
     elif LOAD_DATA:
-        if verbosity:
-            print("Skipping bootstrap. Loading existing null evals at: {}".format(
-                f"{LOAD_DATA}/{evals_shuff_saveas}"
-            ))
+        logger.info(
+            "Skipping bootstrap. Loading existing null evals at: %s",
+            f"{LOAD_DATA}/{evals_shuff_saveas}",
+        )
         evals_shuff = np.load(f"{LOAD_DATA}/{evals_shuff_saveas}")
         N_BOOT = evals_shuff.shape[0]
     elif os.path.isfile(f"{SCADIR}/{evals_shuff_saveas}"):
-        if verbosity:
-            print("Skipping bootstrap. Loading existing null evals at: {}".format(
-                f"{SCADIR}/{evals_shuff_saveas}"
-            ))
+        logger.info(
+            "Skipping bootstrap. Loading existing null evals at: %s",
+            f"{SCADIR}/{evals_shuff_saveas}",
+        )
         evals_shuff = np.load(f"{SCADIR}/{evals_shuff_saveas}")
         N_BOOT = evals_shuff.shape[0]
     else:
         evals_shuff = []
-        if verbosity:
-            print("Skipping bootstrap. No existing eigenvalue data found.")
+        logger.info("Skipping bootstrap. No existing eigenvalue data found.")
 
     # Plot SCA matrix spectrum null vs data
     fig, ax = plt.subplots(1, 1)
@@ -464,19 +472,18 @@ def main(args):
     # Determine k^*, the number of significant eigenvalues. See SI G of [1]
     cutoff = np.mean(evals_shuff[:,1]) + 2 * np.std(evals_shuff[:,1])
     kstar_id = np.sum(evals_sca > cutoff)
-    if verbosity:
-        print("significant eigenvalue cutoff:", cutoff)
-        print(f"Identified {kstar_id} significant eigenvalues:\n", 
-              evals_sca[:kstar_id])
+    logger.info("significant eigenvalue cutoff: %s", cutoff)
+    logger.info(
+        "Identified %d significant eigenvalues:\n%s",
+        kstar_id, evals_sca[:kstar_id],
+    )
     if kstar <= 0:
         kstar = kstar_id
-        if verbosity:
-            print(f"Setting kstar={kstar}")
+        logger.info("Setting kstar=%d", kstar)
     else:
         kstar = min(kstar, len(evals_sca))
-        if verbosity:
-            print(f"Overriding kstar from command line input!")
-            print(f"Setting kstar={kstar}")
+        logger.info("Overriding kstar from command line input!")
+        logger.info("Setting kstar=%d", kstar)
     
     # Consider top kstar values, excluding top value
     sig_evals_sca = evals_sca[:kstar]
@@ -521,10 +528,9 @@ def main(args):
     rho = 1e-1
     tol = 1e-7
     v_ica_normalized, _, w_ica = apply_ica(
-        sig_evecs_sca, 
-        rho=rho, tol=tol, maxiter=1E6, 
-        max_attempts=5, 
-        verbosity=verbosity,
+        sig_evecs_sca,
+        rho=rho, tol=tol, maxiter=1E6,
+        max_attempts=5,
     )
     np.save(f"{SCADIR}/v_ica_normalized.npy", v_ica_normalized)
     np.save(f"{SCADIR}/w_ica.npy", w_ica)
@@ -534,11 +540,15 @@ def main(args):
         v_ica_normalized, p=pstar
     )
     all_imp_idxs = np.concatenate(top_idxs, axis=0)
-    if verbosity:
-        print(f"Identified {len(all_imp_idxs)} important positions (with repeats).")
+    logger.info(
+        "Identified %d important positions (with repeats).",
+        len(all_imp_idxs),
+    )
     all_imp_idxs_unique = np.unique(all_imp_idxs)
-    if verbosity:
-        print(f"Identified {len(all_imp_idxs_unique)} important positions (w/o repeats).")
+    logger.info(
+        "Identified %d important positions (w/o repeats).",
+        len(all_imp_idxs_unique),
+    )
     
     np.save(f"{SCADIR}/all_important_positions.npy", all_imp_idxs_unique)
     with open(f"{SCADIR}/t_dists_info.json", "w") as f:
@@ -727,8 +737,7 @@ def main(args):
             np.save(f"{subdir2}/sector_{gidx}_pdbpos_{id}.npy", group_arr)
             np.save(f"{subdir2}/sector_{gidx}_scores_{id}.npy", group_scores_arr)
     
-    if verbosity:
-        print("Done!")
+    logger.info("Done!")
 
 
 def load_background(fpath):
@@ -738,36 +747,35 @@ def load_background(fpath):
 
 
 def apply_ica(
-        sig_evecs_sca, *, 
+        sig_evecs_sca, *,
         rho,
         tol,
-        maxiter, 
+        maxiter,
         max_attempts,
-        verbosity=1,
 ):
     n_attempts = 0
     while n_attempts < max_attempts:
         n_attempts += 1
         w_ica, ica_delta = run_ica(
-            sig_evecs_sca.T, 
+            sig_evecs_sca.T,
             rho=rho,
             tol=tol,
             maxiter=maxiter,
         )
         if w_ica is None:
-            # ICA failed to converge
-            if verbosity:
-                msg = f"ICA did not converge with parameters rho={rho:3g}, " + \
-                        f"tol={tol:.3g}, maxiter={maxiter}. " + \
-                        f"(Reached tol={ica_delta:.3})"
-                print(msg)
+            logger.warning(
+                "ICA did not converge with parameters rho=%.3g, tol=%.3g, "
+                "maxiter=%s. (Reached tol=%.3g)",
+                rho, tol, maxiter, ica_delta,
+            )
             maxiter *= 2
             rho /= 2
         else:
-            # ICA succeeded
             v_ica = sig_evecs_sca @ w_ica.T
-            if verbosity:
-                print(f"ICA succeeded after {n_attempts} attempts. (tol={tol:.2g})")
+            logger.info(
+                "ICA succeeded after %d attempts. (tol=%.2g)",
+                n_attempts, tol,
+            )
             break
     
     # Check success

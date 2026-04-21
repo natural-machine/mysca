@@ -2,6 +2,8 @@
 
 """
 
+import logging
+
 import numpy as np
 from numpy.typing import NDArray
 from collections import Counter
@@ -15,6 +17,8 @@ torch.set_float32_matmul_precision("high")
 
 from mysca.mappings import SymMap, DEFAULT_MAP
 from mysca.helpers import iterblocks
+
+logger = logging.getLogger(__name__)
 
 
 def preprocess_msa(
@@ -68,9 +72,14 @@ def preprocess_msa(
             retained_sequences_ids: (list[str]) retained sequence IDs.
             sequence_weights: (NDArray[float]) sequence weights.
             fi0_pretruncation: (NDArray[float]) gap frequency fi0.
-            reference_results: (dict): reference similarity results. If a 
-                reference ID is specified, contains keys reference_id, ref_idx, 
+            reference_results: (dict): reference similarity results. If a
+                reference ID is specified, contains keys reference_id, ref_idx,
                 and ref_similarity.
+            filter_history: (list[dict]) per-stage record of dataset size and
+                the pre-filter statistic distribution with its threshold, used
+                for diagnostic plotting. Each entry has keys: stage, label,
+                n_sequences, n_positions, n_filtered, axis, stat_name,
+                stat_values, threshold, threshold_symbol, filter_direction.
     """
 
     args = {
@@ -82,14 +91,17 @@ def preprocess_msa(
         "position_gap_thresh": position_gap_thresh,
     }
     
-    if verbosity:
-        print("Preprocessing with parameters:")
-        print(f"  gap_truncation_thresh τ={gap_truncation_thresh}")
-        print(f"  sequence_gap_thresh γ_seq={sequence_gap_thresh}")
-        print(f"  reference_id: {reference_id}")
-        print(f"  reference_similarity_thresh Δ={reference_similarity_thresh}")
-        print(f"  sequence_similarity_thresh δ={sequence_similarity_thresh}")
-        print(f"  position_gap_thresh γ_pos={position_gap_thresh}")
+    logger.info("Preprocessing with parameters:")
+    logger.info("  gap_truncation_thresh τ=%s", gap_truncation_thresh)
+    logger.info("  sequence_gap_thresh γ_seq=%s", sequence_gap_thresh)
+    logger.info("  reference_id: %s", reference_id)
+    logger.info(
+        "  reference_similarity_thresh Δ=%s", reference_similarity_thresh
+    )
+    logger.info(
+        "  sequence_similarity_thresh δ=%s", sequence_similarity_thresh
+    )
+    logger.info("  position_gap_thresh γ_pos=%s", position_gap_thresh)
     
     msa_orig = msa
     msa = msa_orig.copy()
@@ -114,68 +126,127 @@ def preprocess_msa(
     retained_sequences = np.arange(num_seqs)
     retained_positions = np.arange(num_pos)
 
+    # Record dataset size and the pre-filter statistic at each stage
+    filter_history = [{
+        "stage": "initial",
+        "label": "initial",
+        "n_sequences": num_seqs,
+        "n_positions": num_pos,
+        "n_filtered": 0,
+        "axis": None,
+        "stat_name": None,
+        "stat_values": None,
+        "threshold": None,
+        "threshold_symbol": None,
+        "filter_direction": None,
+    }]
+
     # Constuct the boolean MSA matrix
     xmsa = np.eye(NUM_SYMS, dtype=bool)[msa][:,:,:-1]
     xmsa = xmsa.astype(np.int16)
 
     #~~~ Remove columns (i.e. positions) with too many gaps
-    if verbosity:
-        print("Removing positions with too many gaps...")
+    logger.info("Removing positions with too many gaps...")
     gapfreqs = np.sum(msa == GAP, axis=0) / msa.shape[0]
     screen = gapfreqs < gap_truncation_thresh
     msa = msa[:,screen]  # keep columns with gap freq < gap_truncation_thresh
     xmsa = xmsa[:,screen,:]
     retained_positions = retained_positions[screen]
-    if verbosity:
-        print(f"Filtered {np.sum(~screen)} positions at threshold τ={gap_truncation_thresh}.")
-        print(f"  MSA shape: {msa.shape} (sequences x positions)")
+    filter_history.append({
+        "stage": "position_gap",
+        "label": "position gap (τ)",
+        "n_sequences": msa.shape[0],
+        "n_positions": msa.shape[1],
+        "n_filtered": int(np.sum(~screen)),
+        "axis": "positions",
+        "stat_name": "gap frequency per position",
+        "stat_values": gapfreqs.copy(),
+        "threshold": gap_truncation_thresh,
+        "threshold_symbol": "τ",
+        "filter_direction": "above",
+    })
+    logger.info(
+        "Filtered %d positions at threshold τ=%s.",
+        int(np.sum(~screen)), gap_truncation_thresh,
+    )
+    logger.info("  MSA shape: %s (sequences x positions)", msa.shape)
     assert len(retained_positions) == msa.shape[1], "Mismatch"
 
     #~~~ Remove rows (i.e. sequences) with too many gaps
-    if verbosity:
-        print("Removing sequences with too many gaps...")
+    logger.info("Removing sequences with too many gaps...")
     gapfreqs = np.sum(msa == GAP, axis=1) / msa.shape[1]
     screen = gapfreqs < sequence_gap_thresh
     msa = msa[screen,:]  # keep rows with gap freq < sequence_gap_thresh
     xmsa = xmsa[screen,:,:]
     retained_sequences = retained_sequences[screen]
     seqids = np.array([seqids_orig[i] for i in retained_sequences])
-    if verbosity:
-        print(f"Filtered {np.sum(~screen)} sequences at threshold γ_seq={sequence_gap_thresh}.")
-        print(f"  MSA shape: {msa.shape} (sequences x positions)")
+    filter_history.append({
+        "stage": "sequence_gap",
+        "label": "sequence gap (γ_seq)",
+        "n_sequences": msa.shape[0],
+        "n_positions": msa.shape[1],
+        "n_filtered": int(np.sum(~screen)),
+        "axis": "sequences",
+        "stat_name": "gap frequency per sequence",
+        "stat_values": gapfreqs.copy(),
+        "threshold": sequence_gap_thresh,
+        "threshold_symbol": "γ_seq",
+        "filter_direction": "above",
+    })
+    logger.info(
+        "Filtered %d sequences at threshold γ_seq=%s.",
+        int(np.sum(~screen)), sequence_gap_thresh,
+    )
+    logger.info("  MSA shape: %s (sequences x positions)", msa.shape)
     assert len(retained_sequences) == msa.shape[0], "Mismatch"
 
     #~~~ Compare with reference, if specified
     if reference_id:
         ref_idx = np.where(seqids == reference_id)[0][0]
-        if verbosity:
-            print(f"Found reference seq {reference_id} at position {ref_idx}.")
+        logger.info(
+            "Found reference seq %s at position %d.", reference_id, ref_idx
+        )
         refrow = msa[ref_idx,:]
         ref_similarity = np.sum(msa == refrow, axis=1) / msa.shape[1]
         ref_results = {}
         ref_results["reference_id"] = reference_id
         ref_results["ref_idx"] = ref_idx
         ref_results["ref_similarity"] = ref_similarity
-        
+
         # Remove rows too dissimilar from the reference
-        if verbosity:
-            print("Removing sequences too dissimilar from reference...")
+        logger.info("Removing sequences too dissimilar from reference...")
         screen = ref_similarity >= reference_similarity_thresh
         msa = msa[screen,:]  # keep rows with similarity >= reference_similarity_thresh
         xmsa = xmsa[screen,:,:]
         retained_sequences = retained_sequences[screen]
         seqids = np.array([seqids_orig[i] for i in retained_sequences])
-        if verbosity:
-            print(f"Filtered {np.sum(~screen)} sequences at threshold Δ={reference_similarity_thresh}.")
-            print(f"  MSA shape: {msa.shape} (sequences x positions)")
+        filter_history.append({
+            "stage": "reference_similarity",
+            "label": "reference similarity (Δ)",
+            "n_sequences": msa.shape[0],
+            "n_positions": msa.shape[1],
+            "n_filtered": int(np.sum(~screen)),
+            "axis": "sequences",
+            "stat_name": "similarity to reference",
+            "stat_values": ref_similarity.copy(),
+            "threshold": reference_similarity_thresh,
+            "threshold_symbol": "Δ",
+            "filter_direction": "below",
+        })
+        logger.info(
+            "Filtered %d sequences at threshold Δ=%s.",
+            int(np.sum(~screen)), reference_similarity_thresh,
+        )
+        logger.info("  MSA shape: %s (sequences x positions)", msa.shape)
         assert len(retained_sequences) == msa.shape[0], "Mismatch"
     else:
         ref_results = {}
 
     #~~~ Compute sequence weights
-    if verbosity:
-        print(f"Computing weights with version: {weight_computation_version}")
-        print(f"Computing sequence weights (round 1)...")
+    logger.info(
+        "Computing weights with version: %s", weight_computation_version
+    )
+    logger.info("Computing sequence weights (round 1)...")
 
     ws = compute_weights(
         version=weight_computation_version,
@@ -189,21 +260,34 @@ def preprocess_msa(
     )
 
     #~~~ Remove positions with too many (weighted) gaps
-    if verbosity:
-        print("Removing positions with too many (weighted) gaps...")
+    logger.info("Removing positions with too many (weighted) gaps...")
     fi0 = np.sum(ws[:,None] * (msa == GAP), axis=0) / ws.sum()
     screen = fi0 < position_gap_thresh
     msa = msa[:,screen]
     xmsa = xmsa[:,screen,:]
     retained_positions = retained_positions[screen]
-    if verbosity:
-        print(f"Filtered {np.sum(~screen)} positions at threshold γ_pos={position_gap_thresh}.")
-        print(f"  MSA shape: {msa.shape} (sequences x positions)")
+    filter_history.append({
+        "stage": "position_weighted_gap",
+        "label": "weighted position gap (γ_pos)",
+        "n_sequences": msa.shape[0],
+        "n_positions": msa.shape[1],
+        "n_filtered": int(np.sum(~screen)),
+        "axis": "positions",
+        "stat_name": "weighted gap frequency per position",
+        "stat_values": fi0.copy(),
+        "threshold": position_gap_thresh,
+        "threshold_symbol": "γ_pos",
+        "filter_direction": "above",
+    })
+    logger.info(
+        "Filtered %d positions at threshold γ_pos=%s.",
+        int(np.sum(~screen)), position_gap_thresh,
+    )
+    logger.info("  MSA shape: %s (sequences x positions)", msa.shape)
     assert len(retained_positions) == msa.shape[1], "Mismatch"
 
     #~~~ Re-compute sequence weights
-    if verbosity:
-        print("Computing sequence weights (round 2)...")
+    logger.info("Computing sequence weights (round 2)...")
 
     ws = compute_weights(
         version=weight_computation_version,
@@ -216,8 +300,7 @@ def preprocess_msa(
         num_aas=NUM_AAS
     )
     
-    if verbosity:
-        print(f"Effective sample size (sum of weights): {ws.sum()}")
+    logger.info("Effective sample size (sum of weights): %s", ws.sum())
 
     preprocessing_results = {
         "msa_binary3d": xmsa.astype(int),
@@ -225,9 +308,10 @@ def preprocess_msa(
         "retained_positions": retained_positions,
         "retained_sequence_ids": seqids,
         "sequence_weights": ws,
-        "fi0_pretruncation": fi0, 
+        "fi0_pretruncation": fi0,
         "reference_results": ref_results,
         "args": args,
+        "filter_history": filter_history,
     }
 
     return msa, preprocessing_results
@@ -496,7 +580,7 @@ def _compute_weights_torch(**kwargs):
 
     device = _detect_device()
     if device == "cpu":
-        print("No device found. Reverting to version v5!")
+        logger.warning("No device found. Reverting to version v5!")
         return _compute_weights_v5(**kwargs)
 
     # move msa to torch

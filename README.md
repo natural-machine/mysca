@@ -13,13 +13,13 @@ Create a conda environment:
 
 ```bash
 # Local project environment
-mamba env create -p ./env -f environment.yml
+conda env create -p ./env -f environment.yml
 conda activate ./env
 ```
 
 ```bash
 # Global environment
-mamba env create -n mysca-env -f environment.yml
+conda env create -n mysca-env -f environment.yml
 conda activate mysca-env
 ```
 

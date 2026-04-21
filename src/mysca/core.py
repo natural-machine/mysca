@@ -2,6 +2,8 @@
 
 """
 
+import logging
+
 import numpy as np
 from numpy.typing import NDArray
 import tqdm
@@ -10,6 +12,8 @@ import jax
 jax.config.update("jax_enable_x64", True)
 
 from mysca.mappings import SymMap, DEFAULT_MAP
+
+logger = logging.getLogger(__name__)
 
 
 def run_sca(
@@ -57,8 +61,7 @@ def run_sca(
     fi0 = 1 - np.sum(ws[:,None,None] * xmsa, axis=(0,2)) / ws.sum()
     if np.any(np.isclose(fi0, 0)):
         # TODO: handle this
-        if verbosity > 1:
-            print("0 value encountered in SCA calculation of fi0!")
+        logger.debug("0 value encountered in SCA calculation of fi0!")
     fia = (1 - lam) * np.sum(ws_norm[:,None,None] * xmsa, axis=0) + lam / nsyms
 
     # Compute correlated conservation
@@ -154,11 +157,10 @@ def run_ica(
         dw = rho * (id + (1 - 2 * g) @ y.T) @ w
         w += dw
         if np.max(np.abs(dw)) < tol:
-            if verbosity:
-                print(f"Converged in {itercount} iterations")
+            logger.info("Converged in %d iterations", itercount)
             return w, np.max(np.abs(dw))
         itercount += 1
-    print(f"Did not converge in {maxiter} iterations")
+    logger.warning("Did not converge in %d iterations", maxiter)
     return None, np.max(np.abs(dw))
 
 
