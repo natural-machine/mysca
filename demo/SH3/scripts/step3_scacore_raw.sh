@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-outdir=out/from_msa
+outdir=out/from_raw
 
 sca-core \
     -i ${outdir}/preprocessing \
