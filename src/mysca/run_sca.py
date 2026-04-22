@@ -114,8 +114,8 @@ from mysca.helpers import get_group_rawseq_scores_by_entry
 from mysca.helpers import get_rawseq_indices_of_msa
 from mysca.constants import SECTOR_COLORS, DEFAULT_BACKGROUND_FREQ
 
-from mysca.pl.plotting import plot_sequence_similarity, plot_dendrogram
-from mysca.pl.plotting import plot_t_distributions, plot_data_2d, plot_data_3d
+from mysca.pl import plot_sequence_similarity, plot_dendrogram
+from mysca.pl import plot_t_distributions, plot_data_2d, plot_data_3d
 
 SCARUN_LOG_FNAME = "scarun.log"
 
