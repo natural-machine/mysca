@@ -119,3 +119,47 @@ def test_plot_data_3d_returns_axes_and_skips_save(empty_imgdir):
     assert os.listdir(empty_imgdir) == []
     import matplotlib.pyplot as plt
     plt.close(ax.get_figure())
+
+
+def test_plot_t_distributions_max_plots_caps_subplots(empty_imgdir):
+    """max_plots=N produces a figure with exactly N subplots."""
+    from mysca.pl import plot_t_distributions
+    rng = np.random.default_rng(0)
+    v = rng.standard_normal((50, 5))
+    t_dists_info = [
+        {"df": 10.0, "loc": 0.0, "scale": 1.0, "cutoff": 2.0}
+        for _ in range(5)
+    ]
+    fig = plot_t_distributions(
+        v, t_dists_info, empty_imgdir, max_plots=2, save=False,
+    )
+    # With 2 subplots, fig.axes has length 2.
+    assert len(fig.axes) == 2
+    import matplotlib.pyplot as plt
+    plt.close(fig)
+
+
+def test_plot_t_distributions_max_plots_none_is_all(empty_imgdir):
+    from mysca.pl import plot_t_distributions
+    v = np.random.default_rng(0).standard_normal((50, 3))
+    t_dists_info = [
+        {"df": 10.0, "loc": 0.0, "scale": 1.0, "cutoff": 2.0}
+        for _ in range(3)
+    ]
+    fig = plot_t_distributions(v, t_dists_info, empty_imgdir, save=False)
+    assert len(fig.axes) == 3
+    import matplotlib.pyplot as plt
+    plt.close(fig)
+
+
+def test_plot_t_distributions_max_plots_zero_returns_none(empty_imgdir):
+    from mysca.pl import plot_t_distributions
+    v = np.random.default_rng(0).standard_normal((50, 3))
+    t_dists_info = [
+        {"df": 10.0, "loc": 0.0, "scale": 1.0, "cutoff": 2.0}
+        for _ in range(3)
+    ]
+    result = plot_t_distributions(
+        v, t_dists_info, empty_imgdir, max_plots=0, save=False,
+    )
+    assert result is None

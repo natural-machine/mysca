@@ -414,13 +414,24 @@ def plot_t_distributions(
         v, t_dists_info,
         outdir=".",
         *,
+        max_plots=None,
         filename="t_distributions.png",
         save=True,
 ):
-    """Plot per-IC t-distribution fit with cutoff marker."""
+    """Plot per-IC t-distribution fit with cutoff marker.
+
+    By default one subplot is rendered per column of ``v``. Pass
+    ``max_plots=N`` to render only the first ``N`` ICs (useful from
+    entrypoints that want to skip non-significant ICs without discarding
+    the saved ``t_dists_info`` for them).
+    """
     _, nics = v.shape
+    if max_plots is not None:
+        nics = min(max_plots, nics)
+    if nics <= 0:
+        return None
     fig, axes = plt.subplots(nics, 1, figsize=(5, 3 * nics))
-    for i in range(v.shape[1]):
+    for i in range(nics):
         vi = v[:, i]
         tinfo = t_dists_info[i]
         ax = axes[i] if nics > 1 else axes

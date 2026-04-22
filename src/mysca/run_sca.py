@@ -602,9 +602,15 @@ def main(args):
     group_rawseq_scores_by_entry = get_group_rawseq_scores_by_entry(
         msa_obj_orig, sector_seqidxs, groups, group_rawseq_scores
     )
+    # Per-sequence sector mappings scale with n_components × |sector_seqidxs|
+    # and dominate on-disk size when the user requests many ICs plus
+    # `--sectors_for all`. Restrict this to the kstar significant ICs;
+    # non-significant IC groups still get their group-index file on disk
+    # (via SCAResults.save), but we don't expand them per sequence.
     msa_stat_sectors_data = {}
     pdb_stat_sectors_data = {}
-    for gidx in range(len(groups)):
+    n_sector_groups = min(kstar, len(groups))
+    for gidx in range(n_sector_groups):
         for i, seqidx in enumerate(sector_seqidxs):
             entry = msa_obj_orig[int(seqidx)]
             id = entry.id
@@ -613,6 +619,13 @@ def main(args):
             msa_stat_sectors_data[f"group_{gidx}_{id}"] = group_arr
             pdb_stat_sectors_data[f"sector_{gidx}_pdbpos_{id}"] = group_arr
             pdb_stat_sectors_data[f"sector_{gidx}_scores_{id}"] = group_scores_arr
+    if len(groups) > n_sector_groups:
+        logger.info(
+            "Per-sequence sector mappings generated for the top %d "
+            "(significant) ICs only; %d additional non-significant IC "
+            "group(s) are saved as index files but not expanded per sequence.",
+            n_sector_groups, len(groups) - n_sector_groups,
+        )
 
     results.statsectors_msa = msa_stat_sectors_data
     results.statsectors_seq = pdb_stat_sectors_data
@@ -1028,8 +1041,11 @@ def make_plots(
         plot_dendrogram(Cij, IMGDIR, nclusters=kstar)
 
 
-    # Plot t-distributions
-    plot_t_distributions(v_ica_normalized, t_dists_info, IMGDIR)
+    # Plot t-distributions for the top-kstar (significant) ICs only;
+    # non-significant IC fits are still in t_dists_info on disk.
+    plot_t_distributions(
+        v_ica_normalized, t_dists_info, IMGDIR, max_plots=kstar,
+    )
 
 
 

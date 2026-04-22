@@ -150,6 +150,42 @@ def test_n_components_clamped_down_to_L(prepped_indir):
     remove_dir(outdir)
 
 
+def test_per_sequence_sector_mapping_scoped_to_kstar(prepped_indir):
+    """Per-sequence sector mappings only get populated for the top kstar
+    ICs, even when n_components is larger. Non-significant IC groups
+    still land on disk as index files but are not expanded per sequence.
+    """
+    outdir = f"{TMPDIR}/scarun_sector_scope"
+    # Force kstar low and n_components wider so the gap is observable.
+    _run_sca(prepped_indir, outdir, kstar=2, n_components="all")
+    kstar = _load_kstar(outdir)
+    n_components = _load_n_components(outdir)
+    assert kstar == 2
+    assert n_components > kstar
+
+    # statsectors_msa keys are "group_{gidx}_{seqid}".
+    statsectors = dict(np.load(
+        os.path.join(outdir, "statsectors_msa.npz"), allow_pickle=True,
+    ))
+    group_indices_seen = {
+        int(key.split("_")[1]) for key in statsectors if key.startswith("group_")
+    }
+    assert group_indices_seen <= set(range(kstar)), (
+        f"Expected statsectors only for groups 0..{kstar - 1}; "
+        f"saw {sorted(group_indices_seen)}"
+    )
+
+    # All IC groups (0..n_components-1) are still saved as per-IC msa_sectors files.
+    sector_dir = os.path.join(outdir, "sca_results", "msa_sectors")
+    files = sorted(os.listdir(sector_dir))
+    for i in range(n_components):
+        assert f"sector_{i}_msapos.npy" in files, (
+            f"Missing per-IC msa_sectors file for IC {i}"
+        )
+
+    remove_dir(outdir)
+
+
 @pytest.mark.parametrize("bad", ["nope", "0", "-1"])
 def test_n_components_type_rejects_bad_strings(bad):
     """argparse type converter rejects non-positive ints and unknown strings."""
