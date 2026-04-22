@@ -86,13 +86,18 @@ logger = logging.getLogger("mysca.run_preprocessing")
 def parse_args(args):
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--msa_fpath", type=str, required=True,
-                        help="Filepath of input MSA in fasta format.")
-    parser.add_argument("-o", "--outdir", type=str, required=True, 
+                        help="Filepath of input MSA.")
+    parser.add_argument("-o", "--outdir", type=str, required=True,
                         help="Output directory.")
     parser.add_argument("-v", "--verbosity", type=int, default=1)
     parser.add_argument("--pbar", action="store_true")
     parser.add_argument("--plot", action="store_true")
-    
+
+    parser.add_argument(
+        "--input_format", type=str, default="fasta",
+        choices=["fasta", "stockholm"],
+        help="Format of the input MSA file. Default 'fasta'.",
+    )
     parser.add_argument("--syms", type=str, default="default")
     parser.add_argument("--gapsym", type=str, default="-")
     parser.add_argument("--weight_method", type=str, default="v5", 
@@ -177,9 +182,9 @@ def main(args):
         sym_map = SymMap(aa_syms=syms, gapsym=gapsym)
 
     # Load MSA
-    logger.info("Loading MSA from: %s", msa_fpath)
+    logger.info("Loading MSA (%s) from: %s", args.input_format, msa_fpath)
     msa_obj_orig, msa_orig, seqids_orig, sym_map = load_msa(
-        msa_fpath, format="fasta",
+        msa_fpath, format=args.input_format,
         mapping=sym_map,
     )
     num_seq_orig, num_pos_orig = msa_orig.shape

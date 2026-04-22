@@ -28,6 +28,7 @@ from mysca.logging_config import configure_logging
 from mysca.prealign import (
     ALIGNERS,
     CLUSTERERS,
+    SUPPORTED_ALIGNMENT_FORMATS,
     _resolve_bin,
     run_align,
     run_cluster,
@@ -36,7 +37,12 @@ from mysca.prealign import (
 PREALIGN_LOG_FNAME = "prealign.log"
 PREALIGN_ARGS_FNAME = "prealign_args.json"
 CLUSTERED_FASTA_FNAME = "clustered.fasta"
-ALIGNED_FASTA_FNAME = "aligned.fasta"
+ALIGNED_BASENAME = "aligned"
+
+_ALIGNED_EXT = {
+    "fasta": ".fasta",
+    "stockholm": ".sto",
+}
 
 logger = logging.getLogger("mysca.run_prealign")
 
@@ -74,6 +80,11 @@ def parse_args(args):
                        help="Explicit path to the alignment binary.")
     align.add_argument("--align_extra", nargs="*", default=[],
                        help="Extra arguments passed through to the aligner.")
+    align.add_argument(
+        "--output_format", type=str, default="fasta",
+        choices=list(SUPPORTED_ALIGNMENT_FORMATS),
+        help="Format for the aligned output. Default 'fasta'.",
+    )
 
     return parser.parse_args(args)
 
@@ -118,18 +129,24 @@ def main(args):
         aligner_input = input_fpath
 
     # Stage 2: alignment.
-    aligned_fpath = os.path.join(outdir, ALIGNED_FASTA_FNAME)
+    aligned_fname = ALIGNED_BASENAME + _ALIGNED_EXT[args.output_format]
+    aligned_fpath = os.path.join(outdir, aligned_fname)
     run_align(
         aligner_input, aligned_fpath,
         method=args.align,
         threads=args.align_threads,
         bin_path=args.align_bin,
         extra_args=args.align_extra,
+        output_format=args.output_format,
     )
 
-    logger.info("Prealign complete. Aligned FASTA at: %s", aligned_fpath)
     logger.info(
-        "Next step: sca-preprocess -i %s -o <preprocess_outdir>", aligned_fpath,
+        "Prealign complete. Aligned output (%s) at: %s",
+        args.output_format, aligned_fpath,
+    )
+    logger.info(
+        "Next step: sca-preprocess -i %s --input_format %s -o <preprocess_outdir>",
+        aligned_fpath, args.output_format,
     )
 
 

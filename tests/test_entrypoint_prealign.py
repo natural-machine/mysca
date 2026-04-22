@@ -8,7 +8,7 @@ import os
 import shutil
 
 import pytest
-from Bio import SeqIO
+from Bio import AlignIO, SeqIO
 
 from tests.conftest import DATDIR, TMPDIR, remove_dir
 
@@ -86,6 +86,31 @@ def test_cluster_then_align():
 
     lengths = _aligned_lengths(aligned)
     assert len(lengths) == 1, f"Non-uniform aligned lengths: {lengths}"
+
+    remove_dir(outdir)
+
+
+@needs_mafft
+def test_align_stockholm_output():
+    outdir = f"{TMPDIR}/prealign_sto_out"
+    if os.path.isdir(outdir):
+        remove_dir(outdir)
+    args = parse_args([
+        "-i", INPUT_FASTA,
+        "-o", outdir,
+        "--output_format", "stockholm",
+        "-v", "0",
+    ])
+    main(args)
+
+    aligned = os.path.join(outdir, "aligned.sto")
+    assert os.path.isfile(aligned)
+    assert not os.path.isfile(os.path.join(outdir, "aligned.fasta"))
+
+    with open(aligned) as f:
+        aln = AlignIO.read(f, "stockholm")
+    assert len(aln) == _record_count(INPUT_FASTA)
+    assert len({len(rec.seq) for rec in aln}) == 1
 
     remove_dir(outdir)
 

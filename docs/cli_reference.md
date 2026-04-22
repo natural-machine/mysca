@@ -42,6 +42,7 @@ The aligned output is written to `<output-dir>/aligned.fasta`.
 | `--align_threads` | 1 | Threads for the alignment tool |
 | `--align_bin` | (from PATH) | Explicit path to the alignment binary |
 | `--align_extra` | [] | Extra arguments passed through to the aligner |
+| `--output_format` | `fasta` | Format of the aligned output. Choices: `fasta`, `stockholm`. The output filename is `aligned.fasta` or `aligned.sto` accordingly |
 
 ### Optional Arguments
 
@@ -70,8 +71,9 @@ sca-preprocess -i <input-msa> -o <output-dir> [options]
 
 | Argument | Description |
 |----------|-------------|
-| `-i, --msa_fpath` | Filepath of input MSA in FASTA format |
+| `-i, --msa_fpath` | Filepath of input MSA |
 | `-o, --outdir` | Output directory |
+| `--input_format` | Format of the input MSA file. Choices: `fasta` (default), `stockholm`. Format is never inferred from the filename |
 
 ### SCA Parameters
 

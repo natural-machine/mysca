@@ -67,8 +67,9 @@ sca-prealign -i <raw.fasta> -o <prealign-outdir> \
     --cluster mmseqs2 --cluster_min_seq_id 0.9
 ```
 
-The aligned output lives at `<prealign-outdir>/aligned.fasta` and can be fed
-directly to `sca-preprocess -i`.
+The aligned output lives at `<prealign-outdir>/aligned.fasta` (or
+`aligned.sto` if `--output_format stockholm`) and can be fed directly to
+`sca-preprocess -i` (with matching `--input_format` when Stockholm).
 
 **External tools.** `sca-prealign` shells out to `mafft` (always) and `mmseqs`
 (only when `--cluster mmseqs2`). These binaries must be on `PATH` — the
