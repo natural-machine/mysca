@@ -349,11 +349,7 @@ def compute_background_freqs(msa_obj, gapstr="-"):
     return background_freqs
 
 
-def compute_weights(version="v1", **kwargs):
-    if version == "v1":
-        return _compute_weights_v1(**kwargs)
-    if version == "v2":
-        return _compute_weights_v2(**kwargs)
+def compute_weights(version="v5", **kwargs):
     if version == "v3":
         return _compute_weights_v3(**kwargs)
     elif version == "v4":
@@ -366,43 +362,6 @@ def compute_weights(version="v1", **kwargs):
         return _compute_weights_torch(**kwargs)
     else:
         raise RuntimeError(f"Weight computation {version} not found")
-
-
-def _compute_weights_v1(**kwargs):
-    raise RuntimeError("BUGGY VERSION OF WEIGHT COMPUTATION")
-    msa = kwargs["msa"]
-    use_pbar = kwargs["use_pbar"]
-    seqsim_thresh = kwargs["seqsim_thresh"]
-    nseqs = msa.shape[0]
-    npos = msa.shape[1]
-    ws = np.nan * np.ones(nseqs)
-    for i, s in tqdm.tqdm(enumerate(msa), total=nseqs, disable=not use_pbar):
-        similarities = np.sum(s == msa, axis=1) / npos
-        screen = similarities >= seqsim_thresh
-        ws[i] = 1 / screen.sum()
-    return ws
-
-
-def _compute_weights_v2(**kwargs):
-    raise RuntimeError("BUGGY VERSION OF WEIGHT COMPUTATION")
-    xmsa = kwargs["xmsa"]
-    block_size = kwargs["block_size"]
-    use_pbar = kwargs["use_pbar"]
-    seqsim_thresh = kwargs["seqsim_thresh"]
-    assert isinstance(xmsa[0,0,0], np.uint16), \
-        f"Expected xmsa to have np.uint16 data. Got {xmsa.dtype}"
-    nseqs = xmsa.shape[0]
-    npos = xmsa.shape[1]
-    nalph = xmsa.shape[2]
-    xmsa = xmsa.reshape([nseqs, -1])
-    ws = np.nan * np.ones(nseqs)
-    for idx1_start, idx1_stop, block1 in iterblocks(xmsa, block_size, use_pbar=use_pbar):
-        block_sims = (xmsa @ block1.T / npos).T
-        assert block_sims.shape == (len(block1), nseqs), \
-            f"Expected {(len(block1), nseqs)}. Got {block_sims.shape}"
-        block_screen = block_sims >= seqsim_thresh
-        ws[idx1_start:idx1_stop] = 1 / block_screen.sum(axis=1)
-    return ws
 
 
 def _compute_weights_v3(**kwargs):

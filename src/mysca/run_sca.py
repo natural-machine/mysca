@@ -796,24 +796,6 @@ def fit_t_distributions(v, p):
     return t_dists_info, top_idxs
 
 
-def get_groups(v, p=95, method="t-dist"):
-    groups = []
-    to_be_assigned = np.ones(len(v), dtype=bool)
-    for i in range(v.shape[1]):
-        if method == "ecdf":
-            screen = v[:,i] >= np.percentile(v[to_be_assigned,i], p)
-        elif method == "t-dist":
-            df, loc, scale = scipy.stats.t.fit(v[:,i])
-            cutoff = scipy.stats.t.ppf(p/100, df, loc=loc, scale=scale)
-            screen = v[:,i] >= cutoff
-        else:
-            raise RuntimeError(f"Unknown method `{method}` for group calling.")
-        top_p_idxs = np.where(screen & to_be_assigned)[0]
-        to_be_assigned[top_p_idxs] = False
-        groups.append(top_p_idxs)
-    return groups
-
-
 def shuffle_columns(m, rng=None):
     rng = np.random.default_rng(rng)
     r, c = m.shape
