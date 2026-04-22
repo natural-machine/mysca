@@ -79,3 +79,43 @@ def test_plot_data_2d_in_bounds_emits_file(empty_imgdir):
     plot_data_2d("ic", (0, 1), "all", groups, data, empty_imgdir)
     files = os.listdir(empty_imgdir)
     assert any(f.endswith(".png") for f in files), files
+
+
+def test_plot_data_2d_returns_axes_and_skips_save(empty_imgdir):
+    """With save=False, the axes are returned and no file is written."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    data = np.random.default_rng(0).standard_normal((10, 4))
+    groups = [np.array([0, 1])]
+    ax = plot_data_2d(
+        "ic", (0, 1), "all", groups, data, empty_imgdir, save=False,
+    )
+    assert ax is not None, "plot_data_2d should return the Axes"
+    assert os.listdir(empty_imgdir) == [], "save=False should not write"
+    assert ax.get_figure() is not None
+    plt.close(ax.get_figure())
+
+
+def test_plot_data_2d_custom_filename(empty_imgdir):
+    """An explicit filename overrides the default data-derived name."""
+    data = np.random.default_rng(0).standard_normal((10, 4))
+    groups = [np.array([0, 1])]
+    plot_data_2d(
+        "ic", (0, 1), "all", groups, data, empty_imgdir,
+        filename="custom_name.png",
+    )
+    assert os.listdir(empty_imgdir) == ["custom_name.png"]
+
+
+def test_plot_data_3d_returns_axes_and_skips_save(empty_imgdir):
+    data = np.random.default_rng(0).standard_normal((10, 4))
+    groups = [np.array([0, 1])]
+    ax = plot_data_3d(
+        "ev", (0, 1, 2), "all", groups, data, empty_imgdir, save=False,
+    )
+    assert ax is not None
+    assert os.listdir(empty_imgdir) == []
+    import matplotlib.pyplot as plt
+    plt.close(ax.get_figure())

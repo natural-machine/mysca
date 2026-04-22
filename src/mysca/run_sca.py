@@ -955,7 +955,7 @@ def make_plots(
 
     # Dendrogram of SCA matrix
     if DENDRO:
-        plot_dendrogram(Cij, nclusters=kstar, imgdir=IMGDIR)
+        plot_dendrogram(Cij, IMGDIR, nclusters=kstar)
 
 
     # Plot t-distributions
