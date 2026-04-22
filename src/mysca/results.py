@@ -20,6 +20,7 @@ PREPROCESSING_SYMMAP_FNAME = "sym2int.json"
 PREPROCESSING_ARGS_FNAME = "preprocessing_args.json"
 PREPROCESSING_MSAORIG_FNAME = "msa_orig.fasta-aln"
 PREPROCESSING_BINARY2D_FNAME = "msa_binary2d_sp.npz"
+PREPROCESSING_FILTER_HISTORY_FNAME = "filter_history.json"
 
 def _symmap_from_sym2int(sym2int):
     """Rebuild a SymMap from a flat {symbol: int} dict.
@@ -41,6 +42,41 @@ def _symmap_from_sym2int(sym2int):
     return SymMap(
         "".join(aa_list), gapsym, gap_value=gap_value,
     )
+
+
+def _filter_history_to_jsonable(filter_history):
+    """Convert a filter_history list to JSON-serializable form.
+
+    ``stat_values`` entries are numpy arrays (or None); numpy scalars may
+    appear in ``n_sequences`` / ``n_filtered`` fields on some stages.
+    """
+    out = []
+    for entry in filter_history:
+        cleaned = {}
+        for k, v in entry.items():
+            if isinstance(v, np.ndarray):
+                cleaned[k] = v.tolist()
+            elif isinstance(v, np.generic):
+                cleaned[k] = v.item()
+            else:
+                cleaned[k] = v
+        out.append(cleaned)
+    return out
+
+
+def _filter_history_from_jsonable(raw):
+    """Inverse of _filter_history_to_jsonable: restore numpy arrays for
+    ``stat_values`` so downstream plotting code sees the same shape it
+    produced in-process.
+    """
+    out = []
+    for entry in raw:
+        restored = dict(entry)
+        sv = restored.get("stat_values")
+        if sv is not None:
+            restored["stat_values"] = np.asarray(sv)
+        out.append(restored)
+    return out
 
 
 SCARUN_RESULTS_FNAME = "scarun_results.npz"
@@ -69,6 +105,11 @@ class PreprocessingResults:
         sym2int.json              : dict mapping symbols to integers
         msa_binary2d_sp.npz       : sparse CSR (M x 20L), one-hot MSA
         msa_orig.fasta-aln        : original MSA in FASTA format (optional)
+        filter_history.json       : list of per-stage filter diagnostics
+                                    (retained counts, threshold used, and
+                                    the stat distribution that fed the
+                                    filter). Needed to replay the
+                                    filter-diagnostic plots.
     """
 
     def __init__(
@@ -83,6 +124,7 @@ class PreprocessingResults:
         args,
         sym_map=None,
         msa_obj_orig=None,
+        filter_history=None,
     ):
         self.msa = msa
         self.msa_binary3d = msa_binary3d
@@ -94,6 +136,7 @@ class PreprocessingResults:
         self.args = args
         self.sym_map = sym_map
         self.msa_obj_orig = msa_obj_orig
+        self.filter_history = filter_history
 
     @property
     def n_sequences(self):
@@ -119,6 +162,7 @@ class PreprocessingResults:
             args=results_dict["args"],
             sym_map=sym_map,
             msa_obj_orig=msa_obj_orig,
+            filter_history=results_dict.get("filter_history"),
         )
 
     def save(self, outdir):
@@ -162,6 +206,12 @@ class PreprocessingResults:
                 os.path.join(outdir, PREPROCESSING_MSAORIG_FNAME),
                 format="fasta",
             )
+
+        if self.filter_history is not None:
+            with open(
+                os.path.join(outdir, PREPROCESSING_FILTER_HISTORY_FNAME), "w"
+            ) as f:
+                json.dump(_filter_history_to_jsonable(self.filter_history), f)
 
     @classmethod
     def load(cls, dirpath):
@@ -214,6 +264,13 @@ class PreprocessingResults:
             except ImportError:
                 pass
 
+        # Filter history (needed to replay filter diagnostic plots)
+        filter_history = None
+        fh_path = os.path.join(dirpath, PREPROCESSING_FILTER_HISTORY_FNAME)
+        if os.path.isfile(fh_path):
+            with open(fh_path, "r") as f:
+                filter_history = _filter_history_from_jsonable(json.load(f))
+
         return cls(
             msa=msa,
             msa_binary3d=msa_binary3d,
@@ -225,6 +282,7 @@ class PreprocessingResults:
             args=args,
             sym_map=sym_map,
             msa_obj_orig=msa_obj_orig,
+            filter_history=filter_history,
         )
 
 

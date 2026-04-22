@@ -118,6 +118,72 @@ class TestPreprocessingResults:
         assert loaded.n_sequences == original.n_sequences
         assert loaded.n_positions == original.n_positions
 
+    def test_round_trip_filter_history(self):
+        """filter_history survives save/load with numpy arrays intact.
+
+        stat_values is typically an NDArray in-process; it has to round-trip
+        to a list in JSON and back to an array so replaying the filter
+        plots sees the same shape the original run produced.
+        """
+        original = self._make_sample_results()
+        original.filter_history = [
+            {
+                "stage": "initial",
+                "label": "initial",
+                "n_sequences": 10,
+                "n_positions": 8,
+                "n_filtered": 0,
+                "axis": None,
+                "stat_name": None,
+                "stat_values": None,
+                "threshold": None,
+                "threshold_symbol": None,
+                "filter_direction": None,
+            },
+            {
+                "stage": "position_gap",
+                "label": "position gap (τ)",
+                "n_sequences": 10,
+                "n_positions": 7,
+                "n_filtered": 1,
+                "axis": "positions",
+                "stat_name": "gap frequency per position",
+                "stat_values": np.array([0.0, 0.1, 0.5, 0.2]),
+                "threshold": 0.4,
+                "threshold_symbol": "τ",
+                "filter_direction": "above",
+            },
+        ]
+        original.save(OUTDIR_PREP)
+        loaded = PreprocessingResults.load(OUTDIR_PREP)
+
+        assert loaded.filter_history is not None
+        assert len(loaded.filter_history) == len(original.filter_history)
+        for orig_entry, loaded_entry in zip(
+            original.filter_history, loaded.filter_history
+        ):
+            orig_sv = orig_entry["stat_values"]
+            loaded_sv = loaded_entry["stat_values"]
+            if orig_sv is None:
+                assert loaded_sv is None
+            else:
+                assert isinstance(loaded_sv, np.ndarray)
+                np.testing.assert_array_equal(loaded_sv, orig_sv)
+            for key in (
+                "stage", "label", "n_sequences", "n_positions", "n_filtered",
+                "axis", "stat_name", "threshold", "threshold_symbol",
+                "filter_direction",
+            ):
+                assert loaded_entry[key] == orig_entry[key]
+
+    def test_round_trip_without_filter_history(self):
+        """A saved run with no filter_history loads back as None."""
+        original = self._make_sample_results()
+        assert original.filter_history is None
+        original.save(OUTDIR_PREP)
+        loaded = PreprocessingResults.load(OUTDIR_PREP)
+        assert loaded.filter_history is None
+
     def test_from_preprocess_output(self):
         """Test the factory that unpacks preprocess_msa() output format."""
         rng = np.random.default_rng(0)
