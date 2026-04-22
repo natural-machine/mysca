@@ -3,9 +3,8 @@
 If the t-distribution cutoff exceeds every position's IC projection, an IC
 can end up with zero assigned positions. The pipeline used to crash on the
 downstream ``np.concatenate(groups, axis=0)`` when *every* IC was empty. The
-fixes in run_sca / run_full_pipeline / results.py route through
-``_safe_concat_int`` so the pipeline completes and produces a 0x0 sector
-subset (plus per-IC warnings).
+fixes in run_sca and results.py route through ``_safe_concat_int`` so the
+pipeline completes and produces a 0x0 sector subset (plus per-IC warnings).
 """
 
 import os

@@ -5,14 +5,14 @@ Project notes for Claude Code. See [README.md](README.md) for the user-facing in
 ## What this is
 
 `mysca` — Statistical Coupling Analysis (SCA) pipeline for identifying co-evolving
-amino acid sectors in protein multiple sequence alignments. Exposes three CLIs:
-`sca-preprocess`, `sca-core`, `sca-pymol`.
+amino acid sectors in protein multiple sequence alignments. Exposes four CLIs:
+`sca-prealign`, `sca-preprocess`, `sca-core`, `sca-pymol`.
 
 ## Layout
 
 - `src/mysca/` — package source. Core pipeline in `preprocess.py` + `core.py`;
-  CLIs in `run_preprocessing.py` / `run_sca.py` / `run_pymol.py` (orchestrator:
-  `run_full_pipeline.py`). On-disk result containers in `results.py`.
+  CLIs in `run_prealign.py` / `run_preprocessing.py` / `run_sca.py` /
+  `run_pymol.py`. On-disk result containers in `results.py`.
 - `tests/` — pytest suite. Fixtures in `conftest.py`; shared test MSAs/PDBs in
   `tests/_data/`; tmp output in `tests/_tmp/` (gitignored).
 - `docs/.claude_sessions/` — per-session notes (prior agent work, context).
