@@ -465,7 +465,14 @@ def main(args):
 
     # Fit t-distribution to each IC
     t_dists_info, top_idxs = fit_t_distributions(v_ica_normalized, p=pstar)
-    all_imp_idxs = np.concatenate(top_idxs, axis=0)
+    for i, idxs in enumerate(top_idxs):
+        if len(idxs) == 0:
+            logger.warning(
+                "IC %d: no positions cleared the t-distribution cutoff "
+                "at pstar=%d.",
+                i, pstar,
+            )
+    all_imp_idxs = _safe_concat_int(top_idxs)
     all_imp_idxs_unique = np.unique(all_imp_idxs)
     logger.info(
         "Identified %d important positions (with repeats).",
@@ -487,8 +494,16 @@ def main(args):
         weak_assignment=weak_assignment,
     )
 
-    # Subset the SCA matrix into grouped important positions
-    group_idxs_all = np.concatenate(groups, axis=0)
+    # Subset the SCA matrix into grouped important positions. If every IC
+    # ended up empty, the subset is a 0x0 matrix — log and carry on.
+    for i, g in enumerate(groups):
+        if len(g) == 0:
+            logger.info("IC %d: group is empty after assignment.", i)
+    group_idxs_all = _safe_concat_int(groups)
+    if len(group_idxs_all) == 0:
+        logger.warning(
+            "All IC groups are empty; sca_matrix_sector_subset will be 0x0."
+        )
     sca_mat_imp = Cij[group_idxs_all,:]
     sca_mat_imp = sca_mat_imp[:,group_idxs_all]
 
@@ -674,6 +689,17 @@ def apply_ica(
     return v_ica_normalized, v_ica, w_ica
 
 
+def _safe_concat_int(arrays):
+    """Concatenate a list of 1-D int arrays, returning an empty int array if
+    all inputs are empty. ``np.concatenate`` raises on an all-empty list, so
+    this guard lets callers handle the "no positions pass the cutoff" edge
+    case without special-casing it at every call site.
+    """
+    if not any(len(a) for a in arrays):
+        return np.array([], dtype=int)
+    return np.concatenate(arrays, axis=0)
+
+
 def assign_positions_to_groups(
         top_idxs, v_ica_normalized, *,
         method="overlap",
@@ -717,9 +743,7 @@ def assign_positions_to_groups(
     if method == "exclusive":
         if len(top_idxs) == 0:
             return [], []
-        all_idxs = np.concatenate(top_idxs, axis=0) if any(
-            len(s) for s in top_idxs
-        ) else np.array([], dtype=int)
+        all_idxs = _safe_concat_int(top_idxs)
         screen = ~np.isin(
             np.arange(v_ica_normalized.shape[1]), list(weak_assignment)
         )

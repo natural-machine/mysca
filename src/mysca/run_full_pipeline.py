@@ -27,7 +27,7 @@ from mysca.logging_config import configure_logging
 from mysca.preprocess import preprocess_msa, onehot_without_gap
 from mysca.preprocess import compute_background_freqs
 from mysca.core import run_sca, run_ica
-from mysca.run_sca import assign_positions_to_groups
+from mysca.run_sca import assign_positions_to_groups, _safe_concat_int
 from mysca.helpers import get_top_k_conserved_retained_positions
 from mysca.helpers import get_rawseq_positions_in_groups
 from mysca.helpers import get_rawseq_scores_in_groups
@@ -600,7 +600,14 @@ def main(args):
     t_dists_info, top_idxs = fit_t_distributions(
         v_ica_normalized, p=pstar
     )
-    all_imp_idxs = np.concatenate(top_idxs, axis=0)
+    for i, idxs in enumerate(top_idxs):
+        if len(idxs) == 0:
+            logger.warning(
+                "IC %d: no positions cleared the t-distribution cutoff "
+                "at pstar=%d.",
+                i, pstar,
+            )
+    all_imp_idxs = _safe_concat_int(top_idxs)
     logger.info(
         "Identified %d important positions (with repeats).",
         len(all_imp_idxs),
@@ -630,7 +637,14 @@ def main(args):
     )
 
     # Subset the SCA matrix into grouped important positions
-    group_idxs_all = np.concatenate(groups, axis=0)
+    for i, g in enumerate(groups):
+        if len(g) == 0:
+            logger.info("IC %d: group is empty after assignment.", i)
+    group_idxs_all = _safe_concat_int(groups)
+    if len(group_idxs_all) == 0:
+        logger.warning(
+            "All IC groups are empty; sca_matrix_sector_subset will be 0x0."
+        )
     sca_mat_imp = Cij[group_idxs_all,:]
     sca_mat_imp = sca_mat_imp[:,group_idxs_all]
     np.save(f"{SCADIR}/sca_matrix_sector_subset.npy", sca_mat_imp)
@@ -689,10 +703,10 @@ def main(args):
         np.save(f"{subdir2}/sector_{i}_msapos.npy", groups[i])
         np.save(f"{subdir2}/sector_{i}_scores.npy", group_scores[i])
     # As a single file:
-    msapos_to_groupidx = np.vstack([
-        group_idxs_all,
-        np.concatenate([len(g) * [i] for i, g in enumerate(groups)], axis=0)
-    ])
+    group_idx_labels = _safe_concat_int(
+        [np.full(len(g), i, dtype=int) for i, g in enumerate(groups)]
+    )
+    msapos_to_groupidx = np.vstack([group_idxs_all, group_idx_labels])
     np.save(f"{SCADIR}/msapos_to_groupidx.npy", msapos_to_groupidx)
 
     # Plot data and groups in EV coords (2-dimensional)

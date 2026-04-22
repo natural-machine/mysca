@@ -473,14 +473,15 @@ class SCAResults:
                         os.path.join(sector_dir, f"sector_{i}_scores.npy"),
                         self.group_scores[i],
                     )
-            # Combined mapping
-            group_idxs_all = np.concatenate(self.groups, axis=0)
-            msapos_to_groupidx = np.vstack([
-                group_idxs_all,
-                np.concatenate(
-                    [len(g) * [i] for i, g in enumerate(self.groups)], axis=0
-                ),
-            ])
+            # Combined mapping. Guard against the edge case where every IC
+            # group is empty — np.concatenate of all-empty lists raises.
+            from mysca.run_sca import _safe_concat_int
+            group_idxs_all = _safe_concat_int(self.groups)
+            group_idx_labels = _safe_concat_int(
+                [np.full(len(g), i, dtype=int)
+                 for i, g in enumerate(self.groups)]
+            )
+            msapos_to_groupidx = np.vstack([group_idxs_all, group_idx_labels])
             np.save(
                 os.path.join(scadir, "msapos_to_groupidx.npy"),
                 msapos_to_groupidx,
