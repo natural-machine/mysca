@@ -27,6 +27,7 @@ from mysca.logging_config import configure_logging
 from mysca.preprocess import preprocess_msa, onehot_without_gap
 from mysca.preprocess import compute_background_freqs
 from mysca.core import run_sca, run_ica
+from mysca.run_sca import assign_positions_to_groups
 from mysca.helpers import get_top_k_conserved_retained_positions
 from mysca.helpers import get_rawseq_positions_in_groups
 from mysca.helpers import get_rawseq_scores_in_groups
@@ -119,7 +120,14 @@ def parse_args(args):
     )
     sca_params.add_argument("-p", "--pstar", type=int, default=95,
                             help="Percentile defining IC groups.")
-    sca_params.add_argument("--weak_assignment", type=int, nargs="*", 
+    sca_params.add_argument(
+        "--assignment", type=str, default="overlap",
+        choices=["overlap", "exclusive"],
+        help="Position-to-IC assignment strategy. 'overlap' (default): a "
+        "position can appear in multiple IC groups. 'exclusive': assign "
+        "only to the IC where its IC-projection is maximal.",
+    )
+    sca_params.add_argument("--weak_assignment", type=int, nargs="*",
                             default=[])
 
     return parser.parse_args(args)
@@ -141,6 +149,7 @@ def main(args):
     USE_JAX = args.use_jax
     SAVE_ALL = args.save_all
     sector_cmap = args.sector_cmap
+    assignment_method = args.assignment
     weak_assignment = args.weak_assignment
 
     gap_truncation_thresh = args.gap_truncation_thresh
@@ -610,30 +619,15 @@ def main(args):
     plot_t_distributions(v_ica_normalized, t_dists_info, IMGDIR)
     
     # Get groups from top p% empirical distribution
-    # groups = get_groups(v_ica_normalized, p=pstar, method="t-dist")
-    groups = []
-    group_scores = []
-    for i, idx_set in enumerate(top_idxs):
-        group = []
-        group_score = []
-        for idx in idx_set:
-            if np.sum(all_imp_idxs == idx) == 1:
-                # Position is uniquely assigned to a group
-                group.append(idx)
-                group_score.append(v_ica_normalized[idx,i])
-            elif np.sum(all_imp_idxs == idx) > 1:
-                # Position is not uniquely assigned to a group.
-                # Assign to group only if projection onto ith IC is maximal
-                screen = ~np.isin(
-                    np.arange(v_ica_normalized.shape[1]), weak_assignment
-                )
-                if np.all(v_ica_normalized[idx,i] >= v_ica_normalized[idx,screen]):
-                    group.append(idx)
-                    group_score.append(v_ica_normalized[idx,i])
-            else:
-                raise RuntimeError("Index should be found amoung all...")
-        groups.append(np.array(group))
-        group_scores.append(np.array(group_score))
+    logger.info(
+        "Assigning positions to IC groups (method=%s).", assignment_method
+    )
+    groups, group_scores = assign_positions_to_groups(
+        top_idxs,
+        v_ica_normalized,
+        method=assignment_method,
+        weak_assignment=weak_assignment,
+    )
 
     # Subset the SCA matrix into grouped important positions
     group_idxs_all = np.concatenate(groups, axis=0)

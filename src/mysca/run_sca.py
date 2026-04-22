@@ -180,6 +180,15 @@ def parse_args(args):
     )
     sca_params.add_argument("-p", "--pstar", type=int, default=95,
                     help="Percentile defining IC groups.")
+    sca_params.add_argument(
+        "--assignment", type=str, default="overlap",
+        choices=["overlap", "exclusive"],
+        help="How to assign a position that clears the t-distribution "
+        "cutoff for multiple ICs. 'overlap' (default): keep it in every "
+        "IC group where it qualifies. 'exclusive': assign only to the IC "
+        "where its IC-projection is maximal (this was the previous "
+        "default). --weak_assignment only applies under 'exclusive'.",
+    )
     sca_params.add_argument("--weak_assignment", type=int, nargs="*",
                         default=[])
 
@@ -207,6 +216,7 @@ def main(args):
     USE_JAX = args.use_jax
     SAVE_ALL = args.save_all
     sector_cmap = args.sector_cmap
+    assignment_method = args.assignment
     weak_assignment = args.weak_assignment
     sectors_for = args.sectors_for
 
@@ -469,30 +479,13 @@ def main(args):
 
     # Call statistical sectors, i.e. groups of "co-evolving" positions.
     # Define groups from top p% empirical distribution.
-    # TODO: Compartmentalize this section and test.
-    groups = []
-    group_scores = []
-    for i, idx_set in enumerate(top_idxs):
-        group = []
-        group_score = []
-        for idx in idx_set:
-            if np.sum(all_imp_idxs == idx) == 1:
-                # Position is uniquely assigned to a group
-                group.append(idx)
-                group_score.append(v_ica_normalized[idx,i])
-            elif np.sum(all_imp_idxs == idx) > 1:
-                # Position is not uniquely assigned to a group.
-                # Assign to group only if projection onto ith IC is maximal
-                screen = ~np.isin(
-                    np.arange(v_ica_normalized.shape[1]), weak_assignment
-                )
-                if np.all(v_ica_normalized[idx,i] >= v_ica_normalized[idx,screen]):
-                    group.append(idx)
-                    group_score.append(v_ica_normalized[idx,i])
-            else:
-                raise RuntimeError("Index should be found amoung all...")
-        groups.append(np.array(group, dtype=int))
-        group_scores.append(np.array(group_score))
+    logger.info("Assigning positions to IC groups (method=%s).", assignment_method)
+    groups, group_scores = assign_positions_to_groups(
+        top_idxs,
+        v_ica_normalized,
+        method=assignment_method,
+        weak_assignment=weak_assignment,
+    )
 
     # Subset the SCA matrix into grouped important positions
     group_idxs_all = np.concatenate(groups, axis=0)
@@ -601,6 +594,7 @@ def main(args):
         "kstar": int(kstar),
         "n_components": int(n_components),
         "pstar": int(pstar),
+        "assignment": assignment_method,
     }
     results.save(OUTDIR, save_all=SAVE_ALL)
 
@@ -678,6 +672,85 @@ def apply_ica(
         if v_ica_normalized[maxpos,i] < 0:
             v_ica_normalized[:,i] *= -1
     return v_ica_normalized, v_ica, w_ica
+
+
+def assign_positions_to_groups(
+        top_idxs, v_ica_normalized, *,
+        method="overlap",
+        weak_assignment=(),
+):
+    """Resolve per-IC candidate positions into final groups.
+
+    Parameters
+    ----------
+    top_idxs : list[np.ndarray]
+        For each IC, the (ordered) indices that cleared the t-distribution
+        cutoff — as returned by ``fit_t_distributions``.
+    v_ica_normalized : np.ndarray, shape (L, n_components)
+        IC projections. Only consulted under ``method='exclusive'``.
+    method : {'overlap', 'exclusive'}
+        - ``'overlap'`` (default): each IC keeps its full ``top_idxs[i]``;
+          a position that clears the cutoff on multiple ICs appears in all
+          of them.
+        - ``'exclusive'``: a position that lands in multiple ICs' candidate
+          sets is assigned only to the IC where its IC-projection is
+          maximal, ignoring ICs listed in ``weak_assignment``.
+    weak_assignment : iterable[int]
+        IC indices to exclude from the max-projection tie-break. Only
+        applies under ``method='exclusive'``.
+
+    Returns
+    -------
+    groups : list[np.ndarray]
+        Indices per IC, ordered as they came out of ``fit_t_distributions``.
+    group_scores : list[np.ndarray]
+        ``v_ica_normalized[idx, i]`` for each ``idx`` in ``groups[i]``.
+    """
+    if method == "overlap":
+        groups = [np.asarray(idxs, dtype=int) for idxs in top_idxs]
+        group_scores = [
+            v_ica_normalized[idxs, i] if len(idxs) else np.array([], dtype=float)
+            for i, idxs in enumerate(groups)
+        ]
+        return groups, group_scores
+
+    if method == "exclusive":
+        if len(top_idxs) == 0:
+            return [], []
+        all_idxs = np.concatenate(top_idxs, axis=0) if any(
+            len(s) for s in top_idxs
+        ) else np.array([], dtype=int)
+        screen = ~np.isin(
+            np.arange(v_ica_normalized.shape[1]), list(weak_assignment)
+        )
+        groups = []
+        group_scores = []
+        for i, idx_set in enumerate(top_idxs):
+            group = []
+            group_score = []
+            for idx in idx_set:
+                hits = int(np.sum(all_idxs == idx))
+                if hits == 1:
+                    group.append(idx)
+                    group_score.append(v_ica_normalized[idx, i])
+                elif hits > 1:
+                    if np.all(
+                        v_ica_normalized[idx, i] >= v_ica_normalized[idx, screen]
+                    ):
+                        group.append(idx)
+                        group_score.append(v_ica_normalized[idx, i])
+                else:
+                    raise RuntimeError(
+                        "Index should be found among all candidate indices."
+                    )
+            groups.append(np.array(group, dtype=int))
+            group_scores.append(np.array(group_score))
+        return groups, group_scores
+
+    raise ValueError(
+        f"Unknown assignment method: {method!r}. "
+        "Expected 'overlap' or 'exclusive'."
+    )
 
 
 def fit_t_distributions(v, p):
