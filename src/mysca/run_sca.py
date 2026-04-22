@@ -181,6 +181,12 @@ def parse_args(args):
     sca_params.add_argument("-p", "--pstar", type=int, default=95,
                     help="Percentile defining IC groups.")
     sca_params.add_argument(
+        "--n_logged_comps", type=int, default=10,
+        help="Number of top ICs to summarize in the log after assignment "
+        "(significance marker, eigenvalue, MSA positions in processed / "
+        "unprocessed / reference coordinates). Default 10.",
+    )
+    sca_params.add_argument(
         "--assignment", type=str, default="overlap",
         choices=["overlap", "exclusive"],
         help="How to assign a position that clears the t-distribution "
@@ -225,6 +231,7 @@ def main(args):
     kstar = args.kstar
     pstar = args.pstar
     n_components_arg = args.n_components
+    n_logged_comps = args.n_logged_comps
 
     if N_BOOT < 0:
         N_BOOT = 0
@@ -511,6 +518,15 @@ def main(args):
     results.group_scores = group_scores
     results.sca_matrix_sector_subset = sca_mat_imp
 
+    # Human-readable top-N IC summary (significance marker + eigenvalue +
+    # processed / unprocessed / reference position mappings).
+    ref_id_for_log = prep.args.get("reference_id") if prep.args else None
+    log_top_ic_summary(
+        groups, kstar, evals_sca, retained_positions,
+        msa_obj_orig, ref_id_for_log,
+        n_logged_comps=n_logged_comps,
+    )
+
     # Determine which sequences to generate per-sequence sector mappings for.
     # IDs that were filtered out during preprocessing are silently skipped.
     retained_ids = set(
@@ -610,6 +626,7 @@ def main(args):
         "n_components": int(n_components),
         "pstar": int(pstar),
         "assignment": assignment_method,
+        "n_logged_comps": int(n_logged_comps),
     }
     results.save(OUTDIR, save_all=SAVE_ALL)
 
@@ -687,6 +704,59 @@ def apply_ica(
         if v_ica_normalized[maxpos,i] < 0:
             v_ica_normalized[:,i] *= -1
     return v_ica_normalized, v_ica, w_ica
+
+
+def log_top_ic_summary(
+        groups, kstar, evals_sca, retained_positions,
+        msa_obj_orig, reference_id, *, n_logged_comps=10,
+):
+    """Write a human-readable summary of the top-N ICs to the module logger.
+
+    Each IC's line shows a significance marker (``*`` if the IC index is
+    below ``kstar``, ``-`` otherwise), the associated eigenvalue, a count
+    of processed MSA positions that were assigned to the IC, the processed
+    MSA indices, the corresponding unprocessed (pre-filter) indices, and —
+    when a reference sequence is available in ``msa_obj_orig`` — the
+    residue indices in that reference's raw (un-gapped) sequence (with
+    ``"-"`` where the reference has a gap at the MSA column).
+
+    No-op when ``n_logged_comps <= 0`` or ``groups`` is empty.
+    """
+    if n_logged_comps <= 0 or not groups:
+        return
+
+    ref_raw_positions = None
+    if reference_id is not None:
+        ids = [rec.id for rec in msa_obj_orig]
+        if reference_id in ids:
+            ref_row = ids.index(reference_id)
+            all_raw = get_rawseq_indices_of_msa(msa_obj_orig)
+            ref_raw_positions = all_raw[ref_row]  # shape (npos_orig,)
+
+    n_show = min(n_logged_comps, len(groups))
+    logger.info(
+        "Top %d/%d ICs (marker: * significant, - not; λ_i is the i-th "
+        "sorted SCA eigenvalue):",
+        n_show, len(groups),
+    )
+    for i in range(n_show):
+        g = groups[i]
+        marker = "*" if i < kstar else "-"
+        eigval = float(evals_sca[i]) if i < len(evals_sca) else float("nan")
+        processed = [int(x) for x in g]
+        unprocessed = [int(retained_positions[x]) for x in g]
+        logger.info(
+            "IC %d: %s λ_%d=%.4g | %d (processed) MSA positions: %s",
+            i, marker, i, eigval, len(g), processed,
+        )
+        logger.info("  -> (unprocessed) %s", unprocessed)
+        if ref_raw_positions is not None:
+            ref_positions = [
+                int(ref_raw_positions[mp]) if ref_raw_positions[mp] >= 0
+                else "-"
+                for mp in unprocessed
+            ]
+            logger.info("  -> (reference) %s", ref_positions)
 
 
 def _safe_concat_int(arrays):
