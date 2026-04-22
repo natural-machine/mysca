@@ -248,6 +248,7 @@ class SCAResults:
         sca_results/
             kstar.txt                 : number of significant eigenvalues used
             kstar_identified.txt      : number identified by bootstrap
+            n_components.txt          : number of ICs computed (>= kstar)
             eigenvalue_cutoff.txt     : bootstrap cutoff value
             v_ica_normalized.npy      : normalized ICA components
             w_ica.npy                 : ICA unmixing matrix
@@ -278,6 +279,7 @@ class SCAResults:
         # Bootstrap / significance
         kstar=None,
         kstar_identified=None,
+        n_components=None,
         cutoff=None,
         evals_shuff=None,
         # ICA
@@ -308,6 +310,7 @@ class SCAResults:
         self.significant_evecs_sca = significant_evecs_sca
         self.kstar = kstar
         self.kstar_identified = kstar_identified
+        self.n_components = n_components
         self.cutoff = cutoff
         self.evals_shuff = evals_shuff
         self.v_ica = v_ica
@@ -408,6 +411,11 @@ class SCAResults:
             np.savetxt(
                 os.path.join(scadir, "kstar.txt"),
                 [self.kstar], fmt="%d",
+            )
+        if self.n_components is not None:
+            np.savetxt(
+                os.path.join(scadir, "n_components.txt"),
+                [self.n_components], fmt="%d",
             )
         if self.cutoff is not None:
             np.savetxt(
@@ -538,6 +546,9 @@ class SCAResults:
         kstar_identified = _load_scalar_txt(
             os.path.join(scadir, "kstar_identified.txt"), int
         )
+        n_components = _load_scalar_txt(
+            os.path.join(scadir, "n_components.txt"), int
+        )
         cutoff = _load_scalar_txt(
             os.path.join(scadir, "eigenvalue_cutoff.txt"), float
         )
@@ -612,6 +623,7 @@ class SCAResults:
             significant_evecs_sca=significant_evecs_sca,
             kstar=kstar,
             kstar_identified=kstar_identified,
+            n_components=n_components,
             cutoff=cutoff,
             evals_shuff=evals_shuff,
             v_ica=v_ica,

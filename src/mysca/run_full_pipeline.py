@@ -41,6 +41,23 @@ FULL_PIPELINE_LOG_FNAME = "full_pipeline.log"
 
 logger = logging.getLogger("mysca.run_full_pipeline")
 
+
+def _n_components_type(s):
+    """argparse type converter for --n_components: positive int or 'all'."""
+    if isinstance(s, str) and s.lower() == "all":
+        return "all"
+    try:
+        v = int(s)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"--n_components must be a positive integer or 'all'; got {s!r}"
+        )
+    if v < 1:
+        raise argparse.ArgumentTypeError(
+            f"--n_components must be >= 1 or 'all'; got {v}"
+        )
+    return v
+
 DEFAULT_BACKGROUND_FREQ = {
         'A': 0.073, 'C': 0.025, 'D': 0.050, 'E': 0.061,
         'F': 0.042, 'G': 0.072, 'H': 0.023, 'I': 0.053,
@@ -92,9 +109,15 @@ def parse_args(args):
                             help="Number of top conserved residues to consider.")
     sca_params.add_argument("-nb", "--n_boot", type=int, default=10, 
                             help="Number of bootstraps to use for eval threshold.")
-    sca_params.add_argument("-k", "--kstar", type=int, default=0, 
+    sca_params.add_argument("-k", "--kstar", type=int, default=0,
                             help="Value of k_start to override bootstrap estimate.")
-    sca_params.add_argument("-p", "--pstar", type=int, default=95, 
+    sca_params.add_argument(
+        "--n_components", type=_n_components_type, default=None,
+        help="Number of ICs to compute and save. Accepts a positive integer "
+        "or the string 'all' (meaning L, the number of retained positions). "
+        "Default: kstar. Clamped to kstar as a lower bound.",
+    )
+    sca_params.add_argument("-p", "--pstar", type=int, default=95,
                             help="Percentile defining IC groups.")
     sca_params.add_argument("--weak_assignment", type=int, nargs="*", 
                             default=[])
@@ -130,6 +153,7 @@ def main(args):
     background_freq = args.background
     kstar = args.kstar
     pstar = args.pstar
+    n_components_arg = args.n_components
     
     # Housekeeping
     SCADIR = os.path.join(OUTDIR, "sca_results")
@@ -489,9 +513,36 @@ def main(args):
     sig_evals_sca = evals_sca[:kstar]
     sig_evecs_sca = evecs_sca[:,:kstar]
 
-    # Save kstar, full eigendecomp, and significant eigendecomp
+    # Determine how many ICs to compute (>= kstar). Default is kstar; "all"
+    # means len(evals_sca). Values below kstar are clamped up.
+    L_evecs = len(evals_sca)
+    if n_components_arg is None:
+        n_components = kstar
+    elif n_components_arg == "all":
+        n_components = L_evecs
+    else:
+        n_components = int(n_components_arg)
+    if n_components < kstar:
+        logger.warning(
+            "n_components=%d < kstar=%d; clamping to kstar.",
+            n_components, kstar,
+        )
+        n_components = kstar
+    if n_components > L_evecs:
+        logger.warning(
+            "n_components=%d exceeds number of eigenvectors (%d); clamping.",
+            n_components, L_evecs,
+        )
+        n_components = L_evecs
+    logger.info(
+        "Computing ICA on top %d eigenvectors (kstar=%d, L=%d).",
+        n_components, kstar, L_evecs,
+    )
+
+    # Save kstar, n_components, full eigendecomp, and significant eigendecomp
     np.savetxt(f"{SCADIR}/kstar_identified.txt", [kstar_id], fmt="%d")
     np.savetxt(f"{SCADIR}/kstar.txt", [kstar], fmt="%d")
+    np.savetxt(f"{SCADIR}/n_components.txt", [n_components], fmt="%d")
     np.savetxt(f"{SCADIR}/eigenvalue_cutoff.txt", [cutoff])
     np.save(f"{SCADIR}/all_evals_sca.npy", evals_sca)
     np.save(f"{SCADIR}/all_evecs_sca.npy", evecs_sca)
@@ -524,11 +575,12 @@ def main(args):
     if DENDRO:
         plot_dendrogram(Cij, nclusters=kstar, imgdir=IMGDIR)
     
-    # Apply ICA
+    # Apply ICA on top n_components eigenvectors (>= kstar)
     rho = 1e-1
     tol = 1e-7
+    ica_input_evecs = evecs_sca[:, :n_components]
     v_ica_normalized, _, w_ica = apply_ica(
-        sig_evecs_sca,
+        ica_input_evecs,
         rho=rho, tol=tol, maxiter=1E6,
         max_attempts=5,
     )

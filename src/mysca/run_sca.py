@@ -122,6 +122,23 @@ SCARUN_LOG_FNAME = "scarun.log"
 logger = logging.getLogger("mysca.run_sca")
 
 
+def _n_components_type(s):
+    """argparse type converter for --n_components: positive int or 'all'."""
+    if isinstance(s, str) and s.lower() == "all":
+        return "all"
+    try:
+        v = int(s)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(
+            f"--n_components must be a positive integer or 'all'; got {s!r}"
+        )
+    if v < 1:
+        raise argparse.ArgumentTypeError(
+            f"--n_components must be >= 1 or 'all'; got {v}"
+        )
+    return v
+
+
 def parse_args(args):
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--indir", type=str, required=True,
@@ -151,9 +168,17 @@ def parse_args(args):
                     help="Optional json file specifying background q.")
     sca_params.add_argument("-nb", "--n_boot", type=int, default=10, 
                     help="Number of bootstraps to use for eval threshold.")
-    sca_params.add_argument("-k", "--kstar", type=int, default=0, 
+    sca_params.add_argument("-k", "--kstar", type=int, default=0,
                     help="Value of k_start to override bootstrap estimate.")
-    sca_params.add_argument("-p", "--pstar", type=int, default=95, 
+    sca_params.add_argument(
+        "--n_components", type=_n_components_type, default=None,
+        help="Number of ICs to compute and save. Accepts a positive integer "
+        "or the string 'all' (meaning L, the number of retained positions). "
+        "Default: kstar (the number of significant eigenvalues). "
+        "Clamped to kstar as a lower bound; i.e. if n_components < kstar the "
+        "effective value is kstar.",
+    )
+    sca_params.add_argument("-p", "--pstar", type=int, default=95,
                     help="Percentile defining IC groups.")
     sca_params.add_argument("--weak_assignment", type=int, nargs="*",
                         default=[])
@@ -189,6 +214,7 @@ def main(args):
     background_freq = args.background
     kstar = args.kstar
     pstar = args.pstar
+    n_components_arg = args.n_components
 
     if N_BOOT < 0:
         N_BOOT = 0
@@ -376,6 +402,32 @@ def main(args):
     sig_evals_sca = evals_sca[:kstar]
     sig_evecs_sca = evecs_sca[:,:kstar]
 
+    # Determine how many ICs to compute (>= kstar). Default is kstar; "all"
+    # means len(evals_sca). Values below kstar are clamped up.
+    L_evecs = len(evals_sca)
+    if n_components_arg is None:
+        n_components = kstar
+    elif n_components_arg == "all":
+        n_components = L_evecs
+    else:
+        n_components = int(n_components_arg)
+    if n_components < kstar:
+        logger.warning(
+            "n_components=%d < kstar=%d; clamping to kstar.",
+            n_components, kstar,
+        )
+        n_components = kstar
+    if n_components > L_evecs:
+        logger.warning(
+            "n_components=%d exceeds number of eigenvectors (%d); clamping.",
+            n_components, L_evecs,
+        )
+        n_components = L_evecs
+    logger.info(
+        "Computing ICA on top %d eigenvectors (kstar=%d, L=%d).",
+        n_components, kstar, L_evecs,
+    )
+
     # Populate eigendecomposition on results
     results.evals_sca = evals_sca
     results.evecs_sca = evecs_sca
@@ -383,6 +435,7 @@ def main(args):
     results.significant_evecs_sca = sig_evecs_sca
     results.kstar = kstar
     results.kstar_identified = kstar_id
+    results.n_components = n_components
     results.cutoff = cutoff
     results.evals_shuff = evals_shuff
 
@@ -391,8 +444,9 @@ def main(args):
     ica_tol = 1e-7
     ica_maxiter = 1E6
     ica_max_attempts = 5
+    ica_input_evecs = evecs_sca[:, :n_components]
     v_ica_normalized, _, w_ica = apply_ica(
-        sig_evecs_sca,
+        ica_input_evecs,
         rho=ica_rho, tol=ica_tol, maxiter=ica_maxiter,
         max_attempts=ica_max_attempts,
     )
@@ -545,6 +599,7 @@ def main(args):
         "n_boot": int(N_BOOT),
         "seed": int(SEED),
         "kstar": int(kstar),
+        "n_components": int(n_components),
         "pstar": int(pstar),
     }
     results.save(OUTDIR, save_all=SAVE_ALL)
