@@ -36,6 +36,7 @@ from mysca.prealign import (
 
 PREALIGN_LOG_FNAME = "prealign.log"
 PREALIGN_ARGS_FNAME = "prealign_args.json"
+PREALIGN_FILTER_HISTORY_FNAME = "filter_history.json"
 CLUSTERED_FASTA_FNAME = "clustered.fasta"
 ALIGNED_BASENAME = "aligned"
 
@@ -55,6 +56,10 @@ def parse_args(args):
                         help="Output directory.")
     parser.add_argument("-v", "--verbosity", type=int, default=1)
     parser.add_argument("--pbar", action="store_true")
+    parser.add_argument(
+        "--plot", action="store_true",
+        help="Write a per-stage sequence-count diagnostic plot to outdir/images/",
+    )
 
     cluster = parser.add_argument_group("Clustering")
     cluster.add_argument(
@@ -111,10 +116,20 @@ def main(args):
     with open(args_fpath, "w") as f:
         json.dump(vars(args), f, indent=2, sort_keys=True)
 
+    # Track per-stage sequence counts for the diagnostic plot / filter history.
+    from mysca.prealign import _count_fasta
+    n_initial = _count_fasta(input_fpath)
+    filter_history = [{
+        "stage": "initial",
+        "label": "initial",
+        "n_sequences": n_initial,
+        "n_filtered": 0,
+    }]
+
     # Stage 1: optional clustering.
     if args.cluster != "none":
         clustered_fpath = os.path.join(outdir, CLUSTERED_FASTA_FNAME)
-        run_cluster(
+        cluster_info = run_cluster(
             input_fpath, clustered_fpath,
             method=args.cluster,
             min_seq_id=args.cluster_min_seq_id,
@@ -123,6 +138,12 @@ def main(args):
             threads=args.cluster_threads,
             bin_path=args.cluster_bin,
         )
+        filter_history.append({
+            "stage": "cluster",
+            "label": f"cluster ({args.cluster})",
+            "n_sequences": cluster_info["n_out"],
+            "n_filtered": cluster_info["n_in"] - cluster_info["n_out"],
+        })
         aligner_input = clustered_fpath
     else:
         logger.info("Clustering disabled (--cluster none).")
@@ -131,7 +152,7 @@ def main(args):
     # Stage 2: alignment.
     aligned_fname = ALIGNED_BASENAME + _ALIGNED_EXT[args.output_format]
     aligned_fpath = os.path.join(outdir, aligned_fname)
-    run_align(
+    align_info = run_align(
         aligner_input, aligned_fpath,
         method=args.align,
         threads=args.align_threads,
@@ -139,6 +160,24 @@ def main(args):
         extra_args=args.align_extra,
         output_format=args.output_format,
     )
+    filter_history.append({
+        "stage": "align",
+        "label": f"align ({args.align})",
+        "n_sequences": align_info["n_out"],
+        "n_filtered": align_info["n_in"] - align_info["n_out"],
+    })
+
+    # Persist filter_history for replay.
+    fh_path = os.path.join(outdir, PREALIGN_FILTER_HISTORY_FNAME)
+    with open(fh_path, "w") as f:
+        json.dump(filter_history, f)
+
+    if args.plot:
+        from mysca.pl import plot_prealign_filter_history
+        imgdir = os.path.join(outdir, "images")
+        os.makedirs(imgdir, exist_ok=True)
+        logger.info("Writing prealign filter diagnostic plot to %s", imgdir)
+        plot_prealign_filter_history(filter_history, imgdir)
 
     logger.info(
         "Prealign complete. Aligned output (%s) at: %s",

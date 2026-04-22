@@ -264,6 +264,54 @@ def plot_filter_history(filter_history, imgdir):
     return
 
 
+def plot_prealign_filter_history(filter_history, imgdir):
+    """Sequence-count drop across prealign stages.
+
+    Prealign has no per-position filtering (alignment re-derives positions),
+    so this is a single-panel waterfall of sequence counts across the
+    initial → cluster → align stages.
+
+    Args:
+        filter_history: list of dicts. Each entry must have ``label``,
+            ``n_sequences``, ``n_filtered``, and ``stage`` (``"initial"``,
+            ``"cluster"``, or ``"align"``).
+        imgdir: output directory.
+    """
+    labels = [entry["label"] for entry in filter_history]
+    n_seqs = [entry["n_sequences"] for entry in filter_history]
+    n_stages = len(filter_history)
+    x = np.arange(n_stages)
+
+    fig, ax = plt.subplots(1, 1, figsize=(max(5, 1.5 * n_stages), 4))
+    bar_colors = [
+        "lightgray" if entry["stage"] == "initial" else "steelblue"
+        for entry in filter_history
+    ]
+    ax.bar(x, n_seqs, color=bar_colors, edgecolor="k")
+    for i, (xi, ci) in enumerate(zip(x, n_seqs)):
+        ax.text(xi, ci, f"{ci:,}", ha="center", va="bottom", fontsize=9)
+        if i > 0:
+            delta = n_seqs[i] - n_seqs[i - 1]
+            if delta != 0:
+                ax.text(
+                    xi, ci * 0.5, f"{delta:+,}",
+                    ha="center", va="center", fontsize=9, color="white",
+                    fontweight="bold",
+                )
+    ax.plot(x, n_seqs, "k-", alpha=0.3, zorder=0)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=30, ha="right")
+    ax.set_ylabel("# sequences")
+    ax.set_ylim(0, max(n_seqs) * 1.12 if max(n_seqs) > 0 else 1)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.set_title("Sequence count across prealign stages")
+
+    plt.tight_layout()
+    plt.savefig(f"{imgdir}/prealign_filter_history.png", bbox_inches="tight")
+    plt.close()
+    return
+
+
 def plot_filter_distributions(filter_history, imgdir):
     """Plot the distribution of the per-stage filter statistic with threshold.
 

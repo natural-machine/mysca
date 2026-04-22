@@ -12,6 +12,7 @@ from mysca.pl.plotting import (
     plot_dendrogram,
     plot_filter_distributions,
     plot_filter_history,
+    plot_prealign_filter_history,
     plot_sequence_similarity,
     plot_t_distributions,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "plot_dendrogram",
     "plot_filter_distributions",
     "plot_filter_history",
+    "plot_prealign_filter_history",
     "plot_sequence_similarity",
     "plot_t_distributions",
 ]

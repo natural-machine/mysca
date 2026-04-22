@@ -55,6 +55,38 @@ def test_align_only():
     assert os.path.isfile(os.path.join(outdir, "prealign_args.json"))
     assert os.path.isfile(os.path.join(outdir, "prealign.log"))
 
+    # filter_history is always persisted (so that --plot can be replayed later).
+    import json
+    with open(os.path.join(outdir, "filter_history.json")) as f:
+        fh = json.load(f)
+    # No clustering → two entries: initial and align.
+    assert [e["stage"] for e in fh] == ["initial", "align"]
+    n_in = _record_count(INPUT_FASTA)
+    assert fh[0]["n_sequences"] == n_in
+    assert fh[1]["n_sequences"] == _record_count(aligned)
+    # --plot was NOT passed, so no images directory should exist.
+    assert not os.path.isdir(os.path.join(outdir, "images"))
+
+    remove_dir(outdir)
+
+
+@needs_mafft
+def test_align_plot_emits_filter_history_png():
+    """--plot writes a prealign_filter_history.png under outdir/images/."""
+    outdir = f"{TMPDIR}/prealign_with_plot"
+    if os.path.isdir(outdir):
+        remove_dir(outdir)
+    args = parse_args([
+        "-i", INPUT_FASTA,
+        "-o", outdir,
+        "-v", "0",
+        "--plot",
+    ])
+    main(args)
+
+    png = os.path.join(outdir, "images", "prealign_filter_history.png")
+    assert os.path.isfile(png), f"Expected plot at {png}"
+
     remove_dir(outdir)
 
 
