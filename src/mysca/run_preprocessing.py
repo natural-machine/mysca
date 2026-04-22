@@ -106,9 +106,16 @@ def parse_args(args):
         "Default 0 (gap first). Pass len(aa_syms) to place gap at the end "
         "(legacy behavior).",
     )
-    parser.add_argument("--weight_method", type=str, default="v5", 
-                        choices=["v3", "v4", "v5", "gpu"],
-                        help="method to use for weight computations")
+    parser.add_argument(
+        "--weight_method", type=str, default="sparse",
+        choices=["sparse", "gpu"],
+        help="Sequence-weight computation backend. 'sparse' (default) "
+        "uses a CPU sparse-CSR implementation; 'gpu' dispatches to torch "
+        "(CUDA/MPS/XPU), falling back to 'sparse' if no accelerator is "
+        "detected. Non-production benchmark variants ('_v3', '_v4', "
+        "'_v6') remain callable via the preprocess_msa library API but "
+        "are intentionally not exposed here.",
+    )
     parser.add_argument("--block_size", type=int, default=512, 
                         help="block size to use for relevant weight computations")
     

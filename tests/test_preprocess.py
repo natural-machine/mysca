@@ -214,7 +214,7 @@ TEST_MSA7 = f"{DATDIR}/msas/msa07.faa"
     ],
 
 ])
-@pytest.mark.parametrize("weight_computation_version", ["v3", "v4", "v5", "v6", "gpu"])
+@pytest.mark.parametrize("weight_computation_version", ["_v3", "_v4", "sparse", "_v6", "gpu"])
 @pytest.mark.parametrize("block_size", [1, 2, 20])
 @pytest.mark.parametrize("gap_value", [0, "mid", "end"])
 def test_preprocessing(

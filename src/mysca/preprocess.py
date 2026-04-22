@@ -48,7 +48,7 @@ def preprocess_msa(
         position_gap_thresh: float = 0.2, 
         use_pbar: bool = False,
         verbosity: int = 1, 
-        weight_computation_version: str = "v5",
+        weight_computation_version: str = "sparse",
         block_size: int = 1024
 ):
     """Run preprocessing steps on a given MSA matrix.
@@ -349,17 +349,31 @@ def compute_background_freqs(msa_obj, gapstr="-"):
     return background_freqs
 
 
-def compute_weights(version="v5", **kwargs):
-    if version == "v3":
-        return _compute_weights_v3(**kwargs)
-    elif version == "v4":
-        return _compute_weights_v4(**kwargs)
-    elif version == "v5":
-        return _compute_weights_v5(**kwargs)
-    elif version == "v6":
-        return _compute_weights_v6(**kwargs)
+def compute_weights(version="sparse", **kwargs):
+    """Dispatch to a sequence-weight implementation by version string.
+
+    Production methods (exposed via the sca-preprocess CLI):
+      - ``"sparse"``: CPU sparse-CSR dot-product (default).
+      - ``"gpu"``: torch GPU (CUDA/MPS/XPU); falls back to ``"sparse"`` if
+        no accelerator is detected.
+
+    Non-production methods (kept for benchmarking and correctness tests;
+    leading underscore in the version string signals "not intended for
+    routine use"):
+      - ``"_v3"``: naive O(N²) pairwise comparison, blockwise.
+      - ``"_v4"``: sparse dot-product with a dense threshold per row.
+      - ``"_v6"``: JAX-compiled CSR row counting.
+    """
+    if version == "sparse":
+        return _compute_weights_sparse(**kwargs)
     elif version == "gpu":
-        return _compute_weights_torch(**kwargs)
+        return _compute_weights_gpu(**kwargs)
+    elif version == "_v3":
+        return _compute_weights_v3(**kwargs)
+    elif version == "_v4":
+        return _compute_weights_v4(**kwargs)
+    elif version == "_v6":
+        return _compute_weights_v6(**kwargs)
     else:
         raise RuntimeError(f"Weight computation {version} not found")
 
@@ -435,12 +449,12 @@ def _compute_weights_v4(**kwargs):
     return ws
 
 
-def _compute_weights_v5(**kwargs):
-    """
-    Adapted from: 
-        https://github.com/ranganathanlab/pySCA/blob/master/pysca/scaTools.py
+def _compute_weights_sparse(**kwargs):
+    """CPU sparse-CSR sequence-similarity weighting.
 
-    With faster sparse operations directly on data.
+    Adapted from: https://github.com/ranganathanlab/pySCA/blob/master/pysca/scaTools.py
+    with direct iteration over the sparse CSR data buffer to avoid
+    materializing dense similarity blocks.
     """
     msa = kwargs["msa"]
     block_size = kwargs["block_size"]
@@ -537,8 +551,12 @@ def _detect_device():
     return torch.device("cpu")
 
 
-def _compute_weights_torch(**kwargs):
+def _compute_weights_gpu(**kwargs):
+    """GPU-accelerated sequence-similarity weighting via torch.
 
+    Uses the first available torch device (CUDA / MPS / XPU). Falls back
+    to the CPU sparse implementation when no accelerator is detected.
+    """
     msa = kwargs["msa"]
     block_size = kwargs.get("block_size", 512)
     use_pbar = kwargs["use_pbar"]
@@ -553,8 +571,10 @@ def _compute_weights_torch(**kwargs):
 
     device = _detect_device()
     if device == "cpu":
-        logger.warning("No device found. Reverting to version v5!")
-        return _compute_weights_v5(**kwargs)
+        logger.warning(
+            "No GPU device found; falling back to CPU sparse weights."
+        )
+        return _compute_weights_sparse(**kwargs)
 
     # move msa to torch
     msa_t = torch.as_tensor(msa, dtype=torch.int16, device=device)

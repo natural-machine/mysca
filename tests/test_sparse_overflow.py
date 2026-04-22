@@ -1,8 +1,9 @@
 """Test that sparse one-hot dot products do not overflow for long alignments.
 
 Regression test for a bug where get_onehotmsa_sparse used np.uint8 data,
-causing the sparse dot product (used in weight computation v4/v5/v6) to
-silently wrap around for MSAs with more than 255 positions.
+causing the sparse dot product (used in weight computations `_v4`,
+`sparse`, and `_v6`) to silently wrap around for MSAs with more than
+255 positions.
 
 Example: two identical 300-position sequences should have a pairwise match
 count of 300, but uint8 overflow gives 300 % 256 = 44.
@@ -71,7 +72,7 @@ class TestSparseOneHotOverflow:
         assert counts[0, 0] == npos
         assert counts[1, 1] == npos
 
-    @pytest.mark.parametrize("version", ["v4", "v5"])
+    @pytest.mark.parametrize("version", ["_v4", "sparse"])
     def test_weights_correct_for_long_alignment(self, version):
         """Sequence weights are correct for MSAs longer than 255 positions.
 
