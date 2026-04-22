@@ -7,6 +7,7 @@ from mpl_toolkits.mplot3d import Axes3D
 
 import scipy
 import scipy.cluster.hierarchy as sch
+import scipy.stats
 from scipy.spatial.distance import pdist, squareform
 
 
