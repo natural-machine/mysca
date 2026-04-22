@@ -1,3 +1,5 @@
+import logging
+
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import to_hex
@@ -9,6 +11,9 @@ import scipy
 import scipy.cluster.hierarchy as sch
 import scipy.stats
 from scipy.spatial.distance import pdist, squareform
+
+
+logger = logging.getLogger(__name__)
 
 
 def plot_data_2d(
@@ -27,6 +32,10 @@ def plot_data_2d(
         group_idxs = list(range(len(groups)))
     axi, axj = axidxs
     if axj >= data.shape[1]:
+        logger.debug(
+            "plot_data_2d: skipping %s axes (%d,%d); data has only %d columns.",
+            ic_or_ev.upper(), axi, axj, data.shape[1],
+        )
         return
     fig, ax = plt.subplots(1, 1)
     # ax.axis("equal")
@@ -78,6 +87,10 @@ def plot_data_3d(
         group_idxs = list(range(len(groups)))
     axi, axj, axk = axidxs
     if axk >= data.shape[1]:
+        logger.debug(
+            "plot_data_3d: skipping %s axes (%d,%d,%d); data has only %d columns.",
+            ic_or_ev.upper(), axi, axj, axk, data.shape[1],
+        )
         return
     fig = plt.figure(figsize=(12,5))
     ax = fig.add_subplot(111, projection='3d')
