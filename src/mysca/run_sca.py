@@ -106,6 +106,7 @@ from mysca.results import (
     EVALS_SHUFF_FNAME as EVALS_SHUFF_SAVEAS,
 )
 from mysca.core import run_sca, run_ica
+from mysca.preprocess import onehot_without_gap
 from mysca.helpers import get_rawseq_positions_in_groups
 from mysca.helpers import get_rawseq_scores_in_groups
 from mysca.helpers import get_group_rawseq_positions_by_entry
@@ -245,7 +246,7 @@ def main(args):
     retained_positions = prep.retained_positions
     weights = prep.sequence_weights
     msa_binary3d = prep.msa_binary3d
-    NSYMS = msa_binary3d.shape[-1]
+    NSYMS = len(sym_map)
     msa_obj_orig = prep.msa_obj_orig
     NUM_POS_ORIG = msa_obj_orig.get_alignment_length()
 
@@ -258,9 +259,9 @@ def main(args):
             for k in np.sort(list(background_freq.keys()))
         ),
     )
-    background_freq_array = np.zeros(len(background_freq))
-    for a in background_freq:
-        background_freq_array[sym_map[a]] = background_freq[a]    
+    background_freq_array = np.array(
+        [background_freq.get(a, 0.0) for a in sym_map.aa_list]
+    )
     background_freq_array = background_freq_array / background_freq_array.sum()
     
     # Run SCA
@@ -313,7 +314,7 @@ def main(args):
     if DO_SHUFFLING:
         for iteridx in tqdm.trange(N_BOOT):
             msa_shuff = shuffle_columns(msa, rng=rng)
-            xmsa_shuff = np.eye(NSYMS + 1, dtype=bool)[msa_shuff][:,:,:-1]
+            xmsa_shuff = onehot_without_gap(msa_shuff, NSYMS, sym_map.gapint)
             res = run_sca(
                 xmsa_shuff, weights,
                 background_map=background_freq,

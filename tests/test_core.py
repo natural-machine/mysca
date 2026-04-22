@@ -181,19 +181,33 @@ LAMBDA1 = 0.03
     ],
 
 ])
+@pytest.mark.parametrize("gap_value", [0, "mid", "end"])
 def test_run_sca(
-    fa_fpath, symmap, 
+    fa_fpath, symmap,
     gap_truncation_thresh,
     sequence_gap_thresh,
     sequence_similarity_thresh,
     reference_id,
-    reference_similarity_thresh, 
+    reference_similarity_thresh,
     position_gap_thresh,
     background_map,
     regularization,
     expected_results,
+    gap_value,
 ):
-    
+    # Re-build the SymMap at the requested gap position. Ground-truth
+    # expectations are indexed by aa_list order, which is invariant under
+    # gap repositioning, so the same expected_results applies. "end" pins
+    # gap to len(aa_list) — the pre-default-change layout that matches how
+    # the Excel ground truth was originally computed.
+    if gap_value == "mid":
+        gap_value = len(symmap.aa_list) // 2
+    elif gap_value == "end":
+        gap_value = len(symmap.aa_list)
+    symmap = SymMap(
+        "".join(symmap.aa_list), symmap.gapsym, gap_value=gap_value,
+    )
+
     # Equal background probability distribution if background_map is None
     if background_map is None:
         background_map = {s: 1 / len(symmap.aa2int) for s in symmap.aa2int}

@@ -21,6 +21,28 @@ PREPROCESSING_ARGS_FNAME = "preprocessing_args.json"
 PREPROCESSING_MSAORIG_FNAME = "msa_orig.fasta-aln"
 PREPROCESSING_BINARY2D_FNAME = "msa_binary2d_sp.npz"
 
+def _symmap_from_sym2int(sym2int):
+    """Rebuild a SymMap from a flat {symbol: int} dict.
+
+    The saved format carries no explicit gap marker, so gap identification
+    relies on the codebase convention ``"-"``. If ``"-"`` is absent, the
+    raw dict is returned unchanged so downstream ``sym_map[sym]`` lookups
+    still work.
+    """
+    from mysca.mappings import SymMap
+    if not isinstance(sym2int, dict):
+        return sym2int
+    gapsym = "-"
+    if gapsym not in sym2int:
+        return sym2int
+    sym_list = sorted(sym2int.keys(), key=lambda s: sym2int[s])
+    gap_value = sym_list.index(gapsym)
+    aa_list = [s for s in sym_list if s != gapsym]
+    return SymMap(
+        "".join(aa_list), gapsym, gap_value=gap_value,
+    )
+
+
 SCARUN_RESULTS_FNAME = "scarun_results.npz"
 SCARUN_ARGS_FNAME = "scarun_args.json"
 SCARUN_EIGENDECOMP_FNAME = "sca_eigendecomp.npz"
@@ -162,12 +184,17 @@ class PreprocessingResults:
             with open(args_path, "r") as f:
                 args = json.load(f)
 
-        # Load sym_map as plain dict
+        # Load sym_map and reconstruct a SymMap when possible. The on-disk
+        # representation is a flat symbol->int dict; the gap symbol is
+        # identified by the convention "-". Fall back to returning the raw
+        # dict if "-" is not present (the only downstream use that matters
+        # is indexed lookup via sym_map[aa], which works for both types).
         sym_map = None
         symmap_path = os.path.join(dirpath, PREPROCESSING_SYMMAP_FNAME)
         if os.path.isfile(symmap_path):
             with open(symmap_path, "r") as f:
-                sym_map = json.load(f)
+                sym2int = json.load(f)
+            sym_map = _symmap_from_sym2int(sym2int)
 
         # Load sparse binary MSA -> dense 3d
         msa_binary3d = None

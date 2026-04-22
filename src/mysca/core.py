@@ -73,9 +73,9 @@ def run_sca(
     )
 
     if qa is None:
-        qa = np.zeros(naas)
-        for a in background_map:
-            qa[mapping[a]] = background_map[a]
+        qa = np.array(
+            [background_map.get(a, 0.0) for a in mapping.aa_list]
+        )
         qa = qa / qa.sum()
     
     

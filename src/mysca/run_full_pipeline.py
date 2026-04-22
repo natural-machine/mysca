@@ -24,7 +24,7 @@ from scipy.spatial.distance import pdist, squareform
 
 from mysca.io import load_msa
 from mysca.logging_config import configure_logging
-from mysca.preprocess import preprocess_msa
+from mysca.preprocess import preprocess_msa, onehot_without_gap
 from mysca.preprocess import compute_background_freqs
 from mysca.core import run_sca, run_ica
 from mysca.helpers import get_top_k_conserved_retained_positions
@@ -251,9 +251,9 @@ def main(args):
             for k in np.sort(list(background_freq.keys()))
         ),
     )
-    background_freq_array = np.zeros(len(background_freq))
-    for a in background_freq:
-        background_freq_array[sym_map[a]] = background_freq[a]    
+    background_freq_array = np.array(
+        [background_freq.get(a, 0.0) for a in sym_map.aa_list]
+    )
     background_freq_array = background_freq_array / background_freq_array.sum()
 
     # Plot sequence similarity
@@ -416,7 +416,7 @@ def main(args):
     if DO_SHUFFLING:
         for iteridx in tqdm.trange(N_BOOT):
             msa_shuff = shuffle_columns(msa, rng=rng)
-            xmsa_shuff = np.eye(NSYMS, dtype=bool)[msa_shuff][:,:,:-1]
+            xmsa_shuff = onehot_without_gap(msa_shuff, NSYMS, sym_map.gapint)
             res = run_sca(
                 xmsa_shuff, weights,
                 background_map=background_freq,

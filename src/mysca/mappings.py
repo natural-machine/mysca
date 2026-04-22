@@ -2,15 +2,33 @@
 
 """
 
+# Sentinel used as the default for ``SymMap(exclude_syms=...)``. Identity
+# comparison (``exclude_syms is NONCANONICAL``) flips SymMap into "exclude
+# everything not in sym_list" mode, in which the explicit ``exclude_syms``
+# list is left empty. Passing any real iterable (including ``[]``) instead
+# switches to "exclude only these listed symbols" mode.
 NONCANONICAL = "noncanonical"
 
 
 class SymMap:
 
-    def __init__(self, aa_syms: str, gapsym: str, exclude_syms=NONCANONICAL):
+    def __init__(
+        self,
+        aa_syms: str,
+        gapsym: str,
+        exclude_syms=NONCANONICAL,
+        gap_value: int = 0,
+    ):
         self.aa_list = list(aa_syms)
         self.gapsym = gapsym
-        self.sym_list = self.aa_list + [gapsym]
+        if not (0 <= gap_value <= len(self.aa_list)):
+            raise ValueError(
+                f"gap_value must be in [0, {len(self.aa_list)}]; "
+                f"got {gap_value}"
+            )
+        self.sym_list = (
+            self.aa_list[:gap_value] + [gapsym] + self.aa_list[gap_value:]
+        )
         self._valid_syms = set(self.sym_list)
         if exclude_syms is NONCANONICAL:
             self._exclude_noncanonical = True

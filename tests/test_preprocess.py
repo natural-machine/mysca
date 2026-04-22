@@ -9,7 +9,7 @@ from tests.conftest import DATDIR, TMPDIR, remove_dir
 import numpy as np
 
 from mysca.io import load_msa
-from mysca.mappings import SymMap
+from mysca.mappings import SymMap, NONCANONICAL
 from mysca.preprocess import preprocess_msa
 
 
@@ -216,13 +216,14 @@ TEST_MSA7 = f"{DATDIR}/msas/msa07.faa"
 ])
 @pytest.mark.parametrize("weight_computation_version", ["v3", "v4", "v5", "v6", "gpu"])
 @pytest.mark.parametrize("block_size", [1, 2, 20])
+@pytest.mark.parametrize("gap_value", [0, "mid", "end"])
 def test_preprocessing(
-    fa_fpath, symmap, 
+    fa_fpath, symmap,
     gap_truncation_thresh,
     sequence_gap_thresh,
     sequence_similarity_thresh,
     reference_id,
-    reference_similarity_thresh, 
+    reference_similarity_thresh,
     position_gap_thresh,
     retained_sequences_exp,
     retained_positions_exp,
@@ -230,8 +231,25 @@ def test_preprocessing(
     seqids_exp,
     weight_computation_version,
     block_size,
+    gap_value,
 ):
-    
+    # Re-build the SymMap at the requested gap position. Retained sequences,
+    # positions, weights, and seqids are invariant under gap repositioning
+    # because they depend only on ``msa == GAP`` comparisons, not on axis
+    # ordering; the same expectations apply. "end" preserves coverage of
+    # the pre-default-change layout (gapint == len(aa_list)).
+    if gap_value == "mid":
+        gap_value = len(symmap.aa_list) // 2
+    elif gap_value == "end":
+        gap_value = len(symmap.aa_list)
+    exclude = NONCANONICAL if symmap._exclude_noncanonical else symmap.exclude_syms
+    symmap = SymMap(
+        "".join(symmap.aa_list),
+        symmap.gapsym,
+        exclude,
+        gap_value=gap_value,
+    )
+
     msa_obj, msa_orig, msa_ids_orig, _ = load_msa(
         fa_fpath, format="fasta", mapping=symmap,
     )

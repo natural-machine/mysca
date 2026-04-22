@@ -21,10 +21,10 @@ from mysca.mappings import SymMap, DEFAULT_MAP
 
 
 def test_default_mapping():
-    exp_num_aas = 20 
+    exp_num_aas = 20
     exp_num_syms = 21
     exp_gapsym = "-"
-    exp_gapint = 20
+    exp_gapint = 0
     
     mapping = DEFAULT_MAP
     errors = []
@@ -45,15 +45,15 @@ def test_default_mapping():
 
 @pytest.fixture(params=[
     {
-        "args": ["ABCDE", "-", ""], 
+        "args": ["ABCDE", "-", ""],
         "exp_gapsym": "-",
-        "exp_gapint": 5,
+        "exp_gapint": 0,
         "exp_num_exclusions": 0,
     },
     {
-        "args": ["ABCDE", "-", "X"], 
+        "args": ["ABCDE", "-", "X"],
         "exp_gapsym": "-",
-        "exp_gapint": 5,
+        "exp_gapint": 0,
         "exp_num_exclusions": 1,
     },
 ])
@@ -91,3 +91,24 @@ class TestMapping:
         msg = "Incorrect number of excluded syms."
         msg += f"Expected {exp_num_exclusions}. Got {num_exclusions}."
         assert num_exclusions == exp_num_exclusions
+
+
+@pytest.mark.parametrize("gap_value,exp_sym_list,exp_gapint", [
+    (0, list("-ABCDE"), 0),
+    (1, list("A-BCDE"), 1),
+    (3, list("ABC-DE"), 3),
+    (5, list("ABCDE-"), 5),
+])
+def test_gap_value_parameter(gap_value, exp_sym_list, exp_gapint):
+    mapping = SymMap("ABCDE", "-", gap_value=gap_value)
+    assert mapping.sym_list == exp_sym_list
+    assert mapping.gapint == exp_gapint
+    assert mapping.aa_list == list("ABCDE")
+    for aa in "ABCDE":
+        assert mapping[aa] != mapping.gapint
+
+
+@pytest.mark.parametrize("gap_value", [-1, 6, 100])
+def test_gap_value_out_of_range_raises(gap_value):
+    with pytest.raises(ValueError):
+        SymMap("ABCDE", "-", gap_value=gap_value)

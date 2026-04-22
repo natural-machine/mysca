@@ -21,6 +21,20 @@ from mysca.helpers import iterblocks
 logger = logging.getLogger(__name__)
 
 
+def onehot_without_gap(
+        msa: NDArray[np.int_],
+        num_syms: int,
+        gapint: int,
+) -> NDArray[np.bool_]:
+    """Dense one-hot encoding of an integer MSA with the gap column removed.
+
+    The resulting axis-2 ordering matches ``mapping.aa_list`` regardless of
+    where the gap sits in ``sym_list``.
+    """
+    onehot = np.eye(num_syms, dtype=bool)[msa]
+    return np.delete(onehot, gapint, axis=-1)
+
+
 def preprocess_msa(
         msa: NDArray[np.int_], 
         seqids: list[str], 
@@ -142,7 +156,7 @@ def preprocess_msa(
     }]
 
     # Constuct the boolean MSA matrix
-    xmsa = np.eye(NUM_SYMS, dtype=bool)[msa][:,:,:-1]
+    xmsa = onehot_without_gap(msa, NUM_SYMS, GAP)
     xmsa = xmsa.astype(np.int16)
 
     #~~~ Remove columns (i.e. positions) with too many gaps
@@ -622,24 +636,28 @@ def get_onehotmsa_sparse(msa, num_aa, gap):
     Parameters
     ----------
     msa : np.ndarray, shape (Nseq, Npos)
-        Numeric alignment where amino acids are 0..num_aa-1 and num_aa means "other"/gap.
+        Numeric alignment whose entries are integers in [0, num_aa], with
+        exactly one integer (``gap``) reserved for gaps and the remaining
+        ``num_aa`` integers denoting amino-acid states.
     num_aa : int
         Number of amino-acid states (not counting the GAP state).
     gap: int
-        Integer value representing gaps.
+        Integer value representing gaps. May occur at any position in
+        [0, num_aa].
 
     Returns
     -------
     Abin : scipy.sparse.csr_matrix, shape (Nseq, (num_aa + 1) * Npos)
         One-hot encoding (sparse), with gaps encoded as their own symbol.
+        Each (position, symbol) pair maps to a unique column.
     """
     msa = np.asarray(msa)
     if msa.ndim != 2:
         raise ValueError("get_onehotmsa_sparse expects a 2D array (Nseq x Npos).")
-    if gap != num_aa:
-        msg = "get_onehotmsa_sparse expects gap == num_aa."
-        msg += f"Got gap={gap} when num_aas={num_aa}"
-        raise ValueError(msg)
+    if not (0 <= gap <= num_aa):
+        raise ValueError(
+            f"gap must be in [0, num_aa={num_aa}]; got gap={gap}"
+        )
     num_symbols = num_aa + 1  # include gap
     nseqs, npos = msa.shape
     a = msa.astype(np.int8, copy=False).ravel()
@@ -662,34 +680,42 @@ def get_onehotmsa_sparse_nogap(msa, num_aa, gap):
     Parameters
     ----------
     msa : np.ndarray, shape (Nseq, Npos)
-        Numeric alignment where amino acids are 0..num_aa-1 and num_aa means "other"/gap.
+        Numeric alignment whose entries are integers in [0, num_aa], with
+        exactly one integer (``gap``) reserved for gaps and the remaining
+        ``num_aa`` integers denoting amino-acid states.
     num_aa : int
         Number of amino-acid states (not counting the GAP state).
     gap: int
-        Integer value representing gaps.
+        Integer value representing gaps. May occur at any position in
+        [0, num_aa].
 
     Returns
     -------
     Abin : scipy.sparse.csr_matrix, shape (Nseq, num_aa * Npos)
-        One-hot encoding (sparse).
+        One-hot encoding (sparse). The ``num_aa`` columns per position follow
+        the order of the amino-acid symbols with the gap integer excised (i.e.
+        input value ``a`` maps to AA-index ``a`` if ``a < gap`` and
+        ``a - 1`` if ``a > gap``).
     """
     msa = np.asarray(msa)
     if msa.ndim != 2:
         raise ValueError("get_onehotmsa_sparse expects a 2D array (Nseq x Npos).")
-    if gap != num_aa:
-        msg = "get_onehotmsa_sparse expects gap == num_aa."
-        msg += f"Got gap={gap} when num_aas={num_aa}"
-        raise ValueError(msg)
+    if not (0 <= gap <= num_aa):
+        raise ValueError(
+            f"gap must be in [0, num_aa={num_aa}]; got gap={gap}"
+        )
     nseqs, npos = msa.shape
     a = msa.astype(np.int8, copy=False).ravel()
     rows = np.repeat(np.arange(nseqs, dtype=np.uint16), npos)
     pos = np.tile(np.arange(npos, dtype=np.uint16), nseqs)
-    mask = a < num_aa
-    cols = pos[mask] * num_aa + a[mask]
+    mask = a != gap
+    a_masked = a[mask]
+    aa_idx = a_masked - (a_masked > gap).astype(a_masked.dtype)
+    cols = pos[mask] * num_aa + aa_idx
     data = np.ones(cols.shape[0], dtype=np.int16)
 
     onehotmsa = sp.csr_matrix(
-        (data, (rows[mask], cols)), 
+        (data, (rows[mask], cols)),
         shape=(nseqs, num_aa * npos)
     )
     return onehotmsa

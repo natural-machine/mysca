@@ -112,7 +112,9 @@ class TestPreprocessingResults:
             loaded.fi0_pretruncation, original.fi0_pretruncation
         )
         assert loaded.args == original.args
-        assert loaded.sym_map == original.sym_map
+        # load() reconstructs a SymMap; compare its sym2int against the
+        # original raw dict.
+        assert loaded.sym_map.sym2int == original.sym_map
         assert loaded.n_sequences == original.n_sequences
         assert loaded.n_positions == original.n_positions
 

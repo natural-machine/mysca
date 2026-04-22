@@ -100,6 +100,12 @@ def parse_args(args):
     )
     parser.add_argument("--syms", type=str, default="default")
     parser.add_argument("--gapsym", type=str, default="-")
+    parser.add_argument(
+        "--gap_value", type=int, default=0,
+        help="Integer value assigned to the gap symbol in the SymMap. "
+        "Default 0 (gap first). Pass len(aa_syms) to place gap at the end "
+        "(legacy behavior).",
+    )
     parser.add_argument("--weight_method", type=str, default="v5", 
                         choices=["v3", "v4", "v5", "gpu"],
                         help="method to use for weight computations")
@@ -147,6 +153,7 @@ def main(args):
     
     syms = args.syms
     gapsym = args.gapsym
+    gap_value = args.gap_value
 
     gap_truncation_thresh = args.gap_truncation_thresh
     sequence_gap_thresh = args.sequence_gap_thresh
@@ -171,7 +178,9 @@ def main(args):
         os.makedirs(imgdir, exist_ok=True)
 
     if syms.lower() in ["default"]:
-        sym_map = SymMap(aa_syms=AA_STD20, gapsym=gapsym)
+        sym_map = SymMap(
+            aa_syms=AA_STD20, gapsym=gapsym, gap_value=gap_value,
+        )
     elif syms.lower() in ["none"]:
         logger.warning(
             "--syms none disables excluded-symbol filtering; "
@@ -179,7 +188,9 @@ def main(args):
         )
         sym_map = None
     else:
-        sym_map = SymMap(aa_syms=syms, gapsym=gapsym)
+        sym_map = SymMap(
+            aa_syms=syms, gapsym=gapsym, gap_value=gap_value,
+        )
 
     # Load MSA
     logger.info("Loading MSA (%s) from: %s", args.input_format, msa_fpath)
