@@ -35,6 +35,10 @@ dev = [
 pymol = [
   "pymol-open-source",
 ]
+prealign = [
+  # External binaries (mafft, mmseqs2) are not pip-installable; install via
+  # `conda install -c bioconda mafft mmseqs2` or ensure they are on PATH.
+]
 
 [tool.setuptools.dynamic]
 version = {attr = "mysca.__version__"}
@@ -43,6 +47,7 @@ version = {attr = "mysca.__version__"}
 where = ["src"]
 
 [project.scripts]
+sca-prealign = "mysca.__main__:run_prealign"
 sca-preprocess = "mysca.__main__:run_preprocessing"
 sca-core = "mysca.__main__:run_sca"
 sca-pymol = "mysca.__main__:run_pymol"

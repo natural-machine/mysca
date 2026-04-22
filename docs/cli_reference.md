@@ -1,6 +1,58 @@
 # CLI Reference
 
-mysca provides three command-line tools for running Statistical Coupling Analysis.
+mysca provides command-line tools for running Statistical Coupling Analysis.
+
+---
+
+## sca-prealign
+
+Optionally cluster and then align raw (unaligned) FASTA sequences, producing an aligned MSA suitable for `sca-preprocess`.
+
+### Usage
+
+```bash
+sca-prealign -i <raw.fasta> -o <output-dir> [options]
+```
+
+The aligned output is written to `<output-dir>/aligned.fasta`.
+
+### Required Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `-i, --input_fpath` | Filepath of the input (raw) FASTA |
+| `-o, --outdir` | Output directory |
+
+### Clustering
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--cluster` | `none` | Clustering method. Choices: `none`, `mmseqs2` |
+| `--cluster_min_seq_id` | 0.9 | Minimum sequence identity for clustering |
+| `--cluster_coverage` | 0.8 | Minimum coverage for clustering |
+| `--cluster_cov_mode` | 1 | mmseqs2 coverage mode |
+| `--cluster_threads` | 1 | Threads for the clustering tool |
+| `--cluster_bin` | (from PATH) | Explicit path to the clustering binary |
+
+### Alignment
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--align` | `mafft` | Alignment method. Choices: `mafft` |
+| `--align_threads` | 1 | Threads for the alignment tool |
+| `--align_bin` | (from PATH) | Explicit path to the alignment binary |
+| `--align_extra` | [] | Extra arguments passed through to the aligner |
+
+### Optional Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `-v, --verbosity` | 1 | Verbosity level |
+| `--pbar` | off | Enable progress bar |
+
+### External Binaries
+
+`mafft` (always) and `mmseqs` (when `--cluster mmseqs2`) must be resolvable on `PATH` — the CLI checks up front and raises `FileNotFoundError` immediately if a required tool is missing. Install e.g. via `conda install -c bioconda mafft mmseqs2`, or pass explicit paths with `--align_bin` / `--cluster_bin`.
 
 ---
 

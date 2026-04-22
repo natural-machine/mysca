@@ -45,13 +45,42 @@ conda install conda-forge::pymol-open-source
 
 ## Usage
 
-mysca provides three CLI tools. The typical workflow is:
+mysca provides CLI tools that can be chained. The typical workflow is:
 
-1. **`sca-preprocess`** — filter and weight a raw MSA
-2. **`sca-core`** — run SCA, identify significant components, and assign sectors
-3. **`sca-pymol`** — (optional) visualize sectors on a protein structure
+1. **`sca-prealign`** — (optional) cluster and align raw (unaligned) sequences
+2. **`sca-preprocess`** — filter and weight an aligned MSA
+3. **`sca-core`** — run SCA, identify significant components, and assign sectors
+4. **`sca-pymol`** — (optional) visualize sectors on a protein structure
 
 For the full list of options for each command, see the [CLI Reference](docs/cli_reference.md).
+
+### Preparing raw sequences (optional)
+
+If you start from unaligned sequences, `sca-prealign` will (optionally) cluster
+them to reduce redundancy and then align them into an MSA suitable for
+`sca-preprocess`.
+
+```bash
+sca-prealign -i <raw.fasta> -o <prealign-outdir>
+# or with pre-clustering:
+sca-prealign -i <raw.fasta> -o <prealign-outdir> \
+    --cluster mmseqs2 --cluster_min_seq_id 0.9
+```
+
+The aligned output lives at `<prealign-outdir>/aligned.fasta` and can be fed
+directly to `sca-preprocess -i`.
+
+**External tools.** `sca-prealign` shells out to `mafft` (always) and `mmseqs`
+(only when `--cluster mmseqs2`). These binaries must be on `PATH` — the
+program checks up front and raises `FileNotFoundError` immediately if any
+required tool is missing. Install them however you like, e.g.:
+
+```bash
+conda install -c bioconda mafft mmseqs2
+```
+
+If you need to point at a specific binary (e.g. a non-default install), use
+`--align_bin /path/to/mafft` and `--cluster_bin /path/to/mmseqs`.
 
 ### Preprocessing
 
