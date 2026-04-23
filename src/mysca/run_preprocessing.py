@@ -1,29 +1,36 @@
 """SCA preprocessing pipeline
 
-Runs the preprocessing steps of SCA, given an input MSA in fasta format.
-Creates and populates an output directory with the preprocessed results.
-See references:
+Runs the preprocessing steps of SCA, given an input MSA. Creates and populates
+an output directory with the preprocessed results. See references:
     [1] SI to Rivoire et al., 2016
 
 -------------------------------------------------------------------------------
 COMMAND LINE ARGUMENTS:
 
-Command line arguments include the SCA parameters as detailed in [1]. These are
-specified as
-    --gap_truncation_thresh : 
-    --sequence_gap_thresh : 
-    --reference : 
-    --reference_similarity_thresh : 
-    --sequence_similarity_thresh : 
-    --position_gap_thresh : 
+SCA parameters (see [1] for definitions):
+    --gap_truncation_thresh   (τ; default 0.4) Remove columns with gap
+        frequency above this threshold, applied before any sequence-level
+        filtering.
+    --sequence_gap_thresh     (γ_seq; default 0.2) Remove sequences with
+        gap frequency above this threshold.
+    --reference               (default None) Reference sequence ID in the
+        MSA. Used both to anchor similarity filtering and to derive raw-
+        residue coordinates in downstream logs.
+    --reference_similarity_thresh   (Δ; default 0.2) Minimum similarity to
+        the reference sequence. Requires --reference.
+    --sequence_similarity_thresh    (δ; default 0.8) Clustering threshold
+        for sequence weighting.
+    --position_gap_thresh     (γ_pos; default 0.2) Remove columns with
+        *weighted* gap frequency above this threshold. Applied after
+        sequence weighting.
+
+See `docs/cli_reference.md` for the full list (input/output format, symbol
+alphabet, gap-value convention, weight method, plotting, etc.).
 
 -------------------------------------------------------------------------------
 OUTPUTS:
 
-The core results are stored in a numpy archive file `preprocessed_results.npz`.
-This file contains the following keys, mapped to numpy arrays:
-
-preprocessed_results.npz
+preprocessing_results.npz
     msa : preprocessed MSA. Integer 2d array of shape (M x L)
     retained_sequences : Indices of retained sequences in the original MSA.
     retained_positions : Indices of retained positions in the original MSA.
@@ -31,29 +38,36 @@ preprocessed_results.npz
     sequence_weights : Sampling weights for the retained sequences.
     fi0_pretruncation : Gap frequency per position, prior to truncation.
 
-msa_binary2d_sp.npz:
-    MSA in a 2-dimensional sparse binary format, of shape (M x DL) with D=20 
-    for 20 amino acids. The MSA is saved in a compressed numpy format.
-    
+msa_binary2d_sp.npz
+    MSA in a 2-dimensional sparse one-hot format of shape (M x DL), with D
+    the alphabet size (e.g. D=20 for the canonical amino acids).
+
 sym2int.json
-    Mapping from sequence characters (i.e. amino acid symbols) to their integer 
-    representation.
+    Mapping from sequence characters (i.e. amino acid symbols) to their
+    integer representation.
 
 preprocessing_args.json
-    Mapping from command line SCA parameters to their values.
+    Mapping from command line arguments to their values.
 
 msa_orig.fasta-aln
-    MSA in fasta format, before truncation steps and preprocessing.
+    Original MSA in fasta format, before any filtering.
+
+filter_history.json
+    Per-stage filter diagnostics (counts + threshold + stat distribution).
+    Always persisted so `sca-plots` can replay the diagnostic plots later.
+
+images/ (only when --plot is passed)
+    filter_history.png, filter_distributions.png.
 
 -------------------------------------------------------------------------------
 EXAMPLE USAGE:
 
-sca-preprocess -i </path/to/msa.fasta> -o </path/to/outdir> \
-    --gap_truncation_thresh 0.4 \
-    --sequence_gap_thresh 0.2 \
-    --reference <reference-fasta-id> \
-    --reference_similarity_thresh 0.2 \
-    --sequence_similarity_thresh 0.8 \
+sca-preprocess -i </path/to/msa.fasta> -o </path/to/outdir> \\
+    --gap_truncation_thresh 0.4 \\
+    --sequence_gap_thresh 0.2 \\
+    --reference <reference-fasta-id> \\
+    --reference_similarity_thresh 0.2 \\
+    --sequence_similarity_thresh 0.8 \\
     --position_gap_thresh 0.2
 
 """
@@ -89,17 +103,30 @@ def parse_args(args):
                         help="Filepath of input MSA.")
     parser.add_argument("-o", "--outdir", type=str, required=True,
                         help="Output directory.")
-    parser.add_argument("-v", "--verbosity", type=int, default=1)
-    parser.add_argument("--pbar", action="store_true")
-    parser.add_argument("--plot", action="store_true")
+    parser.add_argument("-v", "--verbosity", type=int, default=1,
+                        help="Verbosity level (0=warnings only).")
+    parser.add_argument("--pbar", action="store_true",
+                        help="Enable tqdm progress bars.")
+    parser.add_argument("--plot", action="store_true",
+                        help="Emit filter_history.png and "
+                        "filter_distributions.png to outdir/images/.")
 
     parser.add_argument(
         "--input_format", type=str, default="fasta",
         choices=["fasta", "stockholm"],
-        help="Format of the input MSA file. Default 'fasta'.",
+        help="Format of the input MSA file. Default 'fasta'. "
+        "Format is never inferred from the filename.",
     )
-    parser.add_argument("--syms", type=str, default="default")
-    parser.add_argument("--gapsym", type=str, default="-")
+    parser.add_argument(
+        "--syms", type=str, default="default",
+        help="Symbol alphabet. 'default' → standard 20 amino acids; "
+        "'none' → disable excluded-symbol filtering and auto-detect; "
+        "any other string is treated as an explicit character set.",
+    )
+    parser.add_argument(
+        "--gapsym", type=str, default="-",
+        help="Gap symbol in the input MSA.",
+    )
     parser.add_argument(
         "--gap_value", type=int, default=0,
         help="Integer value assigned to the gap symbol in the SymMap. "
@@ -122,27 +149,33 @@ def parse_args(args):
     sca_params = parser.add_argument_group("SCA parameters")
     sca_params.add_argument(
         "--gap_truncation_thresh", type=float, default=0.4,
-        help="SCA parameter gap_truncation_thresh"
+        help="τ: drop columns with gap frequency above this threshold. "
+        "Applied before any sequence-level filtering.",
     )
     sca_params.add_argument(
         "--sequence_gap_thresh", type=float, default=0.2,
-        help="SCA parameter sequence_gap_thresh γ_{seq}"
+        help="γ_seq: drop sequences with gap frequency above this threshold.",
     )
     sca_params.add_argument(
-        "--reference", type=str, default=None, 
-        help="SCA optional reference entry in MSA"
+        "--reference", type=str, default=None,
+        help="Reference sequence ID in the MSA. Anchors similarity "
+        "filtering and supplies raw-residue coordinates downstream. "
+        "Required by --reference_similarity_thresh.",
     )
     sca_params.add_argument(
         "--reference_similarity_thresh", type=float, default=0.2,
-        help="SCA parameter reference_similarity_thresh Δ"
+        help="Δ: minimum fractional identity to the reference sequence. "
+        "Sequences below this similarity are dropped. Requires --reference.",
     )
     sca_params.add_argument(
         "--sequence_similarity_thresh", type=float, default=0.8,
-        help="SCA parameter sequence_similarity_thresh δ"
+        help="δ: clustering threshold for sequence weighting. Sequences "
+        "within this pairwise similarity contribute down-weighted.",
     )
     sca_params.add_argument(
         "--position_gap_thresh", type=float, default=0.2,
-        help="SCA parameter position_gap_thresh γ_{pos}"
+        help="γ_pos: drop columns with *weighted* gap frequency above "
+        "this threshold. Applied after sequence weighting.",
     )
     return parser.parse_args(args)
 

@@ -1,11 +1,18 @@
-"""
-Example usage:
+"""Visualize SCA sectors on 3D protein structures using PyMOL.
 
-sca-pymol -s Soil14.scaffold_576820813_c1_40 \
-    --pdb_dir out/structure/K00370 \
-    --groups_dir out/sca/K00370/sca_groups \
-    --outdir out/sca/K00370/images \
-    --groups 0 1 2
+Reads per-sector position arrays from the `--modes` archive (typically
+`statsectors_seq.npz` produced by `sca-core`) and renders them on the PDB
+structure of `--scaffold`. Requires the optional `pymol-open-source`
+dependency.
+
+-------------------------------------------------------------------------------
+EXAMPLE USAGE:
+
+    sca-pymol -s <scaffold_id> \\
+        --pdb_dir </path/to/pdb_dir> \\
+        --modes <scacore_outdir>/statsectors_seq.npz \\
+        --groups 0 1 2 \\
+        -o <outdir>
 """
 
 import argparse
