@@ -114,6 +114,43 @@ def test_log_top_ic_summary_reference_mapping(capture_run_sca_logs):
     assert ref_lines[0] == "  -> (reference) [0, '-', 1]"
 
 
+def test_log_top_ic_summary_with_dropped_cols_and_reference_gap(
+        capture_run_sca_logs,
+):
+    """Combined transform: processed → unprocessed (drops cols) → reference raw
+    (with a gap at a retained unprocessed column).
+
+    Fixture: original MSA of length 6, columns 1 and 4 dropped by
+    preprocessing → retained_positions=[0,2,3,5]. Reference sequence
+    "AB-DEF" has raw-residue indices 0,1,-,2,3,4 at original columns
+    0..5 (gap at column 2). The processed MSA positions [0,1,2,3]
+    therefore map to:
+        proc 0 → orig 0 → ref raw 0   ('A')
+        proc 1 → orig 2 → ref gap     '-'
+        proc 2 → orig 3 → ref raw 2   ('D', 3rd non-gap residue)
+        proc 3 → orig 5 → ref raw 4   ('F', 5th non-gap residue)
+    """
+    msa = _msa([
+        ("ref",   "AB-DEF"),
+        ("other", "ABCDEF"),
+    ])
+    groups = [np.array([0, 1, 2, 3])]
+    evals_sca = np.array([1.0])
+    retained_positions = np.array([0, 2, 3, 5])
+
+    log_top_ic_summary(
+        groups, kstar=1, evals_sca=evals_sca,
+        retained_positions=retained_positions,
+        msa_obj_orig=msa, reference_id="ref",
+        n_logged_comps=5,
+    )
+    msgs = [r.getMessage() for r in capture_run_sca_logs]
+    unproc_line = next(m for m in msgs if "(unprocessed)" in m)
+    ref_line = next(m for m in msgs if "(reference)" in m)
+    assert "[0, 2, 3, 5]" in unproc_line
+    assert ref_line == "  -> (reference) [0, '-', 2, 4]"
+
+
 def test_log_top_ic_summary_respects_n_logged_comps(capture_run_sca_logs):
     groups = [np.array([i]) for i in range(5)]
     evals_sca = np.arange(5, dtype=float)[::-1]
