@@ -20,3 +20,10 @@ dependencies:
   - pytorch
   - torchvision
   - torchaudio
+  # Optional external aligners (bioconda). Uncomment whichever you need
+  # to exercise the out-of-sample paths in `sca-project` and
+  # `sca-structure`, and the raw-FASTA path in `sca-prealign`.
+  #   - mafft    # sca-prealign; sca-project --aligner mafft_add (default)
+  #   - hmmer    # sca-project --aligner hmmalign (provides hmmbuild + hmmalign)
+  #   - mmseqs2  # sca-prealign --cluster mmseqs2
+  # In-sample projection and PDB loading require no external binary.

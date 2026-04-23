@@ -7,6 +7,8 @@ cd SH3
 ./scripts/step1_preprocessing.sh
 ./scripts/step2_scacore.sh
 ./scripts/step3_project.sh
+./scripts/step4_project_hmmer.sh
+./scripts/step5_structure.sh
 
 # Path B: start from raw (unaligned) SH3 sequences, prealign, then pipeline.
 ./scripts/step0_prealign_raw.sh
