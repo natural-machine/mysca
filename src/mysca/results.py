@@ -87,11 +87,51 @@ STATSECTORS_SEQ_FNAME = "statsectors_seq.npz"
 EVALS_SHUFF_FNAME = "evals_shuff.npy"
 
 
+def _describe_value(val):
+    """Compact shape/type description for a results field.
+
+    Returned as the ``value`` column in ``<container>.info()`` tables.
+    """
+    if val is None:
+        return "(none)"
+    if isinstance(val, np.ndarray):
+        return f"ndarray{tuple(val.shape)} {val.dtype}"
+    if isinstance(val, dict):
+        return f"dict (n={len(val)})"
+    if isinstance(val, list):
+        return f"list (n={len(val)})"
+    if isinstance(val, (int, float, np.integer, np.floating)):
+        return f"{type(val).__name__}={val}"
+    return type(val).__name__
+
+
+def _format_info_table(header, descriptions, value_fn):
+    lines = [header, "-" * len(header)]
+    name_w = max(len(n) for n in descriptions)
+    val_w = max(
+        (len(_describe_value(value_fn(n))) for n in descriptions), default=10,
+    )
+    val_w = max(val_w, 8)
+    lines.append(
+        f"{'field'.ljust(name_w)}  {'value'.ljust(val_w)}  description"
+    )
+    lines.append(f"{'-' * name_w}  {'-' * val_w}  {'-' * 11}")
+    for name, desc in descriptions.items():
+        lines.append(
+            f"{name.ljust(name_w)}  {_describe_value(value_fn(name)).ljust(val_w)}  {desc}"
+        )
+    return "\n".join(lines)
+
+
 class PreprocessingResults:
     """Container for SCA preprocessing results.
 
     Provides named attribute access to preprocessing outputs and handles
     persistence to/from a directory of npz/json files.
+
+    Per-field descriptions are available at class level as
+    ``PreprocessingResults.FIELD_DESCRIPTIONS`` and can be rendered for
+    any instance via ``results.info()``.
 
     On-disk format (usable without mysca):
         preprocessing_results.npz
@@ -111,6 +151,67 @@ class PreprocessingResults:
                                     filter). Needed to replay the
                                     filter-diagnostic plots.
     """
+
+    FIELD_DESCRIPTIONS = {
+        "msa": (
+            "Processed MSA, int array (M x L). Each entry is the SymMap "
+            "integer for the residue at that (retained_sequence, "
+            "retained_position)."
+        ),
+        "msa_binary3d": (
+            "One-hot MSA, array (M x L x D) with D=len(alphabet). Gap "
+            "symbol is all-zero across the D axis."
+        ),
+        "retained_sequences": (
+            "Indices of retained sequences in the original MSA (1D int "
+            "array of length M)."
+        ),
+        "retained_positions": (
+            "Indices of retained positions in the original MSA (1D int "
+            "array of length L). Bridges processed→original coordinates: "
+            "original_col = retained_positions[processed_col]."
+        ),
+        "retained_sequence_ids": (
+            "IDs (strings) of retained sequences, aligned to "
+            "retained_sequences. Preserves input order."
+        ),
+        "sequence_weights": (
+            "Sampling weights per retained sequence (1D float array of "
+            "length M). Used throughout SCA for weighted frequencies."
+        ),
+        "fi0_pretruncation": (
+            "Per-position gap frequency before the first truncation step "
+            "(1D float array, length = original alignment length)."
+        ),
+        "args": (
+            "Dict of CLI arguments used to produce this result, for "
+            "reproducibility. Includes reference_id, thresholds, etc."
+        ),
+        "sym_map": (
+            "SymMap instance: the alphabet and gap symbol used. Integer "
+            "encoding of every symbol is stable across save/load."
+        ),
+        "msa_obj_orig": (
+            "Original MSA as a Biopython MultipleSeqAlignment (before any "
+            "filtering). Needed for raw-residue coordinate mapping."
+        ),
+        "filter_history": (
+            "List of per-stage filter diagnostics (counts, threshold, and "
+            "the statistic distribution that fed the filter). Consumed "
+            "by sca-plots for filter-diagnostic figures."
+        ),
+    }
+
+    def info(self):
+        """Return a human-readable summary of field descriptions and
+        current values on this instance. ``print(results.info())`` to
+        display. Field metadata lives on ``FIELD_DESCRIPTIONS``.
+        """
+        return _format_info_table(
+            "PreprocessingResults",
+            self.FIELD_DESCRIPTIONS,
+            lambda name: getattr(self, name, None),
+        )
 
     def __init__(
         self,
@@ -289,6 +390,10 @@ class PreprocessingResults:
 class SCAResults:
     """Container for SCA core + analysis results.
 
+    Per-field descriptions are available at class level as
+    ``SCAResults.FIELD_DESCRIPTIONS`` and can be rendered for any instance
+    via ``results.info()``.
+
     On-disk format (usable without mysca):
         scarun_results.npz
             Dia          : float array (L x D), conservation per position+aa
@@ -315,6 +420,134 @@ class SCAResults:
             sca_matrix_sector_subset.npy
             msa_sectors/sector_*      : per-sector position and score arrays
     """
+
+    FIELD_DESCRIPTIONS = {
+        # Core SCA
+        "Dia": (
+            "Per-(position, amino acid) conservation contribution D_i^a "
+            "(float array L x D). Sums across the D axis give `conservation`."
+        ),
+        "conservation": (
+            "Position-wise relative entropy D_i (float array length L). "
+            "`conservation[i]` = sum_a D_i^a."
+        ),
+        "sca_matrix": (
+            "Weighted SCA covariance matrix φ_i^a ⊗ φ_j^b collapsed "
+            "to a (L x L) float array (what is eigendecomposed)."
+        ),
+        "phi_ia": (
+            "Per-(position, amino acid) weighting applied to covariances "
+            "(float array L x D)."
+        ),
+        "fi0": (
+            "Gap frequency at each position (float array length L), "
+            "weighted by `sequence_weights`."
+        ),
+        "fia": (
+            "Per-(position, amino acid) frequency (float array L x D), "
+            "weighted by `sequence_weights`."
+        ),
+        # Optional large arrays
+        "Cijab_raw": (
+            "Unreduced covariance tensor (L x L x D x D). Only populated "
+            "when `--save_all` was passed to sca-core."
+        ),
+        "fijab": (
+            "Unreduced joint-frequency tensor (L x L x D x D). Only "
+            "populated when `--save_all` was passed."
+        ),
+        "Cij_raw": (
+            "Reduced covariance matrix (L x L) prior to the phi_ia-weighted "
+            "step that yields `sca_matrix`. Not persisted to disk."
+        ),
+        # Eigendecomposition
+        "evals_sca": (
+            "All eigenvalues of `sca_matrix`, sorted descending (float "
+            "array length L)."
+        ),
+        "evecs_sca": (
+            "All eigenvectors of `sca_matrix`, columns matching `evals_sca` "
+            "(float array L x L)."
+        ),
+        "significant_evals_sca": (
+            "Top-kstar eigenvalues (float array length kstar)."
+        ),
+        "significant_evecs_sca": (
+            "Top-kstar eigenvectors (float array L x kstar)."
+        ),
+        # Bootstrap / significance
+        "kstar": (
+            "Number of significant eigenvalues actually used (after any "
+            "--kstar override and the kstar>=1 fallback)."
+        ),
+        "kstar_identified": (
+            "Raw kstar from the bootstrap null (before any --kstar override)."
+        ),
+        "n_components": (
+            "Number of ICs computed by ICA; always >= kstar. Controlled by "
+            "--n_components (int or 'all')."
+        ),
+        "cutoff": (
+            "Eigenvalue significance cutoff derived from the bootstrap "
+            "null (float scalar)."
+        ),
+        "evals_shuff": (
+            "Bootstrap null eigenvalue spectrum (float array N_BOOT x L)."
+        ),
+        # ICA
+        "v_ica": (
+            "Normalized IC components (float array L x n_components). "
+            "Columns are the independent components of `evecs_sca`."
+        ),
+        "w_ica": (
+            "ICA unmixing matrix (float array n_components x n_components)."
+        ),
+        # Sectors
+        "groups": (
+            "Per-IC list of position indices (processed-MSA coordinates) "
+            "that cleared the t-distribution cutoff and were assigned to "
+            "that IC. Length n_components; each entry is a 1D int array."
+        ),
+        "group_scores": (
+            "Per-IC list of IC projections for the positions in `groups[i]` "
+            "(same shape structure as `groups`)."
+        ),
+        "t_dists_info": (
+            "List of per-IC t-distribution fits (df, loc, scale, cutoff) "
+            "used to nominate positions. Length n_components."
+        ),
+        "statsectors_msa": (
+            "Per-sequence sector mappings keyed `group_{i}_{seqid}` in "
+            "raw-sequence residue coordinates. Only populated for the "
+            "top-kstar ICs and for sequences selected by `--sectors_for`."
+        ),
+        "statsectors_seq": (
+            "Companion dict to `statsectors_msa`, containing both "
+            "`sector_{i}_pdbpos_{seqid}` and `sector_{i}_scores_{seqid}` "
+            "arrays keyed by sector index and sequence ID."
+        ),
+        "sca_matrix_sector_subset": (
+            "Submatrix of `sca_matrix` restricted to all group positions "
+            "(concatenated). Shape (sum_i len(groups[i])) squared."
+        ),
+        # Args
+        "args": (
+            "Dict of CLI arguments used for this run (regularization, "
+            "kstar, n_components, pstar, assignment, seed, n_boot, "
+            "n_logged_comps)."
+        ),
+    }
+
+    def info(self):
+        """Return a human-readable summary of field descriptions and
+        current values on this instance. ``print(results.info())`` to
+        display. Field metadata lives on ``FIELD_DESCRIPTIONS``.
+        """
+        return _format_info_table(
+            "SCAResults",
+            self.FIELD_DESCRIPTIONS,
+            lambda name: getattr(self, name, None),
+        )
 
     def __init__(
         self,

@@ -567,3 +567,86 @@ class TestSCAResults:
             os.path.join(OUTDIR_SCA, "sca_results", "kstar.txt")
         ))
         assert kstar == original.kstar
+
+
+class TestFieldDescriptions:
+    """FIELD_DESCRIPTIONS / info() contract for both result classes."""
+
+    def test_preprocessing_field_descriptions_cover_all_init_args(self):
+        """Every attribute set by PreprocessingResults.__init__ must have
+        a description entry so the info() output is never silently missing
+        a field."""
+        sample = PreprocessingResults(
+            msa=np.zeros((2, 3), dtype=int),
+            msa_binary3d=None,
+            retained_sequences=np.arange(2),
+            retained_positions=np.arange(3),
+            retained_sequence_ids=np.array(["a", "b"]),
+            sequence_weights=np.ones(2),
+            fi0_pretruncation=np.zeros(3),
+            args={},
+        )
+        init_attrs = set(vars(sample).keys())
+        described = set(PreprocessingResults.FIELD_DESCRIPTIONS.keys())
+        missing = init_attrs - described
+        assert not missing, f"FIELD_DESCRIPTIONS missing: {sorted(missing)}"
+        extras = described - init_attrs
+        assert not extras, (
+            f"FIELD_DESCRIPTIONS has entries with no matching attribute: "
+            f"{sorted(extras)}"
+        )
+
+    def test_sca_field_descriptions_cover_all_init_args(self):
+        sample = SCAResults()
+        init_attrs = set(vars(sample).keys())
+        described = set(SCAResults.FIELD_DESCRIPTIONS.keys())
+        missing = init_attrs - described
+        assert not missing, f"FIELD_DESCRIPTIONS missing: {sorted(missing)}"
+        extras = described - init_attrs
+        assert not extras, (
+            f"FIELD_DESCRIPTIONS has entries with no matching attribute: "
+            f"{sorted(extras)}"
+        )
+
+    def test_preprocessing_info_marks_populated_vs_none(self):
+        r = PreprocessingResults(
+            msa=np.zeros((2, 3), dtype=int),
+            msa_binary3d=None,
+            retained_sequences=np.arange(2),
+            retained_positions=np.arange(3),
+            retained_sequence_ids=np.array(["a", "b"]),
+            sequence_weights=np.ones(2),
+            fi0_pretruncation=np.zeros(3),
+            args={"threshold": 0.4},
+        )
+        text = r.info()
+        assert "PreprocessingResults" in text
+        # Populated ndarray fields show a shape/dtype description.
+        assert "retained_positions" in text
+        assert "ndarray(3,)" in text
+        # None fields render as "(none)".
+        lines = {
+            ln.split()[0]: ln
+            for ln in text.splitlines()
+            if ln and not ln.startswith(("-", " ", "P", "f"))
+        }
+        # msa_binary3d was left as None.
+        none_field_lines = [
+            ln for ln in text.splitlines() if "(none)" in ln
+        ]
+        assert any("msa_binary3d" in ln for ln in none_field_lines)
+
+    def test_sca_info_shows_scalars_and_none(self):
+        r = SCAResults(kstar=3, conservation=np.arange(5, dtype=float))
+        text = r.info()
+        assert "SCAResults" in text
+        assert "kstar" in text and "int=3" in text
+        assert "conservation" in text and "ndarray(5,)" in text
+        assert "(none)" in text  # many fields are left unset
+
+    def test_field_descriptions_are_class_level_constants(self):
+        """FIELD_DESCRIPTIONS should live on the class, not on instances."""
+        assert "FIELD_DESCRIPTIONS" in vars(PreprocessingResults)
+        assert "FIELD_DESCRIPTIONS" in vars(SCAResults)
+        r = SCAResults()
+        assert "FIELD_DESCRIPTIONS" not in vars(r)
