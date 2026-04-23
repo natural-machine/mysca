@@ -180,7 +180,7 @@ def preprocess_msa(
         "filter_direction": "above",
     })
     logger.info(
-        "Filtered %d positions at threshold τ=%s.",
+        "Filtered %d positions with gap frequency ≥ τ (%s).",
         int(np.sum(~screen)), gap_truncation_thresh,
     )
     logger.info("  MSA shape: %s (sequences x positions)", msa.shape)
@@ -208,7 +208,7 @@ def preprocess_msa(
         "filter_direction": "above",
     })
     logger.info(
-        "Filtered %d sequences at threshold γ_seq=%s.",
+        "Filtered %d sequences with gap frequency ≥ γ_seq (%s).",
         int(np.sum(~screen)), sequence_gap_thresh,
     )
     logger.info("  MSA shape: %s (sequences x positions)", msa.shape)
@@ -248,7 +248,7 @@ def preprocess_msa(
             "filter_direction": "below",
         })
         logger.info(
-            "Filtered %d sequences at threshold Δ=%s.",
+            "Filtered %d sequences with similarity to reference < Δ (%s).",
             int(np.sum(~screen)), reference_similarity_thresh,
         )
         logger.info("  MSA shape: %s (sequences x positions)", msa.shape)
@@ -294,7 +294,7 @@ def preprocess_msa(
         "filter_direction": "above",
     })
     logger.info(
-        "Filtered %d positions at threshold γ_pos=%s.",
+        "Filtered %d positions with weighted gap frequency ≥ γ_pos (%s).",
         int(np.sum(~screen)), position_gap_thresh,
     )
     logger.info("  MSA shape: %s (sequences x positions)", msa.shape)
