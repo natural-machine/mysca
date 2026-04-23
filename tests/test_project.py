@@ -303,3 +303,160 @@ def test_sca_project_cli_writes_expected_artifacts(prep_and_sca_dirs, tmp_path):
     assert len(data["projections"]) == 2
     for p in data["projections"]:
         assert p["in_sample"] is True
+
+
+# ----------------------------------------------------------------------
+# Raw-sequence / aligned-sequence consistency invariant.
+#
+# For ic_memberships[i] (raw residue indices) to dereference correctly
+# into raw_sequence, raw_sequence must count the *same* residues that
+# residue_by_processed_col counts — i.e. the non-gap characters of
+# aligned_sequence, in the same order. The in-sample path derives
+# raw = aligned.replace("-", "") directly; these tests guard that the
+# out-of-sample path does the same, even when the aligner has to drop
+# residues (insertions) or introduce gaps (deletions).
+# ----------------------------------------------------------------------
+
+
+def _assert_raw_matches_aligned_gapless(proj):
+    gapless = proj.aligned_sequence.replace("-", "")
+    assert proj.raw_sequence == gapless, (
+        f"raw_sequence must equal aligned_sequence.replace('-', '').\n"
+        f"  raw:     {proj.raw_sequence!r}\n"
+        f"  aligned: {proj.aligned_sequence!r}\n"
+        f"  gapless: {gapless!r}"
+    )
+
+
+def _choose_insertion_residue(donor_raw, alphabet="ACDE"):
+    """Pick a residue to insert that's in the MSA's alphabet and
+    differs from the immediate neighbors (reduces the chance the
+    aligner merges it into an adjacent match)."""
+    mid = len(donor_raw) // 2
+    flank = set(donor_raw[max(0, mid - 1):mid + 2])
+    for c in alphabet:
+        if c not in flank:
+            return c
+    return alphabet[0]
+
+
+@pytest.mark.parametrize("aligner", [
+    pytest.param("mafft_add", marks=needs_mafft),
+    pytest.param("hmmalign", marks=needs_hmmer),
+])
+def test_out_of_sample_invariant_on_insertion(prep_and_sca_dirs, tmp_path, aligner):
+    """Insert one extra residue into the middle of a training sequence
+    (forcing the aligner to drop it under --keeplength / match-only
+    output). The resulting projection must still satisfy
+    raw_sequence == aligned_sequence.replace("-", "")."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    donor_id = prep.retained_sequence_ids[0]
+    donor = next(r for r in prep.msa_obj_orig if r.id == donor_id)
+    donor_raw = str(donor.seq).replace("-", "")
+    if len(donor_raw) < 3:
+        pytest.skip("donor sequence too short for a middle insertion")
+
+    inserted = _choose_insertion_residue(donor_raw)
+    mid = len(donor_raw) // 2
+    new_seq = donor_raw[:mid] + inserted + donor_raw[mid:]
+    assert len(new_seq) == len(donor_raw) + 1
+
+    new_id = f"oos_insertion_{aligner}"
+    in_fasta = tmp_path / f"{new_id}.fasta"
+    in_fasta.write_text(f">{new_id}\n{new_seq}\n")
+
+    result = project_sequences(
+        str(in_fasta),
+        sca_result_dir=sca_dir,
+        preproc_result_dir=prep_dir,
+        aligner=aligner,
+    )
+    [proj] = result.projections
+    assert not proj.in_sample
+    _assert_raw_matches_aligned_gapless(proj)
+
+
+@pytest.mark.parametrize("aligner", [
+    pytest.param("mafft_add", marks=needs_mafft),
+    pytest.param("hmmalign", marks=needs_hmmer),
+])
+def test_out_of_sample_invariant_on_deletion(prep_and_sca_dirs, tmp_path, aligner):
+    """Delete one residue from the middle of a training sequence. The
+    aligner should introduce a gap at that column; the invariant must
+    continue to hold so raw indices still dereference correctly."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    donor_id = prep.retained_sequence_ids[0]
+    donor = next(r for r in prep.msa_obj_orig if r.id == donor_id)
+    donor_raw = str(donor.seq).replace("-", "")
+    if len(donor_raw) < 3:
+        pytest.skip("donor sequence too short for a middle deletion")
+
+    mid = len(donor_raw) // 2
+    new_seq = donor_raw[:mid] + donor_raw[mid + 1:]
+    assert len(new_seq) == len(donor_raw) - 1
+
+    new_id = f"oos_deletion_{aligner}"
+    in_fasta = tmp_path / f"{new_id}.fasta"
+    in_fasta.write_text(f">{new_id}\n{new_seq}\n")
+
+    result = project_sequences(
+        str(in_fasta),
+        sca_result_dir=sca_dir,
+        preproc_result_dir=prep_dir,
+        aligner=aligner,
+    )
+    [proj] = result.projections
+    assert not proj.in_sample
+    _assert_raw_matches_aligned_gapless(proj)
+
+
+def test_in_sample_invariant():
+    """In-sample short-circuit must already satisfy the invariant.
+    Documented here as a control against future regressions."""
+    prep_dir = f"{TMPDIR}/project_invariant_in_sample_prep"
+    sca_dir = f"{TMPDIR}/project_invariant_in_sample_sca"
+    for d in (prep_dir, sca_dir):
+        if os.path.isdir(d):
+            remove_dir(d)
+
+    prep_args = prep_parse_args(_read_argstring(PREP_ARGS))
+    prep_args.msa_fpath = f"{DATDIR}/{prep_args.msa_fpath}"
+    prep_args.outdir = prep_dir
+    prep_args.verbosity = 0
+    prep_main(prep_args)
+
+    sca_args = sca_parse_args(_read_argstring(SCA_ARGS))
+    sca_args.indir = prep_dir
+    sca_args.outdir = sca_dir
+    sca_args.background = f"{DATDIR}/{sca_args.background}"
+    sca_args.verbosity = 0
+    sca_args.n_boot = 2
+    sca_args.seed = 42
+    sca_args.kstar = 3
+    sca_args.n_components = 3
+    sca_args.sectors_for = "all"
+    sca_main(sca_args)
+
+    prep = PreprocessingResults.load(prep_dir)
+    seq_id = prep.retained_sequence_ids[0]
+    donor = next(r for r in prep.msa_obj_orig if r.id == seq_id)
+    donor_raw = str(donor.seq).replace("-", "")
+
+    in_fasta = f"{TMPDIR}/_invariant_in_sample.fasta"
+    with open(in_fasta, "w") as f:
+        f.write(f">{seq_id}\n{donor_raw}\n")
+
+    result = project_sequences(
+        in_fasta,
+        sca_result_dir=sca_dir,
+        preproc_result_dir=prep_dir,
+    )
+    [proj] = result.projections
+    assert proj.in_sample
+    _assert_raw_matches_aligned_gapless(proj)
+
+    remove_dir(prep_dir)
+    remove_dir(sca_dir)
+    os.remove(in_fasta)

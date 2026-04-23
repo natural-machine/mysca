@@ -318,7 +318,16 @@ def project_sequences(
                         f"Aligner did not return an aligned sequence "
                         f"for id {rec.id!r}"
                     )
-                raw = str(rec.seq).replace("-", "")
+                # Derive raw_sequence from the aligned output, not the
+                # input FASTA. Column-preserving aligners (mafft --add
+                # --keeplength; hmmalign --outformat afa followed by
+                # insert-column stripping) drop residues that don't fit
+                # the reference column structure. The retained indices
+                # inside ic_memberships count non-gap characters of
+                # aligned_seq, so raw_sequence must do the same for
+                # `raw_sequence[ic_memberships[i]]` to dereference
+                # correctly downstream.
+                raw = aligned_seq.replace("-", "")
             if len(aligned_seq) != L_orig:
                 raise RuntimeError(
                     f"Aligned sequence for {rec.id!r} has length "
