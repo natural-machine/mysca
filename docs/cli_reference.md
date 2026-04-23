@@ -294,3 +294,69 @@ Writes to the specified output directory:
 ### External Binaries
 
 `mafft` (for the default `mafft_add` aligner) must be resolvable via PATH or via `--align_bin`. In-sample projection does not invoke any external binary.
+
+---
+
+## sca-structure
+
+Project PDB structure(s) onto an existing SCA result. Wraps `sca-project`: the PDB's primary sequence is run through the standard project pipeline, then IC-group memberships are translated from raw residue indices into PDB residue numbers.
+
+### Usage
+
+```bash
+sca-structure -s <pdb_path> [--chain A] [--seq_id <id>] \
+    --preprocessing <preprocess-dir> \
+    --scacore <scacore-dir> \
+    -o <output-dir> [options]
+
+# Or iterate over a sequence-to-PDB map:
+sca-structure --seq_map <tsv> \
+    --preprocessing <preprocess-dir> \
+    --scacore <scacore-dir> \
+    -o <output-dir> [options]
+```
+
+Exactly one of `-s/--structure` or `--seq_map` is required.
+
+### Required Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `--preprocessing` | `sca-preprocess` output directory |
+| `--scacore` | `sca-core` output directory |
+| `-o, --outdir` | Output directory |
+| `-s, --structure` OR `--seq_map` | Either a single PDB path, or a TSV mapping MSA sequence IDs to PDB paths (format below) |
+
+### Optional Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--chain` | first chain | Chain ID within `-s/--structure` |
+| `--seq_id` | None | Header used when projecting `-s/--structure`'s sequence. When it matches an ID in the reference MSA, the project step takes the in-sample short-circuit. Ignored when `--seq_map` is used (the TSV keys are used instead) |
+| `--aligner` | `mafft_add` | Out-of-sample alignment method (inherits from `sca-project`) |
+| `--align_bin` | None | Explicit path to the alignment binary |
+| `--align_threads` | 1 | Threads for the alignment tool |
+| `-v, --verbosity` | 1 | Verbosity level |
+
+### `--seq_map` TSV format
+
+Two or three tab-separated columns per row:
+
+```text
+seq_id<TAB>pdb_path[<TAB>chain]
+```
+
+Lines starting with `#` and blank lines are ignored. Relative `pdb_path` entries resolve relative to the TSV's directory.
+
+### Output
+
+Writes to the specified output directory:
+
+- `structure_projection.json` — list of per-structure dicts. Each includes `structure_id`, `chain_id`, the full raw-residue-coordinate `sequence_projection` (as per `sca-project`), and `ic_pdb_residues` (per-IC list of PDB residue numbers)
+- `per_structure/<structure_id>_ic_residues.tsv` — one row per (IC, residue) including both raw residue index and PDB residue number
+- `structure_args.json` — arguments used
+- `structure.log` — run log
+
+### Lookup extensions (planned)
+
+`SequencePdbMap.from_sifts_for_uniprot_ids()` is registered in `mysca.structure.mapping` but currently raises `NotImplementedError`. SIFTS on-demand lookup will land in a follow-up without changing the public CLI surface.

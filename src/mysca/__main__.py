@@ -29,3 +29,8 @@ def run_project():
     from mysca.run_project import parse_args, main
     args = parse_args(sys.argv[1:])
     main(args)
+
+def run_structure():
+    from mysca.run_structure import parse_args, main
+    args = parse_args(sys.argv[1:])
+    main(args)

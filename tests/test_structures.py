@@ -7,7 +7,7 @@ from contextlib import nullcontext as does_not_raise
 from tests.conftest import DATDIR, TMPDIR, remove_dir
 
 from mysca.io import load_pdb_structure
-from mysca.structures import struct2seq
+from mysca.structure import struct2seq
 from Bio import SeqIO
 
 
