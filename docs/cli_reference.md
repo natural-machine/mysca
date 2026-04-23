@@ -246,3 +246,51 @@ sca-plots [--prealign DIR] [--preprocessing DIR] [--scacore DIR] [--imgdir DIR] 
 ### Notes
 
 The inline matplotlib figures currently in `run_sca.py::make_plots` (conservation, SCA-matrix imshow, spectrum vs null, sector-subset) are not replayed by this CLI — they will be picked up automatically once those plots are refactored into `mysca.pl`.
+
+---
+
+## sca-project
+
+Project primary amino-acid sequences (in- or out-of-sample) onto an existing SCA result. For each input sequence, map its raw residues onto the IC groups from the source SCA run.
+
+### Usage
+
+```bash
+sca-project -i <sequences.fasta> \
+    --preprocessing <preprocess-dir> \
+    --scacore <scacore-dir> \
+    -o <output-dir> [options]
+```
+
+Records whose ID is already present in the reference MSA (under `--preprocessing`) are resolved in-sample (no external alignment). Other records are aligned onto the reference via the chosen aligner.
+
+### Required Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `-i, --input_fpath` | Path to an input FASTA of sequences to project |
+| `--preprocessing` | `sca-preprocess` output directory (must include `msa_orig.fasta-aln`) |
+| `--scacore` | `sca-core` output directory (must include `sca_results/msa_sectors/sector_*_msapos.npy` and `sca_results/v_ica_normalized.npy`) |
+| `-o, --outdir` | Output directory |
+
+### Optional Arguments
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--aligner` | `mafft_add` | Out-of-sample alignment method. `mafft_add` uses `mafft --add --keeplength`. `hmmalign` is registered as a name but not yet implemented. In-sample records bypass alignment entirely |
+| `--align_bin` | None | Explicit path to the alignment binary (default: resolve from PATH) |
+| `--align_threads` | 1 | Threads for the alignment tool |
+| `-v, --verbosity` | 1 | Verbosity level |
+
+### Output
+
+Writes to the specified output directory:
+
+- `projection.json` — top-level result: per-sequence dicts containing `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col` (length `L_proc`), `ic_memberships` (per-IC raw residue indices), `ic_loadings`, `ic_processed_cols`, `in_sample`
+- `per_sequence/<seqid>_residues.tsv` — one row per (IC, residue) for readable inspection
+- `projection_args.json` — arguments used
+- `projection.log` — run log
+
+### External Binaries
+
+`mafft` (for the default `mafft_add` aligner) must be resolvable via PATH or via `--align_bin`. In-sample projection does not invoke any external binary.
