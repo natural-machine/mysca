@@ -277,9 +277,9 @@ Records whose ID is already present in the reference MSA (under `--preprocessing
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--aligner` | `mafft_add` | Out-of-sample alignment method. `mafft_add` uses `mafft --add --keeplength`. `hmmalign` is registered as a name but not yet implemented. In-sample records bypass alignment entirely |
-| `--align_bin` | None | Explicit path to the alignment binary (default: resolve from PATH) |
-| `--align_threads` | 1 | Threads for the alignment tool |
+| `--aligner` | `mafft_add` | Out-of-sample alignment method. `mafft_add` uses `mafft --add --keeplength`. `hmmalign` builds a profile HMM (`hmmbuild --hand --amino`) with every reference column as a match state, then aligns new sequences (`hmmalign --outformat afa`) and keeps only match columns. In-sample records bypass alignment entirely |
+| `--align_bin` | None | Explicit path to the alignment binary (default: resolve from PATH). For `--aligner hmmalign` this is `hmmalign`; `hmmbuild` is resolved from PATH |
+| `--align_threads` | 1 | Threads for the alignment tool (unused by `hmmalign`) |
 | `-v, --verbosity` | 1 | Verbosity level |
 
 ### Output
@@ -293,7 +293,7 @@ Writes to the specified output directory:
 
 ### External Binaries
 
-`mafft` (for the default `mafft_add` aligner) must be resolvable via PATH or via `--align_bin`. In-sample projection does not invoke any external binary.
+`mafft` (for the default `mafft_add` aligner) must be resolvable via PATH or via `--align_bin`. For `--aligner hmmalign`, both `hmmbuild` and `hmmalign` must be on PATH (install via `conda install -c bioconda hmmer`). In-sample projection does not invoke any external binary.
 
 ---
 

@@ -27,6 +27,8 @@ from typing import Callable, Iterable
 
 from Bio import AlignIO, SeqIO
 from Bio.Align import MultipleSeqAlignment
+from Bio.Seq import Seq
+from Bio.SeqRecord import SeqRecord
 
 from mysca.prealign import _resolve_bin
 
@@ -145,11 +147,134 @@ def _mafft_add(
     }
 
 
-def _hmmalign(*args, **kwargs):
-    raise NotImplementedError(
-        "hmmalign backend is registered but not yet implemented. "
-        "Default to 'mafft_add' or contribute an hmmalign wrapper."
+def _write_stockholm_with_full_rf(msa_obj, path):
+    """Write an MSA to Stockholm with an ``#=GC RF`` line marking every
+    column as a match column ('x'). Consumed by ``hmmbuild --hand`` so
+    the resulting HMM has one match state per original MSA column.
+
+    IDs are written as-is; Stockholm permits anything except whitespace.
+    """
+    L = msa_obj.get_alignment_length()
+    max_id = max((len(rec.id) for rec in msa_obj), default=10)
+    col = max(max_id, 10) + 2
+    with open(path, "w") as f:
+        f.write("# STOCKHOLM 1.0\n\n")
+        for rec in msa_obj:
+            f.write(f"{rec.id:<{col}}{str(rec.seq)}\n")
+        f.write(f"{'#=GC RF':<{col}}{'x' * L}\n")
+        f.write("//\n")
+
+
+def _hmmalign(
+    new_fasta_path: str,
+    msa_obj_orig: MultipleSeqAlignment,
+    workdir: str,
+    *,
+    bin_path: str | None = None,
+    hmmbuild_bin: str | None = None,
+    threads: int = 1,
+    extra_args: Iterable[str] = (),
+) -> dict:
+    """Align new sequences onto ``msa_obj_orig`` via HMMER.
+
+    Pipeline: build a profile HMM from the reference MSA with every
+    column forced to a match state (``hmmbuild --hand``), then align
+    the new sequences to that HMM (``hmmalign --outformat afa``) and
+    strip lowercase insert-state columns so each aligned row has
+    exactly ``L_orig`` columns.
+
+    ``bin_path`` overrides the ``hmmalign`` binary; ``hmmbuild_bin``
+    overrides the ``hmmbuild`` binary. ``threads`` is accepted for API
+    parity with mafft; HMMER's alignment step is single-threaded so
+    it's unused here.
+    """
+    del threads  # parity with mafft_add signature; hmmalign is single-threaded
+    hmmbuild = _resolve_bin("hmmbuild", override=hmmbuild_bin)
+    hmmalign = _resolve_bin("hmmalign", override=bin_path)
+    os.makedirs(workdir, exist_ok=True)
+
+    ref_sto = os.path.join(workdir, "ref.sto")
+    hmm_path = os.path.join(workdir, "ref.hmm")
+    afa_path = os.path.join(workdir, "hmmalign_out.afa")
+    out_fpath = os.path.join(workdir, ALIGNED_NEW_FNAME)
+
+    with open(new_fasta_path) as f:
+        n_in = sum(1 for _ in SeqIO.parse(f, "fasta"))
+    if n_in == 0:
+        raise ValueError(f"No sequences found in {new_fasta_path}")
+
+    _write_stockholm_with_full_rf(msa_obj_orig, ref_sto)
+    L_orig = msa_obj_orig.get_alignment_length()
+
+    logger.info(
+        "hmmbuild --hand on %d reference sequences (%d columns).",
+        len(msa_obj_orig), L_orig,
     )
+    t0 = time.perf_counter()
+    hmmbuild_argv = [hmmbuild, "--hand", "--amino", hmm_path, ref_sto]
+    try:
+        subprocess.run(
+            hmmbuild_argv, check=True, capture_output=True, text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        logger.warning("hmmbuild failed (rc=%s)", e.returncode)
+        if e.stderr:
+            logger.warning("stderr:\n%s", e.stderr)
+        if e.stdout:
+            logger.warning("stdout:\n%s", e.stdout)
+        raise
+
+    logger.info("hmmalign --outformat afa on %d new sequences.", n_in)
+    hmmalign_argv = [hmmalign, "--outformat", "afa", hmm_path, new_fasta_path]
+    hmmalign_argv.extend(extra_args)
+    with open(afa_path, "w") as fout:
+        try:
+            subprocess.run(
+                hmmalign_argv, check=True, stdout=fout,
+                stderr=subprocess.PIPE, text=True,
+            )
+        except subprocess.CalledProcessError as e:
+            logger.warning("hmmalign failed (rc=%s)", e.returncode)
+            if e.stderr:
+                logger.warning("stderr:\n%s", e.stderr)
+            raise
+    elapsed = time.perf_counter() - t0
+
+    # hmmalign emits an A2M-style aFASTA: uppercase = match column,
+    # lowercase = insert column, '-' = match column with a delete, '.'
+    # = insert column with a gap. We keep only match columns so the
+    # output lines up 1:1 with msa_obj_orig's columns.
+    new_recs_out = []
+    for rec in SeqIO.parse(afa_path, "fasta"):
+        s = str(rec.seq)
+        match_only = "".join(c for c in s if c.isupper() or c == "-")
+        if len(match_only) != L_orig:
+            raise RuntimeError(
+                f"hmmalign produced a {len(match_only)}-column aligned row "
+                f"for {rec.id!r}; expected {L_orig}. HMM match-state count "
+                "likely disagrees with the reference MSA."
+            )
+        new_recs_out.append(
+            SeqRecord(Seq(match_only), id=rec.id, description=""),
+        )
+    if len(new_recs_out) != n_in:
+        raise RuntimeError(
+            f"hmmalign produced {len(new_recs_out)} aligned rows; "
+            f"expected {n_in}"
+        )
+
+    with open(out_fpath, "w") as fout:
+        SeqIO.write(new_recs_out, fout, "fasta")
+
+    logger.info(
+        "hmmalign done: %d sequences aligned in %.2fs", n_in, elapsed,
+    )
+    return {
+        "n_in": n_in,
+        "n_out": len(new_recs_out),
+        "elapsed_s": elapsed,
+        "aligned_new_fpath": out_fpath,
+    }
 
 
 ALIGNERS: dict[str, Callable] = {

@@ -6,10 +6,9 @@ Library tests exercise:
   ``statsectors_msa.npz``.
 - In-sample short-circuit: no external aligner is invoked when every
   input ID is already in the reference MSA.
-- Aligner dispatch: unknown method raises; registered-but-not-
-  implemented hmmalign raises NotImplementedError.
-- Out-of-sample alignment (gated on mafft on PATH): hand-build a
-  sequence that differs from a training sequence by 1–2 residues and
+- Aligner dispatch: unknown method raises.
+- Out-of-sample alignment (gated on mafft / HMMER on PATH): hand-build
+  a sequence that differs from a training sequence by 1–2 residues and
   confirm the result is internally consistent.
 
 CLI test runs the entrypoint and asserts on-disk artifacts.
@@ -48,7 +47,14 @@ from mysca.run_project import (
 
 
 _MAFFT = shutil.which("mafft") is not None
+_HMMER = (
+    shutil.which("hmmalign") is not None
+    and shutil.which("hmmbuild") is not None
+)
 needs_mafft = pytest.mark.skipif(not _MAFFT, reason="mafft not on PATH")
+needs_hmmer = pytest.mark.skipif(
+    not _HMMER, reason="hmmbuild/hmmalign not on PATH",
+)
 
 
 PREP_ARGS = f"{DATDIR}/entrypoint_tests/preprocessing/argstrings/argstring6a.txt"
@@ -100,10 +106,8 @@ def test_align_to_msa_rejects_unknown_aligner(tmp_path):
         )
 
 
-def test_hmmalign_backend_is_registered_but_unimplemented():
+def test_hmmalign_backend_is_registered():
     assert "hmmalign" in ALIGNERS
-    with pytest.raises(NotImplementedError):
-        _hmmalign()
 
 
 def test_project_in_sample_matches_statsectors_msa(prep_and_sca_dirs):
@@ -180,13 +184,10 @@ def test_project_in_sample_does_not_invoke_aligner(prep_and_sca_dirs, tmp_path):
     assert result.projections[0].in_sample
 
 
-@needs_mafft
-def test_project_out_of_sample_roundtrip(prep_and_sca_dirs, tmp_path):
-    """Project a sequence that is the same as a training sequence
-    modulo a re-id. The aligned row should match the original and
-    ic_memberships should match statsectors_msa for that training seq.
-    """
-    prep_dir, sca_dir = prep_and_sca_dirs
+def _out_of_sample_roundtrip(prep_dir, sca_dir, tmp_path, aligner):
+    """Shared body: project a sequence under a new ID (forcing the
+    out-of-sample path) that is byte-identical to a training sequence;
+    per-IC memberships must match statsectors_msa for the donor."""
     prep = PreprocessingResults.load(prep_dir)
     sca = SCAResults.load(sca_dir)
     msa_obj = prep.msa_obj_orig
@@ -195,25 +196,21 @@ def test_project_out_of_sample_roundtrip(prep_and_sca_dirs, tmp_path):
     donor_rec = next(r for r in msa_obj if r.id == donor_id)
     donor_raw = str(donor_rec.seq).replace("-", "")
 
-    # Feed the same sequence under a new ID that is not in the MSA,
-    # forcing the out-of-sample path.
-    new_id = "out_of_sample_copy"
+    new_id = f"out_of_sample_copy_{aligner}"
     assert new_id not in {r.id for r in msa_obj}
-    in_fasta = tmp_path / "oos.fasta"
+    in_fasta = tmp_path / f"oos_{aligner}.fasta"
     in_fasta.write_text(f">{new_id}\n{donor_raw}\n")
 
     result = project_sequences(
         str(in_fasta),
         sca_result_dir=sca_dir,
         preproc_result_dir=prep_dir,
-        aligner="mafft_add",
+        aligner=aligner,
     )
     [proj] = result.projections
     assert not proj.in_sample
     assert proj.raw_sequence == donor_raw
 
-    # ic_memberships for the out-of-sample copy should match what the
-    # donor has in statsectors_msa, since it's the same raw sequence.
     kstar = sca.kstar
     stats = sca.statsectors_msa
     for ic in range(kstar):
@@ -223,10 +220,22 @@ def test_project_out_of_sample_roundtrip(prep_and_sca_dirs, tmp_path):
         expected = np.sort(np.asarray(stats[key], dtype=int))
         got = np.sort(np.asarray(proj.ic_memberships[ic], dtype=int))
         assert np.array_equal(got, expected), (
-            f"Out-of-sample IC {ic} membership differs from in-sample "
+            f"[{aligner}] Out-of-sample IC {ic} membership differs from "
             f"donor {donor_id}: got={got.tolist()} "
             f"expected={expected.tolist()}"
         )
+
+
+@needs_mafft
+def test_project_out_of_sample_roundtrip_mafft(prep_and_sca_dirs, tmp_path):
+    prep_dir, sca_dir = prep_and_sca_dirs
+    _out_of_sample_roundtrip(prep_dir, sca_dir, tmp_path, aligner="mafft_add")
+
+
+@needs_hmmer
+def test_project_out_of_sample_roundtrip_hmmer(prep_and_sca_dirs, tmp_path):
+    prep_dir, sca_dir = prep_and_sca_dirs
+    _out_of_sample_roundtrip(prep_dir, sca_dir, tmp_path, aligner="hmmalign")
 
 
 def test_field_descriptions_cover_all_init_args():
