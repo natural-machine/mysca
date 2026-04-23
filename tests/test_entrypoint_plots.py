@@ -139,18 +139,64 @@ def test_replay_scacore_emits_expected_plots():
     sca_imgdir = os.path.join(sca_dir, "images")
     shutil.rmtree(sca_imgdir, ignore_errors=True)
 
+    # Pass --preprocessing alongside --scacore so positional-conservation
+    # plots can resolve retained_positions + original MSA length.
     main(parse_args([
         "--scacore", sca_dir,
+        "--preprocessing", prep_dir,
         "-v", "0",
     ]))
-    assert os.path.isfile(os.path.join(sca_imgdir, "dendrogram.png"))
-    assert os.path.isfile(os.path.join(sca_imgdir, "t_distributions.png"))
+    for fname in (
+        "dendrogram.png",
+        "t_distributions.png",
+        "conservation.png",
+        "top_conservation.png",
+        "positional_conservation.png",
+        "sca_matrix.png",
+        "sca_matrix_spectrum.png",
+        "sca_matrix_spectrum_vs_null.png",
+        "sca_matrix_important_subset.png",
+    ):
+        assert os.path.isfile(os.path.join(sca_imgdir, fname)), (
+            f"Expected {fname} under {sca_imgdir}"
+        )
     pngs = [f for f in os.listdir(sca_imgdir) if f.endswith(".png")]
     assert any(f.startswith("ev") for f in pngs), (
         f"No EV scatter plots found in {sca_imgdir}: {pngs}"
     )
     assert any(f.startswith("ic") for f in pngs), (
         f"No IC scatter plots found in {sca_imgdir}: {pngs}"
+    )
+
+    remove_dir(prep_dir)
+    remove_dir(sca_dir)
+
+
+def test_replay_scacore_without_preprocessing_skips_positional_conservation():
+    """Without --preprocessing, top_conservation and positional_conservation
+    can't be drawn (they need retained_positions + original MSA length).
+    Plain conservation.png should still be produced."""
+    prep_dir = f"{TMPDIR}/plots_replay_sca_noprep_prep"
+    sca_dir = f"{TMPDIR}/plots_replay_sca_noprep"
+    for d in (prep_dir, sca_dir):
+        if os.path.isdir(d):
+            remove_dir(d)
+
+    _run_prep_and_sca(prep_dir, sca_dir)
+
+    sca_imgdir = os.path.join(sca_dir, "images")
+    shutil.rmtree(sca_imgdir, ignore_errors=True)
+
+    main(parse_args([
+        "--scacore", sca_dir,
+        "-v", "0",
+    ]))
+    assert os.path.isfile(os.path.join(sca_imgdir, "conservation.png"))
+    assert not os.path.isfile(
+        os.path.join(sca_imgdir, "top_conservation.png")
+    )
+    assert not os.path.isfile(
+        os.path.join(sca_imgdir, "positional_conservation.png")
     )
 
     remove_dir(prep_dir)

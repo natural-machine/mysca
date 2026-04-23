@@ -238,14 +238,14 @@ sca-plots [--prealign DIR] [--preprocessing DIR] [--scacore DIR] [--imgdir DIR] 
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `--prealign` | None | Prealign output directory (contains `filter_history.json`). Regenerates `plot_prealign_filter_history` |
-| `--preprocessing` | None | Preprocessing output directory (contains `preprocessing_results.npz`, `filter_history.json`, `msa_binary2d_sp.npz`). Regenerates `plot_filter_history`, `plot_filter_distributions`, `plot_sequence_similarity` |
-| `--scacore` | None | SCA core output directory (contains `scarun_results.npz`, `sca_eigendecomp.npz`, `sca_results/`). Regenerates `plot_dendrogram`, `plot_t_distributions`, and the EV/IC 2D/3D scatter sweeps |
+| `--preprocessing` | None | Preprocessing output directory (contains `preprocessing_results.npz`, `filter_history.json`, `msa_binary2d_sp.npz`). Regenerates `plot_filter_history`, `plot_filter_distributions`, `plot_sequence_similarity`. When passed alongside `--scacore`, also enables the positional conservation plots (they need `retained_positions` + the original MSA length) |
+| `--scacore` | None | SCA core output directory. Regenerates `plot_conservation`, `plot_sca_matrix`, `plot_sca_spectrum`, `plot_sca_spectrum_vs_null`, `plot_dendrogram`, `plot_t_distributions`, `plot_data_2d`/`3d` (EV + IC sweeps), `plot_sca_matrix_sector_subset`. With `--preprocessing` also given, adds `plot_conservation_top` and `plot_conservation_positional` |
 | `--imgdir` | None | Output directory for all plots. When omitted, plots go into each stage's own `images/` subdirectory |
 | `-v, --verbosity` | 1 | Verbosity level |
 
 ### Notes
 
-The inline matplotlib figures currently in `run_sca.py::make_plots` (conservation, SCA-matrix imshow, spectrum vs null, sector-subset) are not replayed by this CLI — they will be picked up automatically once those plots are refactored into `mysca.pl`.
+`plot_covariance_matrix` is not replayed: the raw (pre-weighting) covariance matrix `Cij_raw` is computed in-memory during `sca-core` and not persisted to disk. Rerun `sca-core` to produce that figure.
 
 ---
 

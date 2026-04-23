@@ -452,3 +452,216 @@ def plot_t_distributions(
     fig.tight_layout()
     _maybe_save(fig, save, outdir, filename)
     return fig
+
+
+def plot_conservation_top(
+        retained_positions, Di, num_positions_orig,
+        outdir=".",
+        *,
+        filename="top_conservation.png",
+        save=True,
+):
+    """Scatter of per-position relative entropy D_i at retained original
+    positions, with the x-axis spanning the original alignment length.
+    """
+    fig, ax = plt.subplots(1, 1, figsize=(10, 4))
+    ax.plot(retained_positions, Di, "o", color="Blue", alpha=0.2)
+    ax.set_xlim(0, num_positions_orig)
+    ax.set_xlabel("Position")
+    ax.set_ylabel(r"Relative Entropy $D_i$")
+    ax.set_title("Conservation")
+    fig.tight_layout()
+    _maybe_save(fig, save, outdir, filename)
+    return ax
+
+
+def plot_conservation_positional(
+        retained_positions, Di, num_positions_orig,
+        outdir=".",
+        *,
+        filename="positional_conservation.png",
+        save=True,
+):
+    """Bar chart of D_i at retained original positions, with the x-axis
+    spanning the original alignment length.
+    """
+    fig, ax = plt.subplots(1, 1, figsize=(10, 4))
+    ax.bar(retained_positions, Di, color="Blue", width=1.0, align="center")
+    ax.set_xlim(0, num_positions_orig)
+    ax.set_xlabel("Position")
+    ax.set_ylabel(r"Relative Entropy $D_i$")
+    ax.set_title("Conservation")
+    fig.tight_layout()
+    _maybe_save(fig, save, outdir, filename)
+    return ax
+
+
+def plot_conservation(
+        Di,
+        outdir=".",
+        *,
+        filename="conservation.png",
+        save=True,
+):
+    """Bar chart of D_i over the retained-position index axis (no mapping
+    back to original-MSA coordinates).
+    """
+    fig, ax = plt.subplots(1, 1, figsize=(10, 4))
+    ax.bar(np.arange(len(Di)), Di, color="Blue", width=1.0, align="center")
+    ax.set_xlabel("Position")
+    ax.set_ylabel(r"Relative Entropy $D_i$")
+    ax.set_title("Conservation")
+    fig.tight_layout()
+    _maybe_save(fig, save, outdir, filename)
+    return ax
+
+
+def _plot_matrix_imshow(
+        matrix, title, *, xlabel, ylabel, cbar_label="Covariation",
+):
+    fig, ax = plt.subplots(1, 1)
+    sc = ax.imshow(
+        matrix, cmap="Blues", origin="lower", interpolation="none", vmax=None,
+    )
+    fig.colorbar(sc, label=cbar_label)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    return fig, ax
+
+
+def plot_covariance_matrix(
+        Cij_raw,
+        outdir=".",
+        *,
+        filename="covariance_matrix.png",
+        save=True,
+):
+    """Imshow of the raw (pre-weighting) covariance matrix."""
+    fig, _ax = _plot_matrix_imshow(
+        Cij_raw, "Covariance Matrix",
+        xlabel="(Retained) Position i",
+        ylabel="(Retained) Position j",
+    )
+    _maybe_save(fig, save, outdir, filename)
+    return fig
+
+
+def plot_sca_matrix(
+        Cij,
+        outdir=".",
+        *,
+        filename="sca_matrix.png",
+        save=True,
+):
+    """Imshow of the weighted SCA covariance matrix."""
+    fig, _ax = _plot_matrix_imshow(
+        Cij, "SCA Matrix",
+        xlabel="(Retained) Position i",
+        ylabel="(Retained) Position j",
+    )
+    _maybe_save(fig, save, outdir, filename)
+    return fig
+
+
+def plot_sca_spectrum(
+        evals_sca, evals_shuff,
+        outdir=".",
+        *,
+        filename="sca_matrix_spectrum.png",
+        save=True,
+):
+    """Overlay the SCA eigenvalue spectrum with each bootstrap null
+    sample's eigenvalue spectrum.
+    """
+    fig, ax = plt.subplots(1, 1)
+    for e in evals_shuff:
+        ax.plot(1 + np.arange(len(e)), e, ".", markersize=3)
+    ax.plot(
+        1 + np.arange(len(evals_sca)), evals_sca,
+        "k.", markersize=2, label="data",
+    )
+    ax.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
+    ax.set_xlabel(r"$\lambda$ index")
+    ax.set_ylabel(r"$\lambda$")
+    ax.set_title(r"$\tilde{C}_{ij}$ Spectrum (data vs null)")
+    fig.tight_layout()
+    _maybe_save(fig, save, outdir, filename)
+    return fig
+
+
+def plot_sca_spectrum_vs_null(
+        evals_sca, evals_shuff, cutoff, n_boot,
+        outdir=".",
+        *,
+        filename="sca_matrix_spectrum_vs_null.png",
+        save=True,
+):
+    """Histograms of the SCA eigenvalues vs the pooled bootstrap null,
+    with the significance cutoff marked.
+    """
+    fig, ax = plt.subplots(1, 1)
+    _counts, bins, _patches = ax.hist(
+        evals_sca, bins=100, color="black", alpha=0.8, log=True, label="Data",
+    )
+    bin_centers = 0.5 * (bins[1:] + bins[:-1])
+    h, _ = np.histogram(np.asarray(evals_shuff).flatten(), bins=bins)
+    ax.axvline(cutoff, 0, 1, linestyle="--", color="grey")
+    denom = n_boot if n_boot else 1
+    ax.plot(bin_centers, h / denom, color="red", lw=1.5, label="Null")
+    ax.legend()
+    ax.set_xlabel(r"$\lambda$")
+    ax.set_ylabel("Count")
+    ax.set_title("Spectral decomposition")
+    fig.tight_layout()
+    _maybe_save(fig, save, outdir, filename)
+    return fig
+
+
+def plot_sca_matrix_sector_subset(
+        sca_mat_imp, groups, sector_color_set=None,
+        outdir=".",
+        *,
+        filename="sca_matrix_important_subset.png",
+        save=True,
+):
+    """Imshow of the sector-subset SCA matrix, optionally decorated with
+    sector-colored rugs along the top and right axes.
+    """
+    fig, ax = plt.subplots(1, 1)
+    sc = ax.imshow(
+        sca_mat_imp, cmap="Blues", origin="lower",
+        interpolation="none", vmax=None,
+    )
+    fig.colorbar(sc, label="Covariation")
+    ax.set_xlabel("(Important) Position i")
+    ax.set_ylabel("(Important) Position j")
+    ax.set_title("SCA Matrix (Groups)")
+
+    group_lengths = [len(g) for g in groups]
+    if sector_color_set and np.sum(group_lengths) > 0:
+        group_colors = np.concatenate([
+            len(g) * [colors.to_rgb(sector_color_set[i])]
+            for i, g in enumerate(groups) if len(g) > 0
+        ], axis=0)
+
+        divider = make_axes_locatable(ax)
+        ax_top = divider.append_axes("top", size="2%", pad=0.0, sharex=ax)
+        ax_top.imshow(
+            group_colors[None, :, :], aspect="auto",
+            extent=(0, len(group_colors), 0, 1),
+        )
+        ax_top.set_xticks([])
+        ax_top.set_yticks([])
+        ax_top.set_title(ax.get_title())
+        ax.set_title("")
+        ax_right = divider.append_axes("right", size="2%", pad=0.0, sharey=ax)
+        ax_right.imshow(
+            np.flip(group_colors, axis=0)[:, None, :], aspect="auto",
+            extent=(0, 1, 0, len(group_colors)),
+        )
+        ax_right.set_xticks([])
+        ax_right.set_yticks([])
+
+    _maybe_save(fig, save, outdir, filename)
+    return fig

@@ -19,13 +19,15 @@ Per-stage, plots are written into ``{stage_dir}/images/`` by default, or into
     --prealign DIR       plot_prealign_filter_history
     --preprocessing DIR  plot_filter_history, plot_filter_distributions,
                          plot_sequence_similarity
-    --scacore DIR        plot_dendrogram, plot_t_distributions,
-                         plot_data_2d/3d (EV + IC sweeps)
-
-The inline matplotlib figures in ``run_sca.py::make_plots`` (conservation,
-SCA-matrix imshow, spectrum vs null, sector-subset) are not replayed by this
-CLI — they are tied to the ``make_plots`` refactor and will be pulled into
-``mysca.pl`` in a future change.
+    --scacore DIR        plot_conservation (+ _top and _positional when
+                         --preprocessing is also given so retained_positions
+                         and the original MSA length are available),
+                         plot_sca_matrix, plot_sca_spectrum,
+                         plot_sca_spectrum_vs_null, plot_dendrogram,
+                         plot_t_distributions, plot_data_2d/3d (EV + IC
+                         sweeps), plot_sca_matrix_sector_subset.
+                         plot_covariance_matrix is skipped (Cij_raw is
+                         not persisted to disk by sca-core).
 """
 
 import argparse
@@ -37,12 +39,20 @@ import sys
 from mysca.logging_config import configure_logging
 from mysca.results import PreprocessingResults, SCAResults
 from mysca.pl import (
+    plot_conservation,
+    plot_conservation_positional,
+    plot_conservation_top,
+    plot_covariance_matrix,
     plot_data_2d,
     plot_data_3d,
     plot_dendrogram,
     plot_filter_distributions,
     plot_filter_history,
     plot_prealign_filter_history,
+    plot_sca_matrix,
+    plot_sca_matrix_sector_subset,
+    plot_sca_spectrum,
+    plot_sca_spectrum_vs_null,
     plot_sequence_similarity,
     plot_t_distributions,
 )
@@ -158,7 +168,7 @@ def _replay_preprocessing(stage_dir, imgdir_override):
         )
 
 
-def _replay_scacore(stage_dir, imgdir_override):
+def _replay_scacore(stage_dir, imgdir_override, *, preproc_dir=None):
     if not os.path.isdir(stage_dir):
         raise FileNotFoundError(f"SCA core directory not found: {stage_dir}")
     sca = SCAResults.load(stage_dir)
@@ -167,11 +177,68 @@ def _replay_scacore(stage_dir, imgdir_override):
 
     kstar = sca.kstar if sca.kstar is not None else 1
 
+    # Conservation plots — positional variants need retained_positions +
+    # the original MSA length, which come from the upstream preprocessing
+    # directory. Plain conservation.png only needs sca.conservation.
+    if sca.conservation is not None:
+        plot_conservation(sca.conservation, imgdir)
+        prep = _maybe_load_preprocessing(preproc_dir, stage_dir)
+        if prep is not None and prep.retained_positions is not None \
+                and prep.msa_obj_orig is not None:
+            num_pos_orig = prep.msa_obj_orig.get_alignment_length()
+            plot_conservation_top(
+                prep.retained_positions, sca.conservation, num_pos_orig,
+                imgdir,
+            )
+            plot_conservation_positional(
+                prep.retained_positions, sca.conservation, num_pos_orig,
+                imgdir,
+            )
+        else:
+            logger.warning(
+                "Preprocessing dir not resolved; skipping top_conservation.png "
+                "and positional_conservation.png (they need retained_positions "
+                "+ original MSA length)."
+            )
+    else:
+        logger.warning(
+            "No scarun_results.npz (conservation) in %s; skipping "
+            "conservation plots.", stage_dir,
+        )
+
     if sca.sca_matrix is not None:
+        plot_sca_matrix(sca.sca_matrix, imgdir)
         plot_dendrogram(sca.sca_matrix, imgdir, nclusters=kstar)
     else:
         logger.warning(
-            "No scarun_results.npz in %s; skipping dendrogram.", stage_dir,
+            "No sca_matrix in %s; skipping sca_matrix and dendrogram.",
+            stage_dir,
+        )
+
+    if sca.evals_sca is not None and sca.evals_shuff is not None \
+            and len(sca.evals_shuff) > 0:
+        plot_sca_spectrum(sca.evals_sca, sca.evals_shuff, imgdir)
+        if sca.cutoff is not None:
+            plot_sca_spectrum_vs_null(
+                sca.evals_sca, sca.evals_shuff, sca.cutoff,
+                len(sca.evals_shuff), imgdir,
+            )
+        else:
+            logger.warning(
+                "No cutoff scalar in %s; skipping sca_matrix_spectrum_vs_null.",
+                stage_dir,
+            )
+    else:
+        logger.warning(
+            "Missing evals_sca or evals_shuff in %s; skipping spectrum plots.",
+            stage_dir,
+        )
+
+    if sca.Cij_raw is not None:
+        plot_covariance_matrix(sca.Cij_raw, imgdir)
+    else:
+        logger.info(
+            "Cij_raw is not persisted on disk; skipping covariance_matrix.png."
         )
 
     if sca.v_ica is not None and sca.t_dists_info is not None:
@@ -186,7 +253,8 @@ def _replay_scacore(stage_dir, imgdir_override):
 
     if sca.groups is None:
         logger.warning(
-            "No sector groups on disk in %s; skipping EV/IC scatter plots.",
+            "No sector groups on disk in %s; skipping EV/IC scatter + "
+            "sector-subset plots.",
             stage_dir,
         )
         return
@@ -206,6 +274,29 @@ def _replay_scacore(stage_dir, imgdir_override):
             "No v_ica_normalized in %s; skipping IC scatter plots.", stage_dir,
         )
 
+    if sca.sca_matrix_sector_subset is not None:
+        from mysca.constants import SECTOR_COLORS
+        plot_sca_matrix_sector_subset(
+            sca.sca_matrix_sector_subset, sca.groups, SECTOR_COLORS, imgdir,
+        )
+    else:
+        logger.warning(
+            "No sca_matrix_sector_subset in %s; skipping sector-subset plot.",
+            stage_dir,
+        )
+
+
+def _maybe_load_preprocessing(preproc_dir, stage_dir):
+    if preproc_dir is None:
+        return None
+    if not os.path.isdir(preproc_dir):
+        logger.warning(
+            "Preprocessing dir %s not found; skipping plots that depend on it.",
+            preproc_dir,
+        )
+        return None
+    return PreprocessingResults.load(preproc_dir)
+
 
 def _replay_data_sweeps(ic_or_ev, data, groups, imgdir):
     for axidxs, group_idxs in _AXES_2D:
@@ -222,7 +313,9 @@ def main(args):
     if args.preprocessing:
         _replay_preprocessing(args.preprocessing, args.imgdir)
     if args.scacore:
-        _replay_scacore(args.scacore, args.imgdir)
+        _replay_scacore(
+            args.scacore, args.imgdir, preproc_dir=args.preprocessing,
+        )
 
     logger.info("sca-plots done.")
 
