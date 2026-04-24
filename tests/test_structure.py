@@ -407,3 +407,90 @@ def test_cli_rejects_both_or_neither_input(tmp_path):
             "--scacore", str(tmp_path),
             "-o", str(tmp_path / "o"),
         ])
+    # Three modes are still exactly-one; combining any two errors.
+    with pytest.raises(SystemExit):
+        structure_parse_args([
+            "--uniprot_ids", "P00742",
+            "--seq_map", "y.tsv",
+            "--pdb_dir", str(tmp_path),
+            "--preprocessing", str(tmp_path),
+            "--scacore", str(tmp_path),
+            "-o", str(tmp_path / "o"),
+        ])
+
+
+def test_cli_uniprot_ids_requires_pdb_dir(tmp_path):
+    """--uniprot_ids without --pdb_dir should parser.error at startup."""
+    with pytest.raises(SystemExit):
+        structure_parse_args([
+            "--uniprot_ids", "P00742",
+            "--preprocessing", str(tmp_path),
+            "--scacore", str(tmp_path),
+            "-o", str(tmp_path / "o"),
+        ])
+
+
+# SIFTS CLI mode end-to-end (urlopen mocked so no network).
+_SIFTS_URLOPEN = "mysca.structure.sifts.urllib.request.urlopen"
+
+
+def _canned_urlopen(payload):
+    import io as _io
+    import json as _json
+
+    class _R:
+        def __init__(self, body):
+            self._body = body
+
+        def read(self):
+            return self._body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    return _R(_json.dumps(payload).encode("utf-8"))
+
+
+def test_cli_uniprot_ids_e2e(prep_and_sca_dirs, tmp_path):
+    """With a mocked SIFTS response and a pre-placed PDB file in
+    --pdb_dir, --uniprot_ids drives sca-structure end-to-end and
+    emits the same structure_projection.json / per_structure TSVs as
+    the other modes."""
+    from unittest.mock import patch
+
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    seq_id = prep.retained_sequence_ids[0]
+    donor = next(r for r in prep.msa_obj_orig if r.id == seq_id)
+    raw = str(donor.seq).replace("-", "")
+
+    pdb_dir = tmp_path / "pdbs"
+    pdb_dir.mkdir()
+    _write_minimal_pdb(raw, str(pdb_dir / "1abc.pdb"))  # lowercase
+
+    cache_dir = tmp_path / "sifts_cache"
+    out_dir = tmp_path / "structure_sifts_out"
+
+    payload = {"P_FAKE": [{"pdb_id": "1abc", "chain_id": "A"}]}
+    with patch(_SIFTS_URLOPEN, return_value=_canned_urlopen(payload)):
+        args = structure_parse_args([
+            "--uniprot_ids", "P_FAKE",
+            "--pdb_dir", str(pdb_dir),
+            "--cache_dir", str(cache_dir),
+            "--preprocessing", prep_dir,
+            "--scacore", sca_dir,
+            "-o", str(out_dir),
+            "-v", "0",
+        ])
+        structure_main(args)
+
+    with open(out_dir / "structure_projection.json") as f:
+        data = json.load(f)
+    assert len(data) == 1
+    assert data[0]["structure_id"] == "P_FAKE"  # seq_id is the UniProt ID
+    assert os.path.isfile(data[0]["pdb_path"])
+    # The SIFTS cache is honored (P_FAKE.json written under cache_dir).
+    assert (cache_dir / "P_FAKE.json").is_file()

@@ -266,3 +266,56 @@ def test_from_sifts_requires_pdb_dir_to_exist(tmp_path):
             pdb_dir=str(tmp_path / "does_not_exist"),
             cache_dir=str(tmp_path / "cache"),
         )
+
+
+def test_from_sifts_finds_uppercase_pdb_filename(tmp_path):
+    """SIFTS returns lowercase pdb_ids (`1shf`), but RCSB downloads
+    are typically uppercase (`1SHF.pdb`). The lookup must try both.
+
+    On case-insensitive filesystems (default macOS HFS+/APFS)
+    ``os.path.isfile("1shf.pdb")`` already returns True even when
+    only ``1SHF.pdb`` exists, so we can't distinguish which path
+    the code returned — but the SIFTS-mode lookup must still succeed."""
+    pdb_dir = tmp_path / "pdbs"
+    pdb_dir.mkdir()
+    # Only the uppercase file exists on disk.
+    _touch(pdb_dir / "1SHF.pdb")
+    cache_dir = tmp_path / "cache"
+    payload = {"P06241": [{"pdb_id": "1shf", "chain_id": "A"}]}
+
+    with patch(
+        "mysca.structure.sifts.urllib.request.urlopen",
+        return_value=_fake_urlopen(payload),
+    ):
+        m = SequencePdbMap.from_sifts_for_uniprot_ids(
+            ["P06241"], pdb_dir=str(pdb_dir), cache_dir=str(cache_dir),
+        )
+    assert "P06241" in m
+    assert os.path.isfile(m["P06241"].pdb_path)
+    assert m["P06241"].chain == "A"
+    # pdb_path basename is the lowercase or uppercase form — both
+    # resolve to the same file on case-insensitive filesystems.
+    assert os.path.basename(m["P06241"].pdb_path).lower() == "1shf.pdb"
+
+
+def test_from_sifts_strict_error_names_both_case_variants(tmp_path):
+    """When neither the lower- nor upper-cased filename exists, the
+    error message must mention both so the user can choose which to
+    download."""
+    pdb_dir = tmp_path / "pdbs"
+    pdb_dir.mkdir()
+    cache_dir = tmp_path / "cache"
+    payload = {"P0": [{"pdb_id": "1abc", "chain_id": "A"}]}
+
+    with patch(
+        "mysca.structure.sifts.urllib.request.urlopen",
+        return_value=_fake_urlopen(payload),
+    ):
+        with pytest.raises(FileNotFoundError) as excinfo:
+            SequencePdbMap.from_sifts_for_uniprot_ids(
+                ["P0"], pdb_dir=str(pdb_dir), cache_dir=str(cache_dir),
+                strict=True,
+            )
+    msg = str(excinfo.value)
+    assert "1abc.pdb" in msg
+    assert "1ABC.pdb" in msg

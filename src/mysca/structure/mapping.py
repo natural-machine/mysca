@@ -163,14 +163,27 @@ class SequencePdbMap:
                     "SIFTS entry for %s is missing pdb_id: %r", uniprot_id, entry,
                 )
                 continue
-            pdb_path = os.path.join(
+            # SIFTS returns lowercase PDB IDs; filenames in the wild
+            # are often uppercase (e.g. 1SHF.pdb from RCSB). Try both
+            # cases so users don't have to rename their files.
+            lower_path = os.path.join(
                 pdb_dir, f"{pdb_id.lower()}{pdb_suffix}",
             )
-            if not os.path.isfile(pdb_path):
+            upper_path = os.path.join(
+                pdb_dir, f"{pdb_id.upper()}{pdb_suffix}",
+            )
+            if os.path.isfile(lower_path):
+                pdb_path = lower_path
+            elif os.path.isfile(upper_path):
+                pdb_path = upper_path
+            else:
+                pdb_path = lower_path  # keep for error message below
                 msg = (
                     f"SIFTS resolved {uniprot_id} to PDB {pdb_id} "
-                    f"(chain {chain}), but the file is missing: "
-                    f"{pdb_path}. Download it from RCSB or adjust "
+                    f"(chain {chain}), but neither "
+                    f"{os.path.basename(lower_path)} nor "
+                    f"{os.path.basename(upper_path)} exists under "
+                    f"{pdb_dir}. Download it from RCSB or adjust "
                     "--pdb_suffix."
                 )
                 if strict:

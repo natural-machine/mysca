@@ -1,26 +1,34 @@
 """Project PDB structure(s) onto an existing SCA result.
 
-Two input modes (mutually exclusive):
+Three input modes (mutually exclusive; pick exactly one):
 
 - ``-s <pdb_path>``: a single PDB file. Use ``--chain`` to select the
   chain (defaults to the first chain).
 - ``--seq_map <tsv>``: a TSV from MSA sequence ID to PDB file (with
   optional chain), one row per sequence to project. Format documented
   in ``mysca.structure.mapping.SequencePdbMap.from_tsv``.
+- ``--uniprot_ids <UID> [<UID> ...]``: one or more UniProt accessions.
+  Each is resolved to its top-ranked PDB via EBI's SIFTS
+  ``best_structures`` endpoint (cached under ``--cache_dir``); the
+  resolved file must already exist in ``--pdb_dir``. SIFTS only
+  resolves IDs, it doesn't download structures.
 
 -------------------------------------------------------------------------------
 COMMAND LINE ARGUMENTS:
 
-    -s --structure : Path to a single PDB file (mutually exclusive with
-        --seq_map).
+    -s --structure : Path to a single PDB file.
     --chain : Chain ID within --structure. Optional; defaults to the
         first chain.
-    --seq_map : Path to a TSV mapping MSA seq IDs to PDB paths (mutually
-        exclusive with --structure).
+    --seq_map : Path to a TSV mapping MSA seq IDs to PDB paths.
+    --uniprot_ids : one or more UniProt accessions (space-separated).
+    --pdb_dir : directory of pre-downloaded PDB files (required with
+        --uniprot_ids).
+    --cache_dir : SIFTS JSON cache directory (default
+        ``./.sifts_cache``; only consulted with --uniprot_ids).
     --seq_id : Header to use when projecting --structure's sequence
         (triggers in-sample short-circuit if this ID is already in the
-        reference MSA). Ignored when --seq_map is used (the TSV's keys
-        are used instead).
+        reference MSA). Ignored in --seq_map and --uniprot_ids modes
+        (seq IDs come from the map/UniProt list itself).
     --preprocessing : sca-preprocess output directory.
     --scacore : sca-core output directory.
     -o --outdir : Output directory.
@@ -60,6 +68,13 @@ EXAMPLE USAGE:
         --scacore scacore_out \\
         -o structure_out
 
+    sca-structure --uniprot_ids P06241 P12931 \\
+        --pdb_dir ./pdbs \\
+        --cache_dir ./.sifts_cache \\
+        --preprocessing preprocess_out \\
+        --scacore scacore_out \\
+        -o structure_out
+
 """
 
 import argparse
@@ -90,7 +105,7 @@ def parse_args(args):
     parser = argparse.ArgumentParser(
         description=(
             "Project PDB structure(s) onto an existing SCA result. "
-            "Pick EXACTLY ONE of --structure or --seq_map."
+            "Pick EXACTLY ONE of --structure, --seq_map, or --uniprot_ids."
         ),
     )
     parser.add_argument(
@@ -106,11 +121,29 @@ def parse_args(args):
         help="Path to a TSV of seq_id<TAB>pdb_path[<TAB>chain].",
     )
     parser.add_argument(
+        "--uniprot_ids", type=str, nargs="+", default=None, metavar="UID",
+        help="UniProt accessions to resolve via SIFTS best_structures. "
+        "For each ID, the top-ranked PDB is resolved and looked up "
+        "inside --pdb_dir. Requires --pdb_dir; honors --cache_dir.",
+    )
+    parser.add_argument(
+        "--pdb_dir", type=str, default=None, metavar="DIR",
+        help="Directory containing pre-downloaded PDB files. Required "
+        "when --uniprot_ids is used; SIFTS resolves IDs but does not "
+        "fetch structures.",
+    )
+    parser.add_argument(
+        "--cache_dir", type=str, default=None, metavar="DIR",
+        help="Local directory to cache SIFTS JSON responses. Default: "
+        "./.sifts_cache under the current working directory. Only "
+        "consulted when --uniprot_ids is used.",
+    )
+    parser.add_argument(
         "--seq_id", type=str, default=None,
         help="Header to use for --structure's sequence when running "
         "the project step. When this matches an ID in the reference "
         "MSA, the in-sample short-circuit kicks in. Ignored when "
-        "--seq_map is used.",
+        "--seq_map or --uniprot_ids is used.",
     )
     parser.add_argument(
         "--preprocessing", type=str, required=True, metavar="DIR",
@@ -141,9 +174,20 @@ def parse_args(args):
                         help="Verbosity level (0=warnings only).")
 
     parsed = parser.parse_args(args)
-    if bool(parsed.structure) == bool(parsed.seq_map):
+    chosen = sum(
+        x is not None and x != []
+        for x in (parsed.structure, parsed.seq_map, parsed.uniprot_ids)
+    )
+    if chosen != 1:
         parser.error(
-            "Exactly one of --structure or --seq_map is required."
+            "Exactly one of --structure, --seq_map, or --uniprot_ids "
+            "is required."
+        )
+    if parsed.uniprot_ids is not None and parsed.pdb_dir is None:
+        parser.error(
+            "--uniprot_ids requires --pdb_dir (the directory of "
+            "pre-downloaded PDB files). SIFTS resolves UniProt IDs to "
+            "PDB entries but does not fetch the structure files."
         )
     return parsed
 
@@ -210,27 +254,50 @@ def main(args):
         )
         projections.append(proj)
         _write_per_structure_tsv(outdir, proj)
+        with open(os.path.join(outdir, STRUCTURE_RESULTS_FNAME), "w") as f:
+            json.dump([p.to_dict() for p in projections], f, indent=2)
+        logger.info(
+            "sca-structure done. %d structure(s) projected. Output at %s",
+            len(projections), outdir,
+        )
+        return
+
+    if args.uniprot_ids is not None:
+        logger.info(
+            "Resolving %d UniProt accession(s) via SIFTS (cache_dir=%s).",
+            len(args.uniprot_ids), args.cache_dir or ".sifts_cache",
+        )
+        seq_map = SequencePdbMap.from_sifts_for_uniprot_ids(
+            args.uniprot_ids,
+            pdb_dir=args.pdb_dir,
+            cache_dir=args.cache_dir,
+        )
+        logger.info(
+            "SIFTS resolved %d/%d UniProt IDs into usable PDB entries.",
+            len(seq_map), len(args.uniprot_ids),
+        )
     else:
         seq_map = SequencePdbMap.from_tsv(args.seq_map)
         logger.info(
             "Projecting %d PDB structure(s) from %s.",
             len(seq_map), args.seq_map,
         )
-        for seq_id, entry in seq_map.items():
-            pdb = PDBStructure.from_file(
-                entry.pdb_path, chain=entry.chain, structure_id=seq_id,
-            )
-            proj = project_pdb(
-                pdb,
-                sca_result_dir=args.scacore,
-                preproc_result_dir=args.preprocessing,
-                seq_id=seq_id,
-                aligner=args.aligner,
-                aligner_kwargs=aligner_kwargs,
-                workdir=os.path.join(outdir, "_align_workdir"),
-            )
-            projections.append(proj)
-            _write_per_structure_tsv(outdir, proj)
+
+    for seq_id, entry in seq_map.items():
+        pdb = PDBStructure.from_file(
+            entry.pdb_path, chain=entry.chain, structure_id=seq_id,
+        )
+        proj = project_pdb(
+            pdb,
+            sca_result_dir=args.scacore,
+            preproc_result_dir=args.preprocessing,
+            seq_id=seq_id,
+            aligner=args.aligner,
+            aligner_kwargs=aligner_kwargs,
+            workdir=os.path.join(outdir, "_align_workdir"),
+        )
+        projections.append(proj)
+        _write_per_structure_tsv(outdir, proj)
 
     with open(os.path.join(outdir, STRUCTURE_RESULTS_FNAME), "w") as f:
         json.dump(

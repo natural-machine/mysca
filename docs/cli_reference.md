@@ -357,19 +357,28 @@ Project PDB structure(s) onto an existing SCA result. Wraps `sca-project`: the P
 ### Usage
 
 ```bash
+# Single PDB file:
 sca-structure -s <pdb_path> [--chain A] [--seq_id <id>] \
     --preprocessing <preprocess-dir> \
     --scacore <scacore-dir> \
     -o <output-dir> [options]
 
-# Or iterate over a sequence-to-PDB map:
+# Batch via a sequence-to-PDB TSV:
 sca-structure --seq_map <tsv> \
+    --preprocessing <preprocess-dir> \
+    --scacore <scacore-dir> \
+    -o <output-dir> [options]
+
+# Batch via UniProt → PDB resolution (SIFTS best_structures):
+sca-structure --uniprot_ids P06241 P12931 \
+    --pdb_dir <dir-of-pre-downloaded-pdbs> \
+    [--cache_dir <dir>] \
     --preprocessing <preprocess-dir> \
     --scacore <scacore-dir> \
     -o <output-dir> [options]
 ```
 
-Exactly one of `-s/--structure` or `--seq_map` is required.
+Exactly one of `-s/--structure`, `--seq_map`, or `--uniprot_ids` is required.
 
 ### Required Arguments
 
@@ -378,14 +387,16 @@ Exactly one of `-s/--structure` or `--seq_map` is required.
 | `--preprocessing` | `sca-preprocess` output directory |
 | `--scacore` | `sca-core` output directory |
 | `-o, --outdir` | Output directory |
-| `-s, --structure` OR `--seq_map` | Either a single PDB path, or a TSV mapping MSA sequence IDs to PDB paths (format below) |
+| One of: `-s/--structure`, `--seq_map`, `--uniprot_ids` | Single PDB, TSV map, or UniProt accession list (SIFTS-resolved). `--uniprot_ids` additionally requires `--pdb_dir` |
 
 ### Optional Arguments
 
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `--chain` | first chain | Chain ID within `-s/--structure` |
-| `--seq_id` | None | Header used when projecting `-s/--structure`'s sequence. When it matches an ID in the reference MSA, the project step takes the in-sample short-circuit. Ignored when `--seq_map` is used (the TSV keys are used instead) |
+| `--pdb_dir` | None | Directory of pre-downloaded PDB files. Required with `--uniprot_ids`; SIFTS resolves accessions but does not fetch structures |
+| `--cache_dir` | `./.sifts_cache` | Local directory to cache SIFTS JSON responses. Only consulted in `--uniprot_ids` mode |
+| `--seq_id` | None | Header used when projecting `-s/--structure`'s sequence. When it matches an ID in the reference MSA, the project step takes the in-sample short-circuit. Ignored in `--seq_map` / `--uniprot_ids` modes (seq IDs come from the map / UniProt list itself) |
 | `--aligner` | `mafft_add` | Out-of-sample alignment method (inherits from `sca-project`) |
 | `--align_bin` | None | Explicit path to the alignment binary |
 | `--align_threads` | 1 | Threads for the alignment tool |
@@ -410,21 +421,22 @@ Writes to the specified output directory:
 - `structure_args.json` — arguments used
 - `structure.log` — run log
 
-### SIFTS lookup (library API)
+### SIFTS lookup
 
-When users don't want to hand-maintain a TSV, `mysca.structure.mapping.SequencePdbMap.from_sifts_for_uniprot_ids(uniprot_ids, pdb_dir=...)` resolves each UniProt accession to its best PDB structure via EBI PDBe's [`mappings/best_structures`](https://www.ebi.ac.uk/pdbe/api/doc/sifts.html) endpoint. Responses are cached under `./.sifts_cache/` (the default lives under the caller's current working directory so cache state stays local to a project or notebook; override with `cache_dir=...`) so repeat runs don't hit the network.
+`--uniprot_ids` resolves each UniProt accession to its top-ranked PDB structure via EBI PDBe's [`mappings/best_structures`](https://www.ebi.ac.uk/pdbe/api/doc/sifts.html) endpoint. Responses are cached under `--cache_dir` (default `./.sifts_cache/`) so repeat runs don't re-hit the network. SIFTS returns lowercase PDB IDs; the lookup tries both `{id}.pdb` and `{ID}.pdb` inside `--pdb_dir`, so either RCSB-style or lowercase filenames work.
 
-Example:
+The PDB files must already exist in `--pdb_dir`; SIFTS only resolves IDs, it does not fetch structures.
+
+The same mechanism is available at the library level for programmatic users:
 
 ```python
 from mysca.structure import SequencePdbMap
 seq_map = SequencePdbMap.from_sifts_for_uniprot_ids(
     ["P00742", "P09211", "P02768"],
-    pdb_dir="./pdbs",          # pre-downloaded RCSB files
-    cache_dir="./sifts_cache", # optional
+    pdb_dir="./pdbs",
+    cache_dir="./.sifts_cache",  # optional; default ./.sifts_cache
 )
-# seq_map["P00742"].pdb_path → "./pdbs/1c4v.pdb" (or whatever the
-# top-ranked best_structures entry points at)
+# seq_map["P00742"].pdb_path → "./pdbs/1c4v.pdb" (whichever case exists)
 ```
 
-The PDB files must already exist in `pdb_dir`; SIFTS only resolves IDs, it doesn't download structures. Missing files raise `FileNotFoundError` under `strict=True` (the default) or are logged and skipped under `strict=False`. This isn't yet exposed as a flag on `sca-structure` — for now it's a library-level call that downstream scripts can use to build a TSV for `sca-structure --seq_map`.
+Missing files raise `FileNotFoundError` under `strict=True` (the default) or are logged and skipped under `strict=False`.
