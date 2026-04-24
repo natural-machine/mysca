@@ -412,7 +412,7 @@ Writes to the specified output directory:
 
 ### SIFTS lookup (library API)
 
-When users don't want to hand-maintain a TSV, `mysca.structure.mapping.SequencePdbMap.from_sifts_for_uniprot_ids(uniprot_ids, pdb_dir=...)` resolves each UniProt accession to its best PDB structure via EBI PDBe's [`mappings/best_structures`](https://www.ebi.ac.uk/pdbe/api/doc/sifts.html) endpoint. Responses are cached under `~/.mysca/sifts_cache/` (override with `cache_dir=...`) so repeat runs don't hit the network.
+When users don't want to hand-maintain a TSV, `mysca.structure.mapping.SequencePdbMap.from_sifts_for_uniprot_ids(uniprot_ids, pdb_dir=...)` resolves each UniProt accession to its best PDB structure via EBI PDBe's [`mappings/best_structures`](https://www.ebi.ac.uk/pdbe/api/doc/sifts.html) endpoint. Responses are cached under `./.sifts_cache/` (the default lives under the caller's current working directory so cache state stays local to a project or notebook; override with `cache_dir=...`) so repeat runs don't hit the network.
 
 Example:
 

@@ -7,7 +7,7 @@ so downstream code can resolve a "best-available" structure without
 the caller curating a TSV by hand.
 
 Responses are cached under ``cache_dir`` (defaults to
-``~/.mysca/sifts_cache/``) as ``<uniprot_id>.json``. Cache hits avoid
+``./.sifts_cache/``) as ``<uniprot_id>.json``. Cache hits avoid
 the network call entirely — critical for tests, CI, and repeat runs
 over the same set of UniProt IDs.
 
@@ -28,7 +28,10 @@ logger = logging.getLogger("mysca.structure.sifts")
 SIFTS_BEST_STRUCTURES_URL = (
     "https://www.ebi.ac.uk/pdbe/api/mappings/best_structures/{uniprot_id}"
 )
-DEFAULT_CACHE_DIR = os.path.expanduser("~/.mysca/sifts_cache")
+# Cache under the current working directory by default so cache state
+# stays local to the project / demo / notebook it's invoked from. Pass
+# `cache_dir=...` (CLI flag or library kwarg) to override.
+DEFAULT_CACHE_DIR = ".sifts_cache"
 
 
 def _cache_dir(cache_dir: Optional[str]) -> str:
@@ -51,7 +54,7 @@ def fetch_best_structures_for_uniprot(
     Args:
         uniprot_id: UniProt accession (e.g. ``"P00742"``).
         cache_dir: directory for the JSON cache. Default
-            ``~/.mysca/sifts_cache/``. Created on first use.
+            ``./.sifts_cache/``. Created on first use.
         timeout: HTTP timeout in seconds.
         force_refresh: bypass the cache and re-fetch.
 

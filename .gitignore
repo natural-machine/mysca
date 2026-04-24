@@ -6,6 +6,9 @@ out/*
 tests/_tmp/*
 demo/SH3/out/*
 !demo/SH3/out/.gitkeep
+# SIFTS best_structures JSON cache (default: cwd-local). Per-machine
+# state with no value under version control.
+.sifts_cache/
 
 # Claude
 .claude/

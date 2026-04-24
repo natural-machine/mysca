@@ -11,7 +11,7 @@ Two lookup sources:
 
 - **SIFTS on-demand**: ``SequencePdbMap.from_sifts_for_uniprot_ids``
   fetches EBI PDBe ``best_structures`` for each UniProt accession
-  (cached locally under ``~/.mysca/sifts_cache/``) and builds a map
+  (cached locally under ``./.sifts_cache/``) and builds a map
   pointing at pre-downloaded PDB files in ``pdb_dir``.
 """
 
@@ -119,7 +119,7 @@ class SequencePdbMap:
                 itself becomes the key of the returned map.
             pdb_dir: directory containing the downloaded PDB files.
             cache_dir: local cache for SIFTS JSON responses
-                (default ``~/.mysca/sifts_cache/``).
+                (default ``./.sifts_cache/``).
             pdb_suffix: filename suffix for the on-disk PDBs (e.g.
                 ``".pdb"`` or ``".cif"``). Default ``.pdb``.
             strict: when True (default), raise ``FileNotFoundError``
