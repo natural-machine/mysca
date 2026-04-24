@@ -38,7 +38,9 @@ COMMAND LINE ARGUMENTS:
     --features NAME[,NAME,...] : names in --features_py to invoke per
         render pass. Requires --features_py.
     --views : save four rotated side views per frame.
-    --animate : save a rotating GIF per frame.
+    --animate : save a rotating GIF per rendered frame (one per IC
+        group in the default mode; one covering all groups under
+        ``--multisector``).
     --nframes N : animation frame count (default 24).
     --duration SEC : animation duration in seconds (default 2.4).
 
@@ -142,7 +144,9 @@ def parse_args(args):
     )
     parser.add_argument(
         "--animate", action="store_true",
-        help="Save a rotating GIF per frame.",
+        help="Save a rotating GIF per rendered frame (one per IC group "
+        "in the default mode; one covering all groups under "
+        "--multisector).",
     )
     parser.add_argument(
         "--nframes", type=int, default=None,
@@ -392,6 +396,9 @@ def _render_one_structure(
             ref_scaffold=ref_scaffold,
             feature_fns=feature_fns,
             views=views,
+            animate=animate,
+            nframes=nframes,
+            duration=duration,
             outdir=outdir,
         )
     else:
@@ -495,14 +502,12 @@ def _write_views(cmd, outdir, basename, ref_scaffold):
             cmd.rotate("y", 90, "ref_struct")
 
 
-def _write_animation(cmd, outdir, scaffold, gidx, nframes, duration):
+def _write_animation(cmd, outdir, basename, nframes, duration):
     imageio, Image = _load_animation_deps()
     import tqdm as _tqdm
     RAY_FIRST = 1
     seconds_per_frame = duration / nframes
-    framesdir = os.path.join(
-        outdir, "frames", f"{scaffold}_group{gidx}_frames",
-    )
+    framesdir = os.path.join(outdir, "frames", f"{basename}_frames")
     os.makedirs(framesdir, exist_ok=True)
     for i in _tqdm.trange(nframes, leave=False):
         cmd.turn("y", 360 / nframes)
@@ -518,10 +523,81 @@ def _write_animation(cmd, outdir, scaffold, gidx, nframes, duration):
         bg = Image.new("RGB", im.size, (255, 255, 255))
         bg.paste(im, mask=im.getchannel("A"))
         frames.append(np.array(bg))
-    outfile = os.path.join(outdir, f"{scaffold}_group{gidx}.gif")
+    outfile = os.path.join(outdir, f"{basename}.gif")
     imageio.mimsave(
         outfile, frames, duration=seconds_per_frame, loop=0, disposal=2,
     )
+
+
+def _render_frame(
+        *,
+        cmd,
+        scaffold,
+        projection,
+        group_idxs,
+        sector_colors,
+        sector_style,
+        struct_color,
+        ref_scaffold,
+        feature_fns,
+        views,
+        animate,
+        nframes,
+        duration,
+        basename,
+        group_idx_for_features,
+        outdir,
+):
+    """Render one frame with the given set of IC groups lit up.
+
+    Collects per-group selections, aligns + focuses, invokes feature
+    functions, writes the main PNG, optionally writes rotated views and
+    a rotating-GIF animation, and cleans up every selection it created.
+    Per-group rendering loops over this once per ``gidx`` (passing the
+    ``gidx`` through to feature fns); multisector rendering calls it
+    once with all ``group_idxs`` and ``group_idx_for_features=None``.
+    """
+    ic_pdb_residues = projection["ic_pdb_residues"]
+    ic_loadings = projection["sequence_projection"]["ic_loadings"]
+
+    os.makedirs(outdir, exist_ok=True)
+
+    created: list[str] = []
+    for gidx in group_idxs:
+        sector_color = sector_colors[gidx % len(sector_colors)]
+        pdb_resids = ic_pdb_residues[gidx]
+        scores = ic_loadings[gidx] if gidx < len(ic_loadings) else []
+        sel_name = f"group_selection{gidx}"
+        selection = _apply_group_coloring(
+            cmd, sel_name, pdb_resids, scores,
+            sector_color, sector_style,
+        )
+        if selection is None:
+            logger.info(
+                "Structure %s group %d has no residues; skipping.",
+                scaffold, gidx,
+            )
+        else:
+            created.append(selection)
+
+    _align_and_focus(cmd, ref_scaffold)
+    _run_feature_fns(
+        cmd, feature_fns, scaffold, projection,
+        group_idx_for_features, outdir,
+    )
+
+    cmd.png(f"{outdir}/{basename}.png", dpi=300)
+
+    if views:
+        _write_views(cmd, outdir, basename, ref_scaffold)
+
+    if animate:
+        _write_animation(cmd, outdir, basename, nframes, duration)
+
+    for sel_name in created:
+        cmd.hide(sector_style, sel_name)
+        cmd.color(struct_color, sel_name)
+        cmd.delete(sel_name)
 
 
 def _plot_by_sectors(
@@ -541,45 +617,30 @@ def _plot_by_sectors(
         duration,
         outdir,
 ):
-    ic_pdb_residues = projection["ic_pdb_residues"]
-    ic_loadings = projection["sequence_projection"]["ic_loadings"]
-
     if nframes is None:
         nframes = 24
     if duration is None:
         duration = 2.4
 
-    os.makedirs(outdir, exist_ok=True)
-
     for gidx in group_idxs:
-        sector_color = sector_colors[gidx % len(sector_colors)]
-        pdb_resids = ic_pdb_residues[gidx]
-        scores = ic_loadings[gidx] if gidx < len(ic_loadings) else []
-        group_selection = _apply_group_coloring(
-            cmd, "group_selection", pdb_resids, scores,
-            sector_color, sector_style,
+        _render_frame(
+            cmd=cmd,
+            scaffold=scaffold,
+            projection=projection,
+            group_idxs=[gidx],
+            sector_colors=sector_colors,
+            sector_style=sector_style,
+            struct_color=struct_color,
+            ref_scaffold=ref_scaffold,
+            feature_fns=feature_fns,
+            views=views,
+            animate=animate,
+            nframes=nframes,
+            duration=duration,
+            basename=f"{scaffold}_group{gidx}",
+            group_idx_for_features=gidx,
+            outdir=outdir,
         )
-        if group_selection is None:
-            logger.info(
-                "Structure %s group %d has no residues; skipping.",
-                scaffold, gidx,
-            )
-
-        _align_and_focus(cmd, ref_scaffold)
-        _run_feature_fns(cmd, feature_fns, scaffold, projection, gidx, outdir)
-
-        cmd.png(f"{outdir}/{scaffold}_group{gidx}.png", dpi=300)
-
-        if views:
-            _write_views(cmd, outdir, f"{scaffold}_group{gidx}", ref_scaffold)
-
-        if animate:
-            _write_animation(cmd, outdir, scaffold, gidx, nframes, duration)
-
-        if group_selection is not None:
-            cmd.hide(sector_style, group_selection)
-            cmd.color(struct_color, group_selection)
-            cmd.delete(group_selection)
 
 
 def _plot_with_multiple_sectors(
@@ -594,34 +655,35 @@ def _plot_with_multiple_sectors(
         ref_scaffold,
         feature_fns,
         views,
+        animate,
+        nframes,
+        duration,
         outdir,
 ):
-    ic_pdb_residues = projection["ic_pdb_residues"]
-    ic_loadings = projection["sequence_projection"]["ic_loadings"]
-
-    os.makedirs(outdir, exist_ok=True)
-
-    for i, gidx in enumerate(group_idxs):
-        sector_color = sector_colors[gidx % len(sector_colors)]
-        pdb_resids = ic_pdb_residues[gidx]
-        scores = ic_loadings[gidx] if gidx < len(ic_loadings) else []
-        selection = _apply_group_coloring(
-            cmd, f"group_selection{i}", pdb_resids, scores,
-            sector_color, sector_style,
-        )
-        if selection is None:
-            logger.info(
-                "Group %d for %s has no residues; skipping.", gidx, scaffold,
-            )
-
-    _align_and_focus(cmd, ref_scaffold)
-    _run_feature_fns(cmd, feature_fns, scaffold, projection, None, outdir)
+    if nframes is None:
+        nframes = 24
+    if duration is None:
+        duration = 2.4
 
     tag = ",".join(str(i) for i in group_idxs)
-    basename = f"{scaffold}_groups_{tag}"
-    cmd.png(f"{outdir}/{basename}.png", dpi=300)
-    if views:
-        _write_views(cmd, outdir, basename, ref_scaffold)
+    _render_frame(
+        cmd=cmd,
+        scaffold=scaffold,
+        projection=projection,
+        group_idxs=group_idxs,
+        sector_colors=sector_colors,
+        sector_style=sector_style,
+        struct_color=struct_color,
+        ref_scaffold=ref_scaffold,
+        feature_fns=feature_fns,
+        views=views,
+        animate=animate,
+        nframes=nframes,
+        duration=duration,
+        basename=f"{scaffold}_groups_{tag}",
+        group_idx_for_features=None,
+        outdir=outdir,
+    )
 
 
 def _hex2color(x):

@@ -222,7 +222,7 @@ sca-pymol --structure <structure-out-dir> \
 | `--features_py` | None | Path to a user Python file supplying protein-specific annotation functions |
 | `--features` | None | Comma-separated names of callables in `--features_py` to invoke per render pass. Requires `--features_py` |
 | `--views` | off | Save four rotated side views per frame under `outdir/views/` |
-| `--animate` | off | Save a rotating GIF per frame under `outdir/` |
+| `--animate` | off | Save a rotating GIF per rendered frame under `outdir/` — one per IC group in the default mode; one covering all selected groups under `--multisector` |
 | `--nframes` | 24 | Animation frame count (only used with `--animate`) |
 | `--duration` | 2.4 | Animation duration in seconds (only used with `--animate`) |
 | `-v, --verbosity` | 1 | Verbosity level |
@@ -234,8 +234,8 @@ Writes to the specified output directory:
 - `<structure_id>_group<N>.png` — one PNG per (structure, IC group) pair under the default rendering mode
 - `<structure_id>_groups_<idxs>.png` — one PNG per structure under `--multisector`
 - `views/` — four rotated views per frame when `--views` is passed
-- `frames/<structure_id>_group<N>_frames/` — raw frames for animations
-- `<structure_id>_group<N>.gif` — rotating animation when `--animate` is passed
+- `frames/<basename>_frames/` — raw per-frame PNGs from animation, where `<basename>` is `<structure_id>_group<N>` by default or `<structure_id>_groups_<idxs>` under `--multisector`
+- `<basename>.gif` — rotating animation when `--animate` is passed (one per IC group by default; one covering all groups under `--multisector`)
 - `pymol.log` — run log
 
 ### Features plugin

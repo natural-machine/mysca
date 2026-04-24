@@ -8,7 +8,7 @@ loader — both paths a user can hit without any rendering.
 
 import json
 import os
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -19,6 +19,7 @@ from mysca.run_pymol import (
     _apply_group_coloring,
     _load_features_module,
     _load_projections,
+    _render_frame,
     _split_features_names,
     _write_views,
 )
@@ -224,6 +225,134 @@ def test_write_views_rotates_ref_struct_too(tmp_path):
     _write_views(cmd, str(tmp_path), "X", ref_scaffold="ref_struct")
     # Four rotations for the target + four for the ref = 8.
     assert cmd.rotate.call_count == 8
+
+
+# ---------------------------------------------------------------------- #
+# _render_frame: unified per-frame renderer (pymol-free via MagicMock).  #
+# ---------------------------------------------------------------------- #
+
+
+def _minimal_projection(n_groups=2):
+    """Fixture projection with two IC groups carrying disjoint residue
+    lists and matching loadings, enough to drive _render_frame without a
+    full sca-structure run."""
+    return {
+        "structure_id": "X",
+        "chain_id": "A",
+        "pdb_path": "/fake/X.pdb",
+        "ic_pdb_residues": [[10, 12], [20, 22, 24]][:n_groups],
+        "sequence_projection": {
+            "ic_loadings": [[0.1, 0.9], [0.2, 0.5, 0.8]][:n_groups],
+        },
+    }
+
+
+def _render_frame_kwargs(cmd, tmp_path, **overrides):
+    base = dict(
+        cmd=cmd,
+        scaffold="X",
+        projection=_minimal_projection(),
+        group_idxs=[0],
+        sector_colors=["0xff0000", "0x00ff00"],
+        sector_style="spheres",
+        struct_color="gray70",
+        ref_scaffold=None,
+        feature_fns=[],
+        views=False,
+        animate=False,
+        nframes=4,
+        duration=0.4,
+        basename="X_group0",
+        group_idx_for_features=0,
+        outdir=str(tmp_path),
+    )
+    base.update(overrides)
+    return base
+
+
+def test_render_frame_writes_png_and_cleans_selections(tmp_path):
+    cmd = MagicMock()
+    _render_frame(**_render_frame_kwargs(cmd, tmp_path))
+    cmd.png.assert_called_once()
+    (path,), kw = cmd.png.call_args
+    assert path == f"{tmp_path}/X_group0.png"
+    assert kw.get("dpi") == 300
+    # Selection created for group 0 and cleaned up at end.
+    cmd.select.assert_called_once()
+    assert any(
+        c.args[0] == "group_selection0" for c in cmd.delete.call_args_list
+    )
+
+
+def test_render_frame_multigroup_creates_distinct_selections(tmp_path):
+    cmd = MagicMock()
+    _render_frame(**_render_frame_kwargs(
+        cmd, tmp_path,
+        group_idxs=[0, 1],
+        basename="X_groups_0,1",
+        group_idx_for_features=None,
+    ))
+    # One select call per group with distinct selection names.
+    names = [c.args[0] for c in cmd.select.call_args_list]
+    assert names == ["group_selection0", "group_selection1"]
+    # Both selections deleted at cleanup.
+    deleted = [c.args[0] for c in cmd.delete.call_args_list]
+    assert "group_selection0" in deleted and "group_selection1" in deleted
+
+
+def test_render_frame_forwards_group_idx_to_feature_fns(tmp_path):
+    cmd = MagicMock()
+    seen = {}
+
+    def feature_fn(scaffold, _cmd, *, color=None, context=None):
+        seen["scaffold"] = scaffold
+        seen["group_idx"] = context["group_idx"]
+
+    _render_frame(**_render_frame_kwargs(
+        cmd, tmp_path, feature_fns=[feature_fn], group_idx_for_features=7,
+    ))
+    assert seen == {"scaffold": "X", "group_idx": 7}
+
+
+def test_render_frame_empty_group_still_renders(tmp_path):
+    """An IC group with zero PDB residues should not raise; the frame is
+    still written (the struct-only image) and no selection is created."""
+    cmd = MagicMock()
+    proj = _minimal_projection()
+    proj["ic_pdb_residues"] = [[]]
+    proj["sequence_projection"]["ic_loadings"] = [[]]
+    _render_frame(**_render_frame_kwargs(
+        cmd, tmp_path, projection=proj,
+    ))
+    cmd.select.assert_not_called()
+    cmd.png.assert_called_once()
+    # No selection to clean up.
+    assert cmd.delete.call_count == 0
+
+
+def test_render_frame_views_flag_writes_views(tmp_path):
+    cmd = MagicMock()
+    _render_frame(**_render_frame_kwargs(cmd, tmp_path, views=True))
+    assert os.path.isdir(tmp_path / "views")
+    # Main PNG + 4 view PNGs.
+    assert cmd.png.call_count == 5
+
+
+def test_render_frame_animate_invokes_write_animation(tmp_path):
+    """When animate=True, _write_animation is invoked with the frame's
+    basename (not a hardcoded group-index path)."""
+    cmd = MagicMock()
+    with patch("mysca.run_pymol._write_animation") as mock_anim:
+        _render_frame(**_render_frame_kwargs(
+            cmd, tmp_path, animate=True, basename="X_groups_0,1",
+            group_idxs=[0, 1], group_idx_for_features=None,
+        ))
+    mock_anim.assert_called_once()
+    _args, kw = mock_anim.call_args
+    passed = list(_args) + list(kw.values())
+    assert "X_groups_0,1" in passed
+    assert 4 in passed  # nframes
+    assert 0.4 in passed  # duration
 
 
 # ---------------------------------------------------------------------- #
