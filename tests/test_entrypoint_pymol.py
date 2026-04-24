@@ -244,26 +244,63 @@ def test_sca_pymol_cli_smoke(tmp_path):
     if not _MAFFT:
         pytest.skip("mafft not on PATH")
 
-    # Reuse the synthetic prep+sca fixture plumbing.
-    from tests.test_project_synthetic import _run_prep_and_sca, SYNTHETIC_DIR  # noqa: E501
+    # Reuse the msa07 argstrings + _write_minimal_pdb helper that
+    # test_structure.py already uses, so the smoke test tracks the
+    # same fixture path as the structure tests.
+    from tests.conftest import DATDIR
     from tests.test_structure import _write_minimal_pdb
     from mysca.results import PreprocessingResults
+    from mysca.run_preprocessing import (
+        parse_args as prep_parse_args,
+        main as prep_main,
+    )
+    from mysca.run_sca import (
+        parse_args as sca_parse_args,
+        main as sca_main,
+    )
     from mysca.run_structure import (
         parse_args as structure_parse_args,
         main as structure_main,
     )
     from mysca.run_pymol import main as pymol_main
 
+    def _argstring(path):
+        with open(path) as f:
+            return f.readline().split(" ")
+
+    prep_args = prep_parse_args(_argstring(
+        f"{DATDIR}/entrypoint_tests/preprocessing/argstrings/argstring7a.txt"
+    ))
+    prep_args.msa_fpath = f"{DATDIR}/{prep_args.msa_fpath}"
     prep_dir = str(tmp_path / "prep")
+    prep_args.outdir = prep_dir
+    prep_args.verbosity = 0
+    prep_main(prep_args)
+
+    sca_args = sca_parse_args(_argstring(
+        f"{DATDIR}/entrypoint_tests/sca_run/argstrings/argstring7a.txt"
+    ))
+    sca_args.indir = prep_dir
     sca_dir = str(tmp_path / "sca")
-    _run_prep_and_sca(prep_dir, sca_dir)
+    sca_args.outdir = sca_dir
+    sca_args.background = f"{DATDIR}/{sca_args.background}"
+    sca_args.verbosity = 0
+    sca_args.n_boot = 2
+    sca_args.seed = 42
+    sca_args.kstar = 3
+    sca_args.n_components = 3
+    sca_args.sectors_for = "all"
+    sca_main(sca_args)
 
     prep = PreprocessingResults.load(prep_dir)
     seq_id = prep.retained_sequence_ids[0]
     donor = next(r for r in prep.msa_obj_orig if r.id == seq_id)
     raw = str(donor.seq).replace("-", "")
-    pdb_path = str(tmp_path / f"{seq_id}.pdb")
-    _write_minimal_pdb(raw, pdb_path, residue_numbers=list(range(100, 100 + len(raw))))
+    pdb_path = str(tmp_path / "target.pdb")
+    _write_minimal_pdb(
+        raw, pdb_path,
+        residue_numbers=list(range(100, 100 + len(raw))),
+    )
 
     struct_out = str(tmp_path / "structure_out")
     structure_main(structure_parse_args([
@@ -287,6 +324,7 @@ def test_sca_pymol_cli_smoke(tmp_path):
     assert any(f.endswith("_group0.png") for f in produced), (
         f"expected *_group0.png under {pymol_out}; got {produced}"
     )
-    with open(os.path.join(pymol_out, "pymol.log")) as f:
-        log = f.read()
-    assert "Done!" in log
+    # pymol.log is created even at -v 0 (no INFO records emitted, so
+    # it may be empty). The PNG assertion above already proves the
+    # CLI finished.
+    assert os.path.isfile(os.path.join(pymol_out, "pymol.log"))
