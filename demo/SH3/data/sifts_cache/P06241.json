@@ -1,0 +1,12 @@
+[
+    {
+        "pdb_id": "1shf",
+        "chain_id": "A",
+        "coverage": 0.98,
+        "resolution": 1.9,
+        "unp_start": 84,
+        "unp_end": 142,
+        "experimental_method": "X-ray diffraction",
+        "_note": "Shipped pre-populated SIFTS cache for the SH3 demo. Represents the top-ranked best_structures entry for UniProt P06241 (human Fyn) at the time of ship — 1SHF chain A (Fyn SH3). Lets step8_sifts.sh run offline; a real SIFTS query may rank different entries."
+    }
+]
