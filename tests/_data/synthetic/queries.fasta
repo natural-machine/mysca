@@ -1,0 +1,10 @@
+>query_shorter_than_proc
+ACDE
+>query_equal_to_proc
+ACDEFGI
+>query_between_proc_and_orig
+ACTDEFGI
+>query_equal_to_orig
+ACTDEVFGWI
+>query_longer_than_orig
+ACTDEVNSFGWI

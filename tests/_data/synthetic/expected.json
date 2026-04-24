@@ -1,0 +1,123 @@
+{
+    "preprocessing_args": {
+        "gap_truncation_thresh": 0.5,
+        "sequence_gap_thresh": 0.5,
+        "position_gap_thresh": 0.6
+    },
+    "preprocessing": {
+        "L_orig": 10,
+        "L_proc": 7,
+        "retained_positions": [0, 1, 3, 4, 6, 7, 9],
+        "retained_sequence_ids": [
+            "synth_clade_A_0", "synth_clade_A_1", "synth_clade_A_2",
+            "synth_clade_A_3", "synth_clade_A_4",
+            "synth_clade_B_0", "synth_clade_B_1", "synth_clade_B_2",
+            "synth_clade_B_3", "synth_clade_B_4"
+        ]
+    },
+    "training": {
+        "synth_clade_A_0": {
+            "raw_sequence": "ACDEFGI",
+            "aligned_sequence": "AC-DE-FG-I",
+            "residue_by_processed_col": [0, 1, 2, 3, 4, 5, 6]
+        },
+        "synth_clade_A_1": {
+            "raw_sequence": "ACDEFGI",
+            "aligned_sequence": "AC-DE-FG-I",
+            "residue_by_processed_col": [0, 1, 2, 3, 4, 5, 6]
+        },
+        "synth_clade_A_2": {
+            "raw_sequence": "ACDKFGI",
+            "aligned_sequence": "AC-DK-FG-I",
+            "residue_by_processed_col": [0, 1, 2, 3, 4, 5, 6]
+        },
+        "synth_clade_A_3": {
+            "raw_sequence": "ACDEFGI",
+            "aligned_sequence": "AC-DE-FG-I",
+            "residue_by_processed_col": [0, 1, 2, 3, 4, 5, 6]
+        },
+        "synth_clade_A_4": {
+            "raw_sequence": "ACDKFGI",
+            "aligned_sequence": "AC-DK-FG-I",
+            "residue_by_processed_col": [0, 1, 2, 3, 4, 5, 6]
+        },
+        "synth_clade_B_0": {
+            "raw_sequence": "ACTDEVFGWI",
+            "aligned_sequence": "ACTDEVFGWI",
+            "residue_by_processed_col": [0, 1, 3, 4, 6, 7, 9]
+        },
+        "synth_clade_B_1": {
+            "raw_sequence": "ACTDKVFGWM",
+            "aligned_sequence": "ACTDKVFGWM",
+            "residue_by_processed_col": [0, 1, 3, 4, 6, 7, 9]
+        },
+        "synth_clade_B_2": {
+            "raw_sequence": "ACTDEVFGWI",
+            "aligned_sequence": "ACTDEVFGWI",
+            "residue_by_processed_col": [0, 1, 3, 4, 6, 7, 9]
+        },
+        "synth_clade_B_3": {
+            "raw_sequence": "ACTDKVFGWM",
+            "aligned_sequence": "ACTDKVFGWM",
+            "residue_by_processed_col": [0, 1, 3, 4, 6, 7, 9]
+        },
+        "synth_clade_B_4": {
+            "raw_sequence": "ACTDKVFGWI",
+            "aligned_sequence": "ACTDKVFGWI",
+            "residue_by_processed_col": [0, 1, 3, 4, 6, 7, 9]
+        }
+    },
+    "queries": {
+        "query_shorter_than_proc": {
+            "input_raw": "ACDE",
+            "input_length": 4,
+            "raw_sequence": "ACDE",
+            "aligned_sequence": "AC-DE-----",
+            "residue_by_processed_col": [0, 1, 2, 3, -1, -1, -1]
+        },
+        "query_equal_to_proc": {
+            "input_raw": "ACDEFGI",
+            "input_length": 7,
+            "raw_sequence": "ACDEFGI",
+            "aligned_sequence": "AC-DE-FG-I",
+            "residue_by_processed_col": [0, 1, 2, 3, 4, 5, 6]
+        },
+        "query_between_proc_and_orig": {
+            "input_raw": "ACTDEFGI",
+            "input_length": 8,
+            "raw_sequence": "ACTDEFGI",
+            "aligned_sequence": "ACTDE-FG-I",
+            "residue_by_processed_col": [0, 1, 3, 4, 5, 6, 7]
+        },
+        "query_equal_to_orig": {
+            "input_raw": "ACTDEVFGWI",
+            "input_length": 10,
+            "raw_sequence": "ACTDEVFGWI",
+            "aligned_sequence": "ACTDEVFGWI",
+            "residue_by_processed_col": [0, 1, 3, 4, 6, 7, 9]
+        },
+        "query_longer_than_orig": {
+            "input_raw": "ACTDEVNSFGWI",
+            "input_length": 12,
+            "raw_sequence": "ACTDEVFGWI",
+            "aligned_sequence": "ACTDEVFGWI",
+            "residue_by_processed_col": [0, 1, 3, 4, 6, 7, 9]
+        }
+    },
+    "pdb_residue_offsets": {
+        "synth_clade_A_0": {"start": 10, "length": 7},
+        "synth_clade_A_2": {"start": 20, "length": 7},
+        "synth_clade_B_0": {"start": 50, "length": 10},
+        "synth_clade_B_1": {"start": 60, "length": 10},
+        "query_shorter_than_proc": {"start": 201, "length": 4},
+        "query_equal_to_proc": {"start": 300, "length": 7},
+        "query_between_proc_and_orig": {"start": 401, "length": 8},
+        "query_equal_to_orig": {"start": 501, "length": 10},
+        "query_longer_than_orig": {"start": 601, "length": 12}
+    },
+    "notes": {
+        "aligner_agreement": "mafft_add and hmmalign produced IDENTICAL aligned_sequence and residue_by_processed_col for all queries. No per-aligner block required.",
+        "invariant_under_fix": "raw_sequence == aligned_sequence.replace('-', '') holds for every training and query case under both aligners after 693415b. Under the pre-fix code, query_longer_than_orig would set raw_sequence to the input (length 12) and violate this invariant.",
+        "longer_than_orig_pdb_caveat": "A PDB made from the raw input of query_longer_than_orig has 12 residues, but the post-alignment raw_sequence has 10. project_groups_to_pdb deliberately raises ValueError on this length mismatch — see the corresponding test."
+    }
+}
