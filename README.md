@@ -241,7 +241,7 @@ cd demo
 ./run_demo_SH3.sh
 ```
 
-The demo covers both entry points (preformed MSA and raw FASTA) and walks through preprocessing, SCA core, primary-sequence projection (with both `mafft_add` and `hmmalign` backends), PDB-level projection (against 1SHF chain A), and a plot-replay step. See `demo/SH3/scripts/` for the individual steps (`step0_*` through `step6_*`). `demo/pymol_features/narg_1q16.py` is a reference example of a user features file for `sca-pymol`; it is not exercised by the automated demo because PyMOL is an optional dependency.
+The demo covers both entry points (preformed MSA and raw FASTA) and walks through preprocessing, SCA core, primary-sequence projection (with both `mafft_add` and `hmmalign` backends), PDB-level projection (against 1SHF chain A), a plot-replay step, and a PyMOL rendering step. See `demo/SH3/scripts/` for the individual steps (`step0_*` through `step7_*`). `step7_pymol.sh` skips automatically when `pymol-open-source` isn't installed; install it via `conda install -c conda-forge pymol-open-source` to exercise the full pipeline. `demo/pymol_features/narg_1q16.py` is a reference example of a user features file — it isn't invoked by the default SH3 demo since the 1SHF structure has no NarG cofactors.
 
 ## References
 

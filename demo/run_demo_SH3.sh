@@ -10,6 +10,7 @@ cd SH3
 ./scripts/step4_project_hmmer.sh
 ./scripts/step5_structure.sh
 ./scripts/step6_plots.sh
+./scripts/step7_pymol.sh
 
 # Path B: start from raw (unaligned) SH3 sequences, prealign, then pipeline.
 ./scripts/step0_prealign_raw.sh
