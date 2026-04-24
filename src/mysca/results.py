@@ -458,7 +458,8 @@ class SCAResults:
         ),
         "Cij_raw": (
             "Reduced covariance matrix (L x L) prior to the phi_ia-weighted "
-            "step that yields `sca_matrix`. Not persisted to disk."
+            "step that yields `sca_matrix`. Persisted to disk so sca-plots "
+            "can replay the covariance-matrix plot without rerunning core."
         ),
         # Eigendecomposition
         "evals_sca": (
@@ -667,6 +668,11 @@ class SCAResults:
                 "fi0": self.fi0,
                 "fia": self.fia,
             }
+            # Cij_raw is small (L x L) and needed for sca-plots replay of
+            # the covariance-matrix figure, so it rides along here rather
+            # than being gated on --save_all.
+            if self.Cij_raw is not None:
+                tosave["Cij_raw"] = self.Cij_raw
             if save_all:
                 if self.Cijab_raw is not None:
                     tosave["Cijab_raw"] = self.Cijab_raw
@@ -802,7 +808,7 @@ class SCAResults:
 
         # Core SCA results
         Dia = conservation = sca_matrix = phi_ia = fi0 = fia = None
-        Cijab_raw = fijab = None
+        Cij_raw = Cijab_raw = fijab = None
         results_path = os.path.join(dirpath, SCARUN_RESULTS_FNAME)
         if os.path.isfile(results_path):
             data = np.load(results_path)
@@ -812,6 +818,7 @@ class SCAResults:
             phi_ia = data.get("phi_ia")
             fi0 = data.get("fi0")
             fia = data.get("fia")
+            Cij_raw = data.get("Cij_raw")
             Cijab_raw = data.get("Cijab_raw")
             fijab = data.get("fijab")
 
@@ -907,6 +914,7 @@ class SCAResults:
             phi_ia=phi_ia,
             fi0=fi0,
             fia=fia,
+            Cij_raw=Cij_raw,
             Cijab_raw=Cijab_raw,
             fijab=fijab,
             evals_sca=evals_sca,

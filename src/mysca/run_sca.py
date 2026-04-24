@@ -340,7 +340,7 @@ def main(args):
         results = existing
         Di = existing.conservation
         Cij = existing.sca_matrix
-        Cij_raw = None
+        Cij_raw = existing.Cij_raw  # None for saves from before Cij_raw persistence landed
 
     # Eigendecomposition of SCA matrix
     evals_sca, evecs_sca = np.linalg.eigh(Cij)

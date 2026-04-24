@@ -257,6 +257,8 @@ class TestSCAResults:
         conservation = rng.random(L)
         sca_matrix = rng.random((L, L))
         sca_matrix = sca_matrix + sca_matrix.T  # symmetric
+        Cij_raw = rng.random((L, L))
+        Cij_raw = Cij_raw + Cij_raw.T  # symmetric
         phi_ia = rng.random((L, D))
         fi0 = rng.random(L)
         fia = rng.random((L, D))
@@ -273,6 +275,7 @@ class TestSCAResults:
             phi_ia=phi_ia,
             fi0=fi0,
             fia=fia,
+            Cij_raw=Cij_raw,
             evals_sca=evals_sca,
             evecs_sca=evecs_sca,
             significant_evals_sca=sig_evals,
@@ -401,7 +404,22 @@ class TestSCAResults:
         np.testing.assert_allclose(loaded.phi_ia, original.phi_ia)
         np.testing.assert_allclose(loaded.fi0, original.fi0)
         np.testing.assert_allclose(loaded.fia, original.fia)
+        # Cij_raw rides along with the rest of scarun_results.npz so
+        # sca-plots can render covariance_matrix.png on replay.
+        np.testing.assert_allclose(loaded.Cij_raw, original.Cij_raw)
         assert loaded.args == original.args
+
+    def test_round_trip_without_Cij_raw_is_graceful(self):
+        """A saved result without Cij_raw (legacy or sca-core run that
+        went through the LOAD_DATA path) loads back with Cij_raw=None —
+        no exception, no field key error."""
+        original = self._make_sample_results()
+        original.Cij_raw = None
+        original.save(OUTDIR_SCA)
+        loaded = SCAResults.load(OUTDIR_SCA)
+        assert loaded.Cij_raw is None
+        # Other fields still load correctly.
+        np.testing.assert_allclose(loaded.sca_matrix, original.sca_matrix)
 
     def test_round_trip_eigen_fields(self):
         """Save then load and verify eigendecomposition fields."""

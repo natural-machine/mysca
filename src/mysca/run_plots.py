@@ -22,12 +22,12 @@ Per-stage, plots are written into ``{stage_dir}/images/`` by default, or into
     --scacore DIR        plot_conservation (+ _top and _positional when
                          --preprocessing is also given so retained_positions
                          and the original MSA length are available),
-                         plot_sca_matrix, plot_sca_spectrum,
+                         plot_sca_matrix, plot_covariance_matrix (when
+                         Cij_raw is present — persisted by sca-core runs
+                         on or after commit HEAD), plot_sca_spectrum,
                          plot_sca_spectrum_vs_null, plot_dendrogram,
                          plot_t_distributions, plot_data_2d/3d (EV + IC
                          sweeps), plot_sca_matrix_sector_subset.
-                         plot_covariance_matrix is skipped (Cij_raw is
-                         not persisted to disk by sca-core).
 """
 
 import argparse
@@ -238,7 +238,8 @@ def _replay_scacore(stage_dir, imgdir_override, *, preproc_dir=None):
         plot_covariance_matrix(sca.Cij_raw, imgdir)
     else:
         logger.info(
-            "Cij_raw is not persisted on disk; skipping covariance_matrix.png."
+            "No Cij_raw in %s; skipping covariance_matrix.png "
+            "(the core run predates Cij_raw persistence).", stage_dir,
         )
 
     if sca.v_ica is not None and sca.t_dists_info is not None:

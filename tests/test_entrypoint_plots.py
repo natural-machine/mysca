@@ -153,6 +153,7 @@ def test_replay_scacore_emits_expected_plots():
         "top_conservation.png",
         "positional_conservation.png",
         "sca_matrix.png",
+        "covariance_matrix.png",
         "sca_matrix_spectrum.png",
         "sca_matrix_spectrum_vs_null.png",
         "sca_matrix_important_subset.png",

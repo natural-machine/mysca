@@ -174,7 +174,7 @@ sca-core -i <preprocessing-dir> -o <output-dir> [options]
 
 Writes to the specified output directory:
 
-- `scarun_results.npz` — core SCA results (`Dia`, `conservation`, `sca_matrix`, `phi_ia`, `fi0`, `fia`; optionally `Cijab_raw`, `fijab` with `--save_all`)
+- `scarun_results.npz` — core SCA results (`Dia`, `conservation`, `sca_matrix`, `phi_ia`, `fi0`, `fia`, `Cij_raw`; optionally `Cijab_raw`, `fijab` with `--save_all`)
 - `sca_eigendecomp.npz` — full + significant eigenvalues/eigenvectors
 - `scarun_args.json` — arguments used
 - `statsectors_msa.npz` / `statsectors_seq.npz` — per-sequence sector mappings in processed-MSA and raw-sequence coordinates; only the top-`kstar` IC groups are expanded per sequence
@@ -298,7 +298,7 @@ sca-plots [--prealign DIR] [--preprocessing DIR] [--scacore DIR] [--imgdir DIR] 
 
 ### Notes
 
-`plot_covariance_matrix` is not replayed: the raw (pre-weighting) covariance matrix `Cij_raw` is computed in-memory during `sca-core` and not persisted to disk. Rerun `sca-core` to produce that figure.
+`plot_covariance_matrix` depends on `Cij_raw`, which is persisted in `scarun_results.npz` as of sca-core commit HEAD. Directories produced by older `sca-core` runs will skip `covariance_matrix.png` and log a note; rerun `sca-core` to refresh them.
 
 ---
 
