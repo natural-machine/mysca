@@ -16,9 +16,11 @@ from tests.conftest import DATDIR
 
 from mysca.run_pymol import (
     parse_args,
+    _apply_group_coloring,
     _load_features_module,
     _load_projections,
     _split_features_names,
+    _write_views,
 )
 
 
@@ -141,6 +143,87 @@ def test_load_projections_returns_list(tmp_path):
     (tmp_path / "structure_projection.json").write_text(json.dumps(payload))
     got = _load_projections(str(tmp_path))
     assert got == payload
+
+
+# ---------------------------------------------------------------------- #
+# Render helpers (pymol-free via MagicMock).                             #
+# ---------------------------------------------------------------------- #
+
+
+def test_apply_group_coloring_empty_returns_none():
+    cmd = MagicMock()
+    got = _apply_group_coloring(
+        cmd, "sel", pdb_resids=[], scores=[],
+        sector_color="0xff0000", sector_style="spheres",
+    )
+    assert got is None
+    cmd.select.assert_not_called()
+    cmd.show.assert_not_called()
+
+
+def test_apply_group_coloring_colors_and_shows():
+    cmd = MagicMock()
+    got = _apply_group_coloring(
+        cmd, "sel", pdb_resids=[10, 12, 14], scores=None,
+        sector_color="0xff0000", sector_style="spheres",
+    )
+    assert got == "sel"
+    cmd.select.assert_called_once()
+    (name, selection), _ = cmd.select.call_args
+    assert name == "sel"
+    assert selection == "resi 10+12+14"
+    cmd.show.assert_called_once_with("spheres", "sel")
+    cmd.color.assert_called_once_with("0xff0000", "sel")
+    cmd.set.assert_not_called()
+
+
+def test_apply_group_coloring_applies_per_residue_alpha():
+    cmd = MagicMock()
+    got = _apply_group_coloring(
+        cmd, "sel", pdb_resids=[10, 20, 30], scores=[0.1, 0.5, 0.9],
+        sector_color="0xff0000", sector_style="spheres",
+    )
+    assert got == "sel"
+    # One cmd.set per residue for the transparency mapping.
+    assert cmd.set.call_count == 3
+    for call in cmd.set.call_args_list:
+        (attr, _alpha, sel), _ = call
+        assert attr == "sphere_transparency"
+        assert sel.startswith("sel and resi ")
+
+
+def test_apply_group_coloring_handles_degenerate_scores():
+    """When all scores are equal, the alpha-mapping formula would
+    divide by zero; the helper must short-circuit to alpha=1."""
+    cmd = MagicMock()
+    _apply_group_coloring(
+        cmd, "sel", pdb_resids=[1, 2], scores=[0.5, 0.5],
+        sector_color="0xff0000", sector_style="spheres",
+    )
+    # Each call: (attr, 1 - 1.0, "...") == (attr, 0.0, "...").
+    for call in cmd.set.call_args_list:
+        (_attr, transparency, _sel), _ = call
+        assert transparency == 0.0
+
+
+def test_write_views_emits_four_rotated_pngs(tmp_path):
+    cmd = MagicMock()
+    _write_views(cmd, str(tmp_path), "X_group0", ref_scaffold=None)
+    assert os.path.isdir(tmp_path / "views")
+    # Four PNGs and four rotations of struct.
+    assert cmd.png.call_count == 4
+    assert cmd.rotate.call_count == 4
+    # Each cmd.png ends in the expected view{i}.png.
+    for i, call in enumerate(cmd.png.call_args_list):
+        (path,), _ = call
+        assert path.endswith(f"X_group0_view{i}.png")
+
+
+def test_write_views_rotates_ref_struct_too(tmp_path):
+    cmd = MagicMock()
+    _write_views(cmd, str(tmp_path), "X", ref_scaffold="ref_struct")
+    # Four rotations for the target + four for the ref = 8.
+    assert cmd.rotate.call_count == 8
 
 
 # ---------------------------------------------------------------------- #

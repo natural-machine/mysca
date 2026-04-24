@@ -424,6 +424,96 @@ def _run_feature_fns(cmd, feature_fns, scaffold, projection, group_idx, outdir):
         fn(scaffold, cmd, color=None, context=context)
 
 
+def _apply_group_coloring(
+        cmd, selection_name, pdb_resids, scores, sector_color, sector_style,
+):
+    """Make a PyMOL selection for one IC group, color + show it, and
+    apply per-residue alpha from the optional loadings.
+
+    Returns the selection name on success, ``None`` when the group has
+    no residues.
+    """
+    selection_string = _selection_from_residues(pdb_resids)
+    if selection_string is None:
+        return None
+    cmd.select(selection_name, selection_string)
+    cmd.show(sector_style, selection_name)
+    cmd.color(sector_color, selection_name)
+
+    if not scores or not pdb_resids:
+        return selection_name
+
+    MIN_ALPHA = 0.5
+    svals = np.square(np.asarray(scores, dtype=float))
+    s0, s1 = float(svals.min()), float(svals.max())
+    if s1 == s0:
+        alphas = np.full_like(svals, 1.0)
+    else:
+        alphas = (1.0 - MIN_ALPHA) / (s1 - s0) * (svals - s1) + 1.0
+    logger.debug(
+        "Applying alphas [%.4g, %.4g] to %s",
+        alphas.min(), alphas.max(), selection_name,
+    )
+    transparency_attr = {
+        "spheres": "sphere_transparency",
+    }.get(sector_style, DEFAULT_SECTOR_STYLE)
+    for resi, alpha in zip(pdb_resids, alphas):
+        cmd.set(
+            transparency_attr,
+            1 - float(alpha),
+            f"{selection_name} and resi {int(resi)}",
+        )
+    return selection_name
+
+
+def _align_and_focus(cmd, ref_scaffold):
+    if ref_scaffold:
+        cmd.align("struct", "ref_struct")
+    cmd.center()
+    cmd.zoom(complete=1)
+
+
+def _write_views(cmd, outdir, basename, ref_scaffold):
+    """Save four rotated side views (90° steps around Y) under
+    ``<outdir>/views/<basename>_view{0..3}.png``."""
+    viewsdir = os.path.join(outdir, "views")
+    os.makedirs(viewsdir, exist_ok=True)
+    for ri in range(4):
+        cmd.png(os.path.join(viewsdir, f"{basename}_view{ri}.png"), dpi=300)
+        cmd.rotate("y", 90, "struct")
+        if ref_scaffold:
+            cmd.rotate("y", 90, "ref_struct")
+
+
+def _write_animation(cmd, outdir, scaffold, gidx, nframes, duration):
+    imageio, Image = _load_animation_deps()
+    import tqdm as _tqdm
+    RAY_FIRST = 1
+    seconds_per_frame = duration / nframes
+    framesdir = os.path.join(
+        outdir, "frames", f"{scaffold}_group{gidx}_frames",
+    )
+    os.makedirs(framesdir, exist_ok=True)
+    for i in _tqdm.trange(nframes, leave=False):
+        cmd.turn("y", 360 / nframes)
+        cmd.png(
+            os.path.join(framesdir, f"frame_{i:03d}.png"),
+            dpi=300, ray=RAY_FIRST,
+        )
+    frames = []
+    for i in range(nframes):
+        im = Image.open(
+            os.path.join(framesdir, f"frame_{i:03d}.png"),
+        ).convert("RGBA")
+        bg = Image.new("RGB", im.size, (255, 255, 255))
+        bg.paste(im, mask=im.getchannel("A"))
+        frames.append(np.array(bg))
+    outfile = os.path.join(outdir, f"{scaffold}_group{gidx}.gif")
+    imageio.mimsave(
+        outfile, frames, duration=seconds_per_frame, loop=0, disposal=2,
+    )
+
+
 def _plot_by_sectors(
         *,
         cmd,
@@ -454,88 +544,27 @@ def _plot_by_sectors(
     for gidx in group_idxs:
         sector_color = sector_colors[gidx % len(sector_colors)]
         pdb_resids = ic_pdb_residues[gidx]
-        selection_string = _selection_from_residues(pdb_resids)
-        group_selection = None
-        if selection_string is not None:
-            group_selection = "group_selection"
-            cmd.select(group_selection, selection_string)
-            cmd.show(sector_style, group_selection)
-            cmd.color(sector_color, group_selection)
-        else:
+        scores = ic_loadings[gidx] if gidx < len(ic_loadings) else []
+        group_selection = _apply_group_coloring(
+            cmd, "group_selection", pdb_resids, scores,
+            sector_color, sector_style,
+        )
+        if group_selection is None:
             logger.info(
                 "Structure %s group %d has no residues; skipping.",
                 scaffold, gidx,
             )
 
-        scores = ic_loadings[gidx] if gidx < len(ic_loadings) else []
-        if scores and group_selection is not None and pdb_resids:
-            MIN_ALPHA = 0.5
-            svals = np.square(np.asarray(scores, dtype=float))
-            s0, s1 = svals.min(), svals.max()
-            a0, a1 = MIN_ALPHA, 1.0
-            if s1 == s0:
-                alphas = np.full_like(svals, a1)
-            else:
-                alphas = (a1 - a0) / (s1 - s0) * (svals - s1) + a1
-            logger.debug(
-                "Applying alphas [%.4g, %.4g]", alphas.min(), alphas.max()
-            )
-            for resi, alpha in zip(pdb_resids, alphas):
-                cmd.set(
-                    {"spheres": "sphere_transparency"}.get(
-                        sector_style, DEFAULT_SECTOR_STYLE
-                    ),
-                    1 - float(alpha),
-                    f"{group_selection} and resi {int(resi)}",
-                )
-
-        if ref_scaffold:
-            cmd.align("struct", "ref_struct")
-        cmd.center()
-        cmd.zoom(complete=1)
-
+        _align_and_focus(cmd, ref_scaffold)
         _run_feature_fns(cmd, feature_fns, scaffold, projection, gidx, outdir)
 
         cmd.png(f"{outdir}/{scaffold}_group{gidx}.png", dpi=300)
 
         if views:
-            viewsdir = os.path.join(outdir, "views")
-            os.makedirs(viewsdir, exist_ok=True)
-            for ri in range(4):
-                cmd.png(
-                    f"{viewsdir}/{scaffold}_group{gidx}_view{ri}.png",
-                    dpi=300,
-                )
-                cmd.rotate("y", 90, "struct")
-                if ref_scaffold:
-                    cmd.rotate("y", 90, "ref_struct")
+            _write_views(cmd, outdir, f"{scaffold}_group{gidx}", ref_scaffold)
 
         if animate:
-            imageio, Image = _load_animation_deps()
-            import tqdm as _tqdm
-            RAY_FIRST = 1
-            seconds_per_frame = duration / nframes
-            framesdir = f"{outdir}/frames/{scaffold}_group{gidx}_frames"
-            os.makedirs(framesdir, exist_ok=True)
-            for i in _tqdm.trange(nframes, leave=False):
-                cmd.turn("y", 360 / nframes)
-                fname = os.path.join(framesdir, f"frame_{i:03d}.png")
-                cmd.png(fname, dpi=300, ray=RAY_FIRST)
-            frames = []
-            for i in range(nframes):
-                path = os.path.join(framesdir, f"frame_{i:03d}.png")
-                im = Image.open(path).convert("RGBA")
-                bg = Image.new("RGB", im.size, (255, 255, 255))
-                bg.paste(im, mask=im.getchannel("A"))
-                frames.append(np.array(bg))
-            outfile = os.path.join(outdir, f"{scaffold}_group{gidx}.gif")
-            imageio.mimsave(
-                outfile,
-                frames,
-                duration=seconds_per_frame,
-                loop=0,
-                disposal=2,
-            )
+            _write_animation(cmd, outdir, scaffold, gidx, nframes, duration)
 
         if group_selection is not None:
             cmd.hide(sector_style, group_selection)
@@ -565,56 +594,24 @@ def _plot_with_multiple_sectors(
     for i, gidx in enumerate(group_idxs):
         sector_color = sector_colors[gidx % len(sector_colors)]
         pdb_resids = ic_pdb_residues[gidx]
-        selection_string = _selection_from_residues(pdb_resids)
-        if selection_string is None:
+        scores = ic_loadings[gidx] if gidx < len(ic_loadings) else []
+        selection = _apply_group_coloring(
+            cmd, f"group_selection{i}", pdb_resids, scores,
+            sector_color, sector_style,
+        )
+        if selection is None:
             logger.info(
                 "Group %d for %s has no residues; skipping.", gidx, scaffold,
             )
-            continue
-        group_selection = f"group_selection{i}"
-        cmd.select(group_selection, selection_string)
-        cmd.show(sector_style, group_selection)
-        cmd.color(sector_color, group_selection)
 
-        scores = ic_loadings[gidx] if gidx < len(ic_loadings) else []
-        if scores and pdb_resids:
-            MIN_ALPHA = 0.5
-            svals = np.square(np.asarray(scores, dtype=float))
-            s0, s1 = svals.min(), svals.max()
-            a0, a1 = MIN_ALPHA, 1.0
-            if s1 == s0:
-                alphas = np.full_like(svals, a1)
-            else:
-                alphas = (a1 - a0) / (s1 - s0) * (svals - s1) + a1
-            for resi, alpha in zip(pdb_resids, alphas):
-                cmd.set(
-                    {"spheres": "sphere_transparency"}.get(
-                        sector_style, DEFAULT_SECTOR_STYLE
-                    ),
-                    1 - float(alpha),
-                    f"{group_selection} and resi {int(resi)}",
-                )
-
-    if ref_scaffold:
-        cmd.align("struct", "ref_struct")
-    cmd.center()
-    cmd.zoom(complete=1)
-
+    _align_and_focus(cmd, ref_scaffold)
     _run_feature_fns(cmd, feature_fns, scaffold, projection, None, outdir)
 
     tag = ",".join(str(i) for i in group_idxs)
-    cmd.png(f"{outdir}/{scaffold}_groups_{tag}.png", dpi=300)
-
+    basename = f"{scaffold}_groups_{tag}"
+    cmd.png(f"{outdir}/{basename}.png", dpi=300)
     if views:
-        viewsdir = os.path.join(outdir, "views")
-        os.makedirs(viewsdir, exist_ok=True)
-        for ri in range(4):
-            cmd.png(
-                f"{viewsdir}/{scaffold}_groups_{tag}_view{ri}.png", dpi=300,
-            )
-            cmd.rotate("y", 90, "struct")
-            if ref_scaffold:
-                cmd.rotate("y", 90, "ref_struct")
+        _write_views(cmd, outdir, basename, ref_scaffold)
 
 
 def _hex2color(x):
