@@ -211,9 +211,14 @@ def test_sequence_pdb_map_rejects_bad_rows(tmp_path):
         SequencePdbMap.from_tsv(str(tsv))
 
 
-def test_sifts_lookup_is_registered_but_unimplemented():
-    with pytest.raises(NotImplementedError):
-        SequencePdbMap.from_sifts_for_uniprot_ids(["Q9Y6K5"])
+def test_sifts_lookup_requires_pdb_dir():
+    """Basic surface check: from_sifts_for_uniprot_ids is no longer a
+    NotImplementedError stub and rejects a missing pdb_dir. Full
+    coverage is in tests/test_structure_sifts.py."""
+    with pytest.raises(FileNotFoundError, match="pdb_dir"):
+        SequencePdbMap.from_sifts_for_uniprot_ids(
+            ["Q9Y6K5"], pdb_dir="/nonexistent/dir",
+        )
 
 
 # ----------------------------------------------------------------------

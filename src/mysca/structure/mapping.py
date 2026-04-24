@@ -1,6 +1,6 @@
 """Map MSA sequence IDs to PDB structures.
 
-Two lookup sources, configurable:
+Two lookup sources:
 
 - **User-supplied TSV** (primary): ``SequencePdbMap.from_tsv(path)``
   reads a 2- or 3-column TSV:
@@ -10,15 +10,19 @@ Two lookup sources, configurable:
   ``chain`` is optional; if omitted the first chain is used.
 
 - **SIFTS on-demand**: ``SequencePdbMap.from_sifts_for_uniprot_ids``
-  is registered as a method but currently raises NotImplementedError.
-  Following the same pattern as ``hmmalign`` in ``mysca.project``,
-  this keeps the interface shape visible without adding a network
-  dependency to the first commit.
+  fetches EBI PDBe ``best_structures`` for each UniProt accession
+  (cached locally under ``~/.mysca/sifts_cache/``) and builds a map
+  pointing at pre-downloaded PDB files in ``pdb_dir``.
 """
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Iterable, Optional
+
+from mysca.structure.sifts import best_structure_entry
+
+logger = logging.getLogger("mysca.structure.mapping")
 
 
 @dataclass(frozen=True)
@@ -94,15 +98,84 @@ class SequencePdbMap:
         cls,
         uniprot_ids: Iterable[str],
         *,
+        pdb_dir: str,
         cache_dir: Optional[str] = None,
+        pdb_suffix: str = ".pdb",
+        strict: bool = True,
+        timeout: float = 10.0,
+        force_refresh: bool = False,
     ) -> "SequencePdbMap":
-        """Resolve UniProt IDs to PDB entries via EBI SIFTS.
+        """Resolve UniProt IDs to ``PdbEntry`` via EBI SIFTS.
 
-        Not yet implemented. Registered as a classmethod so the shape
-        is visible for future work; to be filled in once we add a
-        mockable HTTP client.
+        For each UniProt accession, queries EBI's
+        ``mappings/best_structures/{id}`` endpoint and takes the
+        top-ranked PDB entry. The resulting ``pdb_path`` is
+        ``{pdb_dir}/{pdb_id}{pdb_suffix}``; callers are responsible
+        for pre-downloading the structure files into ``pdb_dir``
+        (SIFTS does not ship PDB files).
+
+        Args:
+            uniprot_ids: iterable of UniProt accessions. The accession
+                itself becomes the key of the returned map.
+            pdb_dir: directory containing the downloaded PDB files.
+            cache_dir: local cache for SIFTS JSON responses
+                (default ``~/.mysca/sifts_cache/``).
+            pdb_suffix: filename suffix for the on-disk PDBs (e.g.
+                ``".pdb"`` or ``".cif"``). Default ``.pdb``.
+            strict: when True (default), raise ``FileNotFoundError``
+                if a resolved PDB file is missing from ``pdb_dir``.
+                When False, log a warning and skip the entry.
+            timeout: HTTP timeout (seconds) per UniProt query.
+            force_refresh: bypass the local cache and re-query SIFTS.
+
+        Returns:
+            A ``SequencePdbMap`` keyed by UniProt accession.
+
+        Raises:
+            FileNotFoundError: when ``strict=True`` and a resolved
+                PDB is missing from ``pdb_dir``.
         """
-        raise NotImplementedError(
-            "SIFTS lookup is not yet implemented. For now, build a "
-            "SequencePdbMap via SequencePdbMap.from_tsv()."
-        )
+        if not os.path.isdir(pdb_dir):
+            raise FileNotFoundError(
+                f"pdb_dir not found: {pdb_dir}. Pre-download PDB files "
+                "(e.g. from RCSB) into this directory before calling "
+                "from_sifts_for_uniprot_ids."
+            )
+
+        mapping: dict[str, PdbEntry] = {}
+        for uniprot_id in uniprot_ids:
+            entry = best_structure_entry(
+                uniprot_id,
+                cache_dir=cache_dir,
+                timeout=timeout,
+                force_refresh=force_refresh,
+            )
+            if entry is None:
+                logger.info(
+                    "SIFTS has no best_structures for %s; skipping.",
+                    uniprot_id,
+                )
+                continue
+            pdb_id = entry.get("pdb_id")
+            chain = entry.get("chain_id")
+            if not pdb_id:
+                logger.warning(
+                    "SIFTS entry for %s is missing pdb_id: %r", uniprot_id, entry,
+                )
+                continue
+            pdb_path = os.path.join(
+                pdb_dir, f"{pdb_id.lower()}{pdb_suffix}",
+            )
+            if not os.path.isfile(pdb_path):
+                msg = (
+                    f"SIFTS resolved {uniprot_id} to PDB {pdb_id} "
+                    f"(chain {chain}), but the file is missing: "
+                    f"{pdb_path}. Download it from RCSB or adjust "
+                    "--pdb_suffix."
+                )
+                if strict:
+                    raise FileNotFoundError(msg)
+                logger.warning("%s (skipping)", msg)
+                continue
+            mapping[uniprot_id] = PdbEntry(pdb_path=pdb_path, chain=chain)
+        return cls(mapping)

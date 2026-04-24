@@ -410,6 +410,21 @@ Writes to the specified output directory:
 - `structure_args.json` — arguments used
 - `structure.log` — run log
 
-### Lookup extensions (planned)
+### SIFTS lookup (library API)
 
-`SequencePdbMap.from_sifts_for_uniprot_ids()` is registered in `mysca.structure.mapping` but currently raises `NotImplementedError`. SIFTS on-demand lookup will land in a follow-up without changing the public CLI surface.
+When users don't want to hand-maintain a TSV, `mysca.structure.mapping.SequencePdbMap.from_sifts_for_uniprot_ids(uniprot_ids, pdb_dir=...)` resolves each UniProt accession to its best PDB structure via EBI PDBe's [`mappings/best_structures`](https://www.ebi.ac.uk/pdbe/api/doc/sifts.html) endpoint. Responses are cached under `~/.mysca/sifts_cache/` (override with `cache_dir=...`) so repeat runs don't hit the network.
+
+Example:
+
+```python
+from mysca.structure import SequencePdbMap
+seq_map = SequencePdbMap.from_sifts_for_uniprot_ids(
+    ["P00742", "P09211", "P02768"],
+    pdb_dir="./pdbs",          # pre-downloaded RCSB files
+    cache_dir="./sifts_cache", # optional
+)
+# seq_map["P00742"].pdb_path → "./pdbs/1c4v.pdb" (or whatever the
+# top-ranked best_structures entry points at)
+```
+
+The PDB files must already exist in `pdb_dir`; SIFTS only resolves IDs, it doesn't download structures. Missing files raise `FileNotFoundError` under `strict=True` (the default) or are logged and skipped under `strict=False`. This isn't yet exposed as a flag on `sca-structure` — for now it's a library-level call that downstream scripts can use to build a TSV for `sca-structure --seq_map`.
