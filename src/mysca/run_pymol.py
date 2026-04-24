@@ -43,6 +43,13 @@ COMMAND LINE ARGUMENTS:
         ``--multisector``).
     --nframes N : animation frame count (default 24).
     --duration SEC : animation duration in seconds (default 2.4).
+    --spin_axis {x,y,z} : rotation axis for animation (default y).
+    --spin_degrees N : total rotation in degrees over --nframes
+        (default 360 — full loop).
+    --ray {none,first,all} : ray-tracing policy for animation frames.
+        'all' (default) rays every frame, 'first' rays only frame 0,
+        'none' disables ray-tracing.
+    --dpi N : DPI for all rendered PNGs (default 300).
 
 -------------------------------------------------------------------------------
 EXAMPLE USAGE:
@@ -156,6 +163,28 @@ def parse_args(args):
         "--duration", type=float, default=None,
         help="Animation duration in seconds (used with --animate). "
         "Default 2.4.",
+    )
+    parser.add_argument(
+        "--spin_axis", type=str, default="y", choices=["x", "y", "z"],
+        help="Axis to rotate around when --animate is passed. Default y.",
+    )
+    parser.add_argument(
+        "--spin_degrees", type=float, default=360.0,
+        help="Total rotation in degrees over --nframes. Default 360 "
+        "(full loop). Set to e.g. 180 for a half-spin, 90 for a "
+        "quarter-turn.",
+    )
+    parser.add_argument(
+        "--ray", type=str, default="all", choices=["none", "first", "all"],
+        help="Ray-tracing policy for animation frames. 'all' "
+        "(default) ray-traces every frame (best quality, slowest); "
+        "'first' rays only frame 0 and uses viewport for the rest; "
+        "'none' disables ray-tracing entirely (fastest).",
+    )
+    parser.add_argument(
+        "--dpi", type=int, default=300,
+        help="DPI for all rendered PNGs (stills, views, and animation "
+        "frames). Default 300.",
     )
     parser.add_argument(
         "-v", "--verbosity", type=int, default=1,
@@ -313,6 +342,10 @@ def main(args):
             nframes=args.nframes,
             duration=args.duration,
             outdir=outdir,
+            spin_axis=args.spin_axis,
+            spin_degrees=args.spin_degrees,
+            ray=args.ray,
+            dpi=args.dpi,
         )
 
     logger.info("Done!")
@@ -332,6 +365,10 @@ def _render_one_structure(
         nframes: int | None,
         duration: float | None,
         outdir: str,
+        spin_axis: str = "y",
+        spin_degrees: float = 360.0,
+        ray: str = "all",
+        dpi: int = 300,
 ):
     struct_color = DEFAULT_STRUCT_COLOR
     struct_style = DEFAULT_STRUCT_STYLE
@@ -400,6 +437,10 @@ def _render_one_structure(
             nframes=nframes,
             duration=duration,
             outdir=outdir,
+            spin_axis=spin_axis,
+            spin_degrees=spin_degrees,
+            ray=ray,
+            dpi=dpi,
         )
     else:
         logger.info("Plotting %s by sector...", scaffold)
@@ -418,6 +459,10 @@ def _render_one_structure(
             nframes=nframes,
             duration=duration,
             outdir=outdir,
+            spin_axis=spin_axis,
+            spin_degrees=spin_degrees,
+            ray=ray,
+            dpi=dpi,
         )
 
 
@@ -490,30 +535,46 @@ def _align_and_focus(cmd, ref_scaffold):
     cmd.zoom(complete=1)
 
 
-def _write_views(cmd, outdir, basename, ref_scaffold):
+def _write_views(cmd, outdir, basename, ref_scaffold, *, dpi: int = 300):
     """Save four rotated side views (90° steps around Y) under
     ``<outdir>/views/<basename>_view{0..3}.png``."""
     viewsdir = os.path.join(outdir, "views")
     os.makedirs(viewsdir, exist_ok=True)
     for ri in range(4):
-        cmd.png(os.path.join(viewsdir, f"{basename}_view{ri}.png"), dpi=300)
+        cmd.png(os.path.join(viewsdir, f"{basename}_view{ri}.png"), dpi=dpi)
         cmd.rotate("y", 90, "struct")
         if ref_scaffold:
             cmd.rotate("y", 90, "ref_struct")
 
 
-def _write_animation(cmd, outdir, basename, nframes, duration):
+def _ray_sequence(mode: str, nframes: int) -> list[int]:
+    if mode == "none":
+        return [0] * nframes
+    if mode == "first":
+        return [1] + [0] * (nframes - 1)
+    return [1] * nframes  # "all"
+
+
+def _write_animation(
+        cmd, outdir, basename, nframes, duration,
+        *,
+        spin_axis: str = "y",
+        spin_degrees: float = 360.0,
+        ray: str = "all",
+        dpi: int = 300,
+):
     imageio, Image = _load_animation_deps()
     import tqdm as _tqdm
-    RAY_FIRST = 1
     seconds_per_frame = duration / nframes
     framesdir = os.path.join(outdir, "frames", f"{basename}_frames")
     os.makedirs(framesdir, exist_ok=True)
+    per_turn = spin_degrees / nframes
+    ray_per_frame = _ray_sequence(ray, nframes)
     for i in _tqdm.trange(nframes, leave=False):
-        cmd.turn("y", 360 / nframes)
+        cmd.turn(spin_axis, per_turn)
         cmd.png(
             os.path.join(framesdir, f"frame_{i:03d}.png"),
-            dpi=300, ray=RAY_FIRST,
+            dpi=dpi, ray=ray_per_frame[i],
         )
     frames = []
     for i in range(nframes):
@@ -547,6 +608,10 @@ def _render_frame(
         basename,
         group_idx_for_features,
         outdir,
+        spin_axis: str = "y",
+        spin_degrees: float = 360.0,
+        ray: str = "all",
+        dpi: int = 300,
 ):
     """Render one frame with the given set of IC groups lit up.
 
@@ -586,13 +651,17 @@ def _render_frame(
         group_idx_for_features, outdir,
     )
 
-    cmd.png(f"{outdir}/{basename}.png", dpi=300)
+    cmd.png(f"{outdir}/{basename}.png", dpi=dpi)
 
     if views:
-        _write_views(cmd, outdir, basename, ref_scaffold)
+        _write_views(cmd, outdir, basename, ref_scaffold, dpi=dpi)
 
     if animate:
-        _write_animation(cmd, outdir, basename, nframes, duration)
+        _write_animation(
+            cmd, outdir, basename, nframes, duration,
+            spin_axis=spin_axis, spin_degrees=spin_degrees,
+            ray=ray, dpi=dpi,
+        )
 
     for sel_name in created:
         cmd.hide(sector_style, sel_name)
@@ -616,6 +685,10 @@ def _plot_by_sectors(
         nframes,
         duration,
         outdir,
+        spin_axis: str = "y",
+        spin_degrees: float = 360.0,
+        ray: str = "all",
+        dpi: int = 300,
 ):
     if nframes is None:
         nframes = 24
@@ -640,6 +713,10 @@ def _plot_by_sectors(
             basename=f"{scaffold}_group{gidx}",
             group_idx_for_features=gidx,
             outdir=outdir,
+            spin_axis=spin_axis,
+            spin_degrees=spin_degrees,
+            ray=ray,
+            dpi=dpi,
         )
 
 
@@ -659,6 +736,10 @@ def _plot_with_multiple_sectors(
         nframes,
         duration,
         outdir,
+        spin_axis: str = "y",
+        spin_degrees: float = 360.0,
+        ray: str = "all",
+        dpi: int = 300,
 ):
     if nframes is None:
         nframes = 24
@@ -683,6 +764,10 @@ def _plot_with_multiple_sectors(
         basename=f"{scaffold}_groups_{tag}",
         group_idx_for_features=None,
         outdir=outdir,
+        spin_axis=spin_axis,
+        spin_degrees=spin_degrees,
+        ray=ray,
+        dpi=dpi,
     )
 
 

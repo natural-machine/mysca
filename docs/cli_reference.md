@@ -201,6 +201,8 @@ sca-pymol --structure <structure-out-dir> \
     [-r REF_STRUCTURE_ID] \
     [--features_py PATH] [--features NAME[,NAME...]] \
     [--views] [--animate] [--nframes N] [--duration SEC] \
+    [--spin_axis {x,y,z}] [--spin_degrees N] \
+    [--ray {none,first,all}] [--dpi N] \
     -o <outdir> [-v N]
 ```
 
@@ -225,6 +227,10 @@ sca-pymol --structure <structure-out-dir> \
 | `--animate` | off | Save a rotating GIF per rendered frame under `outdir/` — one per IC group in the default mode; one covering all selected groups under `--multisector` |
 | `--nframes` | 24 | Animation frame count (only used with `--animate`) |
 | `--duration` | 2.4 | Animation duration in seconds (only used with `--animate`) |
+| `--spin_axis` | `y` | Rotation axis for `--animate` (choices: `x`, `y`, `z`) |
+| `--spin_degrees` | 360 | Total rotation in degrees over `--nframes`. Set to e.g. 180 for a half-spin, 90 for a quarter-turn |
+| `--ray` | `all` | Ray-tracing policy for animation frames: `all` (every frame, best quality, slowest), `first` (only frame 0), `none` (disabled, fastest) |
+| `--dpi` | 300 | DPI for all rendered PNGs (stills, views, and animation frames) |
 | `-v, --verbosity` | 1 | Verbosity level |
 
 ### Output
@@ -288,7 +294,15 @@ sca-pymol --structure out/structure \
 sca-pymol --structure out/structure \
     --groups 0 1 2 --animate --nframes 36 --duration 3.6 \
     -o out/pymol_anim
+
+# Fast preview: X-axis half-swing, no ray-tracing, lower dpi.
+sca-pymol --structure out/structure \
+    --groups 0 --animate \
+    --spin_axis x --spin_degrees 180 --ray none --dpi 150 \
+    -o out/pymol_preview
 ```
+
+`--ray all` ray-traces every frame (today's default — best quality, slowest). `--ray first` only rays frame 0 (viewport for the rest — mixed look but ~10× faster). `--ray none` disables ray-tracing entirely for previews.
 
 Requires `imageio` + `Pillow` (both ship as deps of `pymol-open-source` on conda-forge; on a minimal env install via `pip install imageio pillow`).
 

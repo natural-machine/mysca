@@ -21,6 +21,7 @@ from mysca.run_pymol import (
     _load_projections,
     _render_frame,
     _split_features_names,
+    _write_animation,
     _write_views,
 )
 
@@ -79,6 +80,38 @@ def test_parse_args_features_py_without_names_ok():
         "--features_py", FEATURES_FIXTURE,
     ])
     assert args.features is None
+
+
+def test_parse_args_accepts_spin_ray_dpi():
+    args = parse_args([
+        "--structure", "x", "-o", "y",
+        "--spin_axis", "z", "--spin_degrees", "180",
+        "--ray", "none", "--dpi", "150",
+    ])
+    assert args.spin_axis == "z"
+    assert args.spin_degrees == 180.0
+    assert args.ray == "none"
+    assert args.dpi == 150
+
+
+def test_parse_args_defaults_preserve_today():
+    """Defaults for the new flags preserve pre-Phase-2 behavior:
+    Y-axis 360° spin, ray-trace every frame, 300 dpi."""
+    args = parse_args(["--structure", "x", "-o", "y"])
+    assert args.spin_axis == "y"
+    assert args.spin_degrees == 360.0
+    assert args.ray == "all"
+    assert args.dpi == 300
+
+
+def test_parse_args_rejects_bad_spin_axis():
+    with pytest.raises(SystemExit):
+        parse_args(["--structure", "x", "-o", "y", "--spin_axis", "w"])
+
+
+def test_parse_args_rejects_bad_ray():
+    with pytest.raises(SystemExit):
+        parse_args(["--structure", "x", "-o", "y", "--ray", "maybe"])
 
 
 def test_split_features_names_strips_and_filters_empties():
@@ -353,6 +386,103 @@ def test_render_frame_animate_invokes_write_animation(tmp_path):
     assert "X_groups_0,1" in passed
     assert 4 in passed  # nframes
     assert 0.4 in passed  # duration
+
+
+def test_render_frame_forwards_dpi_to_main_png(tmp_path):
+    cmd = MagicMock()
+    _render_frame(**_render_frame_kwargs(cmd, tmp_path, dpi=150))
+    (_path,), kw = cmd.png.call_args
+    assert kw["dpi"] == 150
+
+
+def test_render_frame_forwards_animation_kwargs(tmp_path):
+    """--spin_axis/--spin_degrees/--ray/--dpi are threaded into
+    _write_animation by _render_frame."""
+    cmd = MagicMock()
+    with patch("mysca.run_pymol._write_animation") as mock_anim:
+        _render_frame(**_render_frame_kwargs(
+            cmd, tmp_path, animate=True,
+            spin_axis="z", spin_degrees=90.0, ray="none", dpi=150,
+        ))
+    kw = mock_anim.call_args.kwargs
+    assert kw["spin_axis"] == "z"
+    assert kw["spin_degrees"] == 90.0
+    assert kw["ray"] == "none"
+    assert kw["dpi"] == 150
+
+
+# ---------------------------------------------------------------------- #
+# _write_animation: spin / ray / dpi behavior (pymol-free via MagicMock
+# + patched _load_animation_deps).                                       #
+# ---------------------------------------------------------------------- #
+
+
+def _mock_anim_deps():
+    """Patch _load_animation_deps to return MagicMock stand-ins for
+    imageio + PIL.Image, so _write_animation runs without either dep."""
+    return patch(
+        "mysca.run_pymol._load_animation_deps",
+        return_value=(MagicMock(), MagicMock()),
+    )
+
+
+def test_write_animation_defaults_preserve_today(tmp_path):
+    """Pre-Phase-2 behavior: spin_axis='y', spin_degrees=360,
+    ray=1 every frame, dpi=300."""
+    cmd = MagicMock()
+    with _mock_anim_deps():
+        _write_animation(cmd, str(tmp_path), "X", nframes=4, duration=0.4)
+    assert [c.args for c in cmd.turn.call_args_list] == [("y", 90.0)] * 4
+    for c in cmd.png.call_args_list:
+        assert c.kwargs["ray"] == 1
+        assert c.kwargs["dpi"] == 300
+
+
+def test_write_animation_spin_axis_and_degrees(tmp_path):
+    cmd = MagicMock()
+    with _mock_anim_deps():
+        _write_animation(
+            cmd, str(tmp_path), "X", nframes=4, duration=0.4,
+            spin_axis="x", spin_degrees=180.0,
+        )
+    assert [c.args for c in cmd.turn.call_args_list] == [("x", 45.0)] * 4
+
+
+def test_write_animation_ray_none(tmp_path):
+    cmd = MagicMock()
+    with _mock_anim_deps():
+        _write_animation(
+            cmd, str(tmp_path), "X", nframes=3, duration=0.3, ray="none",
+        )
+    assert [c.kwargs["ray"] for c in cmd.png.call_args_list] == [0, 0, 0]
+
+
+def test_write_animation_ray_first(tmp_path):
+    cmd = MagicMock()
+    with _mock_anim_deps():
+        _write_animation(
+            cmd, str(tmp_path), "X", nframes=3, duration=0.3, ray="first",
+        )
+    assert [c.kwargs["ray"] for c in cmd.png.call_args_list] == [1, 0, 0]
+
+
+def test_write_animation_ray_all(tmp_path):
+    cmd = MagicMock()
+    with _mock_anim_deps():
+        _write_animation(
+            cmd, str(tmp_path), "X", nframes=3, duration=0.3, ray="all",
+        )
+    assert [c.kwargs["ray"] for c in cmd.png.call_args_list] == [1, 1, 1]
+
+
+def test_write_animation_dpi_forwards(tmp_path):
+    cmd = MagicMock()
+    with _mock_anim_deps():
+        _write_animation(
+            cmd, str(tmp_path), "X", nframes=2, duration=0.2, dpi=150,
+        )
+    for c in cmd.png.call_args_list:
+        assert c.kwargs["dpi"] == 150
 
 
 # ---------------------------------------------------------------------- #
