@@ -274,6 +274,24 @@ sca-pymol --structure out/structure --structure_id NarG_1Q16 \
 
 Loader errors surface at CLI startup (before any rendering): missing file → `FileNotFoundError`, missing attribute → `ValueError`, non-callable attribute → `TypeError`.
 
+### Animation
+
+`--animate` writes a rotating GIF (default 24 frames over 2.4 s, Y-axis spin) for each rendered frame — one per IC group in the default mode, or a single combined rotation under `--multisector`. Frames are also written to `outdir/frames/<basename>_frames/` for inspection or re-encoding.
+
+```bash
+# One GIF covering the top two ICs lit up together.
+sca-pymol --structure out/structure \
+    --groups 0 1 --multisector --animate \
+    -o out/pymol_anim
+
+# Per-group GIFs (one per IC), longer and smoother.
+sca-pymol --structure out/structure \
+    --groups 0 1 2 --animate --nframes 36 --duration 3.6 \
+    -o out/pymol_anim
+```
+
+Requires `imageio` + `Pillow` (both ship as deps of `pymol-open-source` on conda-forge; on a minimal env install via `pip install imageio pillow`).
+
 ---
 
 ## sca-plots

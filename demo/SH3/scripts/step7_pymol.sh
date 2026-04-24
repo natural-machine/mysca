@@ -23,3 +23,29 @@ sca-pymol \
     --groups 0 1 \
     --views \
     -o ${outdir}/pymol
+
+# Animated passes: one GIF per IC group (default mode), plus one GIF
+# covering both groups lit up together (--multisector). Requires
+# imageio + PIL (both are deps of pymol-open-source on conda-forge,
+# but guard anyway so a minimal install doesn't break the demo
+# mid-run).
+if ! python -c "import imageio, PIL" >/dev/null 2>&1; then
+    echo "[step7_pymol] imageio+PIL not importable; skipping animate pass." >&2
+    echo "  pip install imageio pillow" >&2
+    exit 0
+fi
+
+# Per-group rotations: one GIF each for IC 0 and IC 1.
+sca-pymol \
+    --structure ${outdir}/structure \
+    --groups 0 1 \
+    --animate \
+    -o ${outdir}/pymol_anim
+
+# Combined rotation: single GIF with both ICs lit up at once.
+sca-pymol \
+    --structure ${outdir}/structure \
+    --groups 0 1 \
+    --multisector \
+    --animate \
+    -o ${outdir}/pymol_anim_multi
