@@ -13,8 +13,10 @@ reference='4837_jgi||3708||Equilibrative'
 mkdir -p ${outdir}/project
 project_input=${outdir}/project/input.fasta
 
+# Match the reference ID against the header's first whitespace-delimited
+# token only; Pfam/JGI headers typically append annotations after the ID.
 raw_seq=$(awk -v target=">${reference}" '
-    /^>/ { want = ($0 == target); next }
+    /^>/ { want = ($1 == target); next }
     want { printf "%s", $0 }
 ' ${infile} | tr -d '-')
 

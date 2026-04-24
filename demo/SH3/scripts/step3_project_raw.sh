@@ -9,14 +9,18 @@ aligned=${outdir}/prealign/aligned.fasta
 mkdir -p ${outdir}/project
 project_input=${outdir}/project/input.fasta
 
-first_id=$(awk '/^>/ { print substr($0, 2); exit }' ${aligned})
+# First whitespace-delimited token of the first header (Biopython's
+# rec.id convention). Annotations after the first space, if any, get
+# stripped the same way by Biopython downstream, so this matches what
+# the MSA's msa_obj_orig will carry as the sequence ID.
+first_id=$(awk '/^>/ { print substr($1, 2); exit }' ${aligned})
 if [ -z "${first_id}" ]; then
     echo "error: could not read an ID from ${aligned}" >&2
     exit 1
 fi
 
 raw_seq=$(awk -v target=">${first_id}" '
-    /^>/ { want = ($0 == target); next }
+    /^>/ { want = ($1 == target); next }
     want { printf "%s", $0 }
 ' ${aligned} | tr -d '-')
 
