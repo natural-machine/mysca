@@ -342,6 +342,10 @@ def test_sca_structure_cli_single_pdb(prep_and_sca_dirs, tmp_path):
         data = json.load(f)
     assert len(data) == 1
     assert data[0]["structure_id"]  # non-empty
+    # pdb_path must be recorded so sca-pymol can re-load the structure.
+    assert "pdb_path" in data[0]
+    assert os.path.isfile(data[0]["pdb_path"])
+    assert os.path.abspath(data[0]["pdb_path"]) == os.path.abspath(pdb_path)
 
 
 def test_sca_structure_cli_seq_map(prep_and_sca_dirs, tmp_path):
@@ -373,6 +377,9 @@ def test_sca_structure_cli_seq_map(prep_and_sca_dirs, tmp_path):
         data = json.load(f)
     assert len(data) == 2
     assert sorted(d["structure_id"] for d in data) == sorted(chosen_ids)
+    for entry in data:
+        assert "pdb_path" in entry
+        assert os.path.isfile(entry["pdb_path"])
 
 
 def test_cli_rejects_both_or_neither_input(tmp_path):

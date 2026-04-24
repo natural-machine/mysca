@@ -25,6 +25,11 @@ class PdbProjection:
     FIELD_DESCRIPTIONS = {
         "structure_id": "PDB structure ID (from filename or explicit override).",
         "chain_id": "Chain selected on the PDB structure.",
+        "pdb_path": (
+            "Absolute path to the PDB file this projection came from. "
+            "Consumed by sca-pymol to re-load the structure for "
+            "rendering without requiring a separate --pdb_dir flag."
+        ),
         "sequence_projection": (
             "Underlying SequenceProjection from mysca.project, in "
             "raw-residue-index coordinates."
@@ -42,9 +47,11 @@ class PdbProjection:
         chain_id: str,
         sequence_projection: SequenceProjection,
         ic_pdb_residues: list[list[int]],
+        pdb_path: Optional[str] = None,
     ):
         self.structure_id = structure_id
         self.chain_id = chain_id
+        self.pdb_path = pdb_path
         self.sequence_projection = sequence_projection
         self.ic_pdb_residues = ic_pdb_residues
 
@@ -52,6 +59,7 @@ class PdbProjection:
         return {
             "structure_id": self.structure_id,
             "chain_id": self.chain_id,
+            "pdb_path": self.pdb_path,
             "sequence_projection": self.sequence_projection.to_dict(),
             "ic_pdb_residues": [list(xs) for xs in self.ic_pdb_residues],
         }
@@ -135,4 +143,5 @@ def project_pdb(
         chain_id=pdb.chain_id,
         sequence_projection=seq_proj,
         ic_pdb_residues=ic_pdb_residues,
+        pdb_path=pdb.pdb_path,
     )

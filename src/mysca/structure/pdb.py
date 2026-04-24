@@ -49,6 +49,9 @@ class PDBStructure:
             amino-acid at position ``i`` of ``sequence``.
         chain_id: Chain identifier (e.g. ``"A"``) loaded.
         structure_id: ID given to the underlying Bio.PDB structure.
+        pdb_path: Absolute path to the PDB file this structure came
+            from (``None`` when constructed without a file, e.g.
+            directly in tests).
         structure: The underlying ``Bio.PDB.Structure.Structure``.
     """
 
@@ -59,12 +62,14 @@ class PDBStructure:
         sequence: str,
         residue_ids: list[int],
         structure_id: Optional[str] = None,
+        pdb_path: Optional[str] = None,
     ):
         self.structure = structure
         self.chain_id = chain_id
         self.sequence = sequence
         self.residue_ids = list(residue_ids)
         self.structure_id = structure_id or structure.id
+        self.pdb_path = pdb_path
 
     def __len__(self) -> int:
         return len(self.sequence)
@@ -107,6 +112,7 @@ class PDBStructure:
             sequence=seq,
             residue_ids=resids,
             structure_id=sid,
+            pdb_path=os.path.abspath(path),
         )
 
 
