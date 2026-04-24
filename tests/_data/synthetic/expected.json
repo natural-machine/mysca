@@ -136,9 +136,16 @@
         "query_equal_to_orig": {"start": 501, "length": 10},
         "query_longer_than_orig": {"start": 601, "length": 12}
     },
+    "expected_input_residue_indices": {
+        "query_shorter_than_proc":     [0, 1, 2, 3],
+        "query_equal_to_proc":         [0, 1, 2, 3, 4, 5, 6],
+        "query_between_proc_and_orig": [0, 1, 2, 3, 4, 5, 6, 7],
+        "query_equal_to_orig":         [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        "query_longer_than_orig":      [0, 1, 2, 3, 4, 5, 8, 9, 10, 11]
+    },
     "notes": {
         "aligner_agreement": "mafft_add and hmmalign produced IDENTICAL aligned_sequence and residue_by_processed_col for all queries. No per-aligner block required.",
         "invariant_under_fix": "raw_sequence == aligned_sequence.replace('-', '') holds for every training and query case under both aligners after 693415b. Under the pre-fix code, query_longer_than_orig would set raw_sequence to the input (length 12) and violate this invariant.",
-        "longer_than_orig_pdb_caveat": "A PDB made from the raw input of query_longer_than_orig has 12 residues, but the post-alignment raw_sequence has 10. project_groups_to_pdb deliberately raises ValueError on this length mismatch — see the corresponding test."
+        "longer_than_orig_pdb_projection": "A PDB made from the raw input of query_longer_than_orig has 12 residues; the post-alignment raw_sequence has 10 (N and S dropped as inserts). project_groups_to_pdb composes raw->input via input_residue_indices and input->PDB via pdb.residue_ids, so projection succeeds and PDB residues resolve to positions 601, 602, 604, 605, 606, 609, 610, 611 (one per surviving input residue at offset 601)."
     }
 }

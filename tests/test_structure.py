@@ -283,6 +283,10 @@ def test_project_pdb_in_sample_matches_statsectors(prep_and_sca_dirs, tmp_path):
 
 
 def test_project_groups_to_pdb_length_guard(prep_and_sca_dirs, tmp_path):
+    """A projection's input_residue_indices must not reach beyond the
+    paired PDB's residue_ids. The in-sample projection here has
+    input_residue_indices == range(len(raw)); pairing it with a PDB
+    that's strictly shorter than the projection's input must raise."""
     prep_dir, sca_dir = prep_and_sca_dirs
     prep = PreprocessingResults.load(prep_dir)
     seq_id = prep.retained_sequence_ids[0]
@@ -299,12 +303,14 @@ def test_project_groups_to_pdb_length_guard(prep_and_sca_dirs, tmp_path):
         preproc_result_dir=prep_dir,
         seq_id=seq_id,
     )
-    # Construct a mismatched PDB (different length).
+    # Construct a mismatched (too-short) PDB.
     short_pdb_path = str(tmp_path / "short.pdb")
     _write_minimal_pdb(raw[:-1], short_pdb_path)
     short_pdb = PDBStructure.from_file(short_pdb_path)
 
-    with pytest.raises(ValueError, match="Raw-sequence length mismatch"):
+    with pytest.raises(
+        ValueError, match="input_residue_indices references position",
+    ):
         project_groups_to_pdb(proj.sequence_projection, short_pdb)
 
 

@@ -251,6 +251,7 @@ def test_field_descriptions_cover_all_init_args():
         ic_loadings=[np.array([0.1])],
         ic_processed_cols=[np.array([0])],
         in_sample=False,
+        input_residue_indices=[0],
     )
     assert set(vars(proj).keys()) == set(
         SequenceProjection.FIELD_DESCRIPTIONS.keys()

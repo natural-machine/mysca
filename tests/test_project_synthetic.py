@@ -337,26 +337,105 @@ def test_structure_projection_query_out_of_sample(
 
 
 @needs_mafft
-def test_structure_projection_query_longer_than_orig_raises(
+def test_structure_projection_query_longer_than_orig_composes_through_input_indices(
         prep_and_sca_dirs, expected, tmp_path,
 ):
-    """A PDB built from the 12-residue input collides with the
-    10-residue post-alignment raw_sequence. project_groups_to_pdb
-    should refuse to map rather than silently returning wrong
-    residue numbers."""
+    """A PDB built from the 12-residue input no longer raises when
+    alignment drops residues. input_residue_indices records which
+    input positions survived, and project_groups_to_pdb composes
+    them with pdb.residue_ids to produce correct PDB residue numbers.
+    """
     prep_dir, sca_dir = prep_and_sca_dirs
     q_id = "query_longer_than_orig"
     input_raw = expected["queries"][q_id]["input_raw"]  # length 12
-    pdb_path, _ = _pdb_from_fixture(q_id, input_raw, expected, tmp_path)
+    pdb_path, residue_numbers = _pdb_from_fixture(
+        q_id, input_raw, expected, tmp_path,
+    )
     pdb = PDBStructure.from_file(pdb_path)
     assert len(pdb.sequence) == 12
 
-    with pytest.raises(ValueError, match="Raw-sequence length mismatch"):
-        project_pdb(
-            pdb,
-            sca_result_dir=sca_dir,
-            preproc_result_dir=prep_dir,
-            seq_id=q_id,
+    proj = project_pdb(
+        pdb,
+        sca_result_dir=sca_dir,
+        preproc_result_dir=prep_dir,
+        seq_id=q_id,
+    )
+    # input_residue_indices should match expected.json.
+    got = proj.sequence_projection.input_residue_indices
+    assert got == expected["expected_input_residue_indices"][q_id], got
+
+    # ic_pdb_residues composes ic_memberships (raw indices) with
+    # input_residue_indices and pdb.residue_ids. Verify element-wise.
+    for ic_idx, (raw_members, pdb_resids) in enumerate(zip(
+        proj.sequence_projection.ic_memberships, proj.ic_pdb_residues,
+    )):
+        for r, pdb_resi in zip(raw_members.tolist(), pdb_resids):
+            input_idx = got[r]
+            assert pdb_resi == residue_numbers[input_idx], (
+                f"IC {ic_idx} raw {r} -> input {input_idx} -> "
+                f"pdb {pdb_resi}; expected {residue_numbers[input_idx]}"
+            )
+
+
+def test_project_groups_to_pdb_raises_when_pdb_too_short(tmp_path, expected):
+    """Constructed failure: hand a project_groups_to_pdb a
+    SequenceProjection whose input_residue_indices reach beyond
+    pdb.residue_ids — e.g., a projection from a 12-residue input
+    paired with a PDB that only carries 5 residues."""
+    from mysca.project.projection import SequenceProjection
+    pdb_path = str(tmp_path / "tiny.pdb")
+    _write_minimal_pdb(
+        "ACDEV", pdb_path, residue_numbers=[1, 2, 3, 4, 5],
+    )
+    pdb = PDBStructure.from_file(pdb_path)
+
+    seq_proj = SequenceProjection(
+        seq_id="x",
+        raw_sequence="ACDE",
+        aligned_sequence="ACDE",
+        residue_by_processed_col=np.array([0, 1, 2, 3], dtype=int),
+        ic_memberships=[np.array([0, 3], dtype=int)],
+        ic_loadings=[np.array([0.1, 0.2], dtype=float)],
+        ic_processed_cols=[np.array([0, 3], dtype=int)],
+        in_sample=False,
+        # Deliberately reach past pdb.residue_ids (length 5).
+        input_residue_indices=[0, 1, 5, 7],
+    )
+    with pytest.raises(
+        ValueError, match="input_residue_indices references position",
+    ):
+        project_groups_to_pdb(seq_proj, pdb)
+
+
+# ---------------------------------------------------------------------- #
+# input_residue_indices recovery                                         #
+# ---------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("aligner", [
+    pytest.param("mafft_add", marks=needs_mafft),
+    pytest.param("hmmalign", marks=needs_hmmer),
+])
+def test_query_input_residue_indices(prep_and_sca_dirs, expected, aligner):
+    """For each query, input_residue_indices should record exactly
+    which positions in the ORIGINAL input sequence survived the
+    column-preserving alignment. In-sample / same-length cases are
+    the identity; query_longer_than_orig drops positions 6 and 7
+    (N and S) and the helper should recover
+    [0,1,2,3,4,5,8,9,10,11]."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    result = project_sequences(
+        QUERIES_FPATH,
+        sca_result_dir=sca_dir,
+        preproc_result_dir=prep_dir,
+        aligner=aligner,
+    )
+    exp_map = expected["expected_input_residue_indices"]
+    for proj in result.projections:
+        assert proj.input_residue_indices == exp_map[proj.seq_id], (
+            f"{proj.seq_id} [{aligner}]: "
+            f"got {proj.input_residue_indices}; "
+            f"expected {exp_map[proj.seq_id]}"
         )
 
 

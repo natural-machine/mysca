@@ -69,6 +69,19 @@ class SequenceProjection:
             "True iff seq_id was found in msa_obj_orig and no new "
             "alignment was performed."
         ),
+        "input_residue_indices": (
+            "List of length len(raw_sequence): for each raw-residue "
+            "position, the index into the ORIGINAL input sequence that "
+            "survived column-preserving alignment. For in-sample "
+            "records this is the identity ``list(range(len(raw)))``. "
+            "For out-of-sample records where the aligner dropped some "
+            "input residues (insert columns under hmmalign, "
+            "`--keeplength` drops under mafft), this lets callers "
+            "(notably project_groups_to_pdb) resolve raw residue "
+            "indices back to positions in the full input sequence — "
+            "and therefore to PDB residue numbers — without assuming "
+            "all input residues survived."
+        ),
     }
 
     def __init__(
@@ -81,6 +94,7 @@ class SequenceProjection:
         ic_loadings: list[np.ndarray],
         ic_processed_cols: list[np.ndarray],
         in_sample: bool,
+        input_residue_indices: list[int],
     ):
         self.seq_id = seq_id
         self.raw_sequence = raw_sequence
@@ -90,6 +104,7 @@ class SequenceProjection:
         self.ic_loadings = ic_loadings
         self.ic_processed_cols = ic_processed_cols
         self.in_sample = in_sample
+        self.input_residue_indices = list(input_residue_indices)
 
     def info(self) -> str:
         return _format_info_table(
@@ -116,6 +131,7 @@ class SequenceProjection:
                 arr.tolist() for arr in self.ic_processed_cols
             ],
             "in_sample": bool(self.in_sample),
+            "input_residue_indices": list(self.input_residue_indices),
         }
 
 
@@ -210,6 +226,34 @@ def _residue_indices_for_aligned(aligned_seq: str) -> np.ndarray:
         out[j] = idx
         idx += 1
     return out
+
+
+def _recover_input_indices(input_raw: str, kept_raw: str) -> list[int]:
+    """Given the original ungapped input sequence and the gapless
+    aligned output (a subsequence of ``input_raw`` that preserves
+    order and letter identity), return the indices in ``input_raw``
+    that were retained.
+
+    Column-preserving aligners (mafft --add --keeplength; hmmalign's
+    insert-column strip) drop input residues *in place* rather than
+    substituting them, so ``kept_raw`` is always an ordered
+    subsequence of ``input_raw``. A linear scan recovers the mapping.
+    """
+    indices: list[int] = []
+    h = 0
+    for c in kept_raw:
+        while h < len(input_raw) and input_raw[h] != c:
+            h += 1
+        if h >= len(input_raw):
+            raise RuntimeError(
+                f"Cannot recover input indices: "
+                f"{kept_raw!r} is not a subsequence of {input_raw!r}. "
+                "The aligner appears to have substituted residues "
+                "rather than merely dropped them."
+            )
+        indices.append(h)
+        h += 1
+    return indices
 
 
 def project_sequences(
@@ -326,6 +370,9 @@ def project_sequences(
                     msa_obj_orig[ids_in_msa[rec.id]].seq
                 )
                 raw = _gapless(aligned_seq)
+                # In-sample: raw came from the MSA row, so its indices
+                # trivially match the input. There's nothing to recover.
+                input_residue_indices = list(range(len(raw)))
             else:
                 aligned_seq = aligned_by_id.get(rec.id)
                 if aligned_seq is None:
@@ -343,6 +390,15 @@ def project_sequences(
                 # `raw_sequence[ic_memberships[i]]` to dereference
                 # correctly downstream.
                 raw = _gapless(aligned_seq)
+                # Recover which positions in the ORIGINAL input survived
+                # alignment. raw is always an ordered subsequence of
+                # the input (aligners drop residues; they don't
+                # substitute). project_groups_to_pdb composes
+                # input_residue_indices with pdb.residue_ids to handle
+                # the common case where a PDB's primary sequence is
+                # slightly longer than what fits the MSA columns.
+                input_raw = _gapless(str(rec.seq))
+                input_residue_indices = _recover_input_indices(input_raw, raw)
             if len(aligned_seq) != L_orig:
                 raise RuntimeError(
                     f"Aligned sequence for {rec.id!r} has length "
@@ -376,6 +432,7 @@ def project_sequences(
                 ic_loadings=ic_loadings,
                 ic_processed_cols=ic_processed_cols,
                 in_sample=is_in_sample,
+                input_residue_indices=input_residue_indices,
             ))
     finally:
         if workdir_ctx is not None:

@@ -72,24 +72,36 @@ def project_groups_to_pdb(
     """Map per-IC raw-residue indices to PDB residue numbers.
 
     ``sequence_projection.ic_memberships[i]`` is a list of 0-based
-    residue indices into the PDB's primary sequence; this function
-    looks each up in ``pdb.residue_ids`` to yield biologist-facing PDB
-    residue numbers per IC.
+    indices into ``raw_sequence`` — the post-alignment, gapless
+    subset of the input that landed in match columns of the reference
+    MSA. Column-preserving aligners may drop input residues that
+    don't fit; ``sequence_projection.input_residue_indices`` carries
+    the surviving subset of the ORIGINAL input positions, so we can
+    compose:
 
-    Raises ``IndexError`` if the projection's raw sequence length
-    disagrees with the PDB's primary sequence length — this is the
-    signal that the alignment did not match the structure.
+        raw_idx -> input_idx -> pdb.residue_ids[input_idx]
+
+    Raises:
+        ValueError: when any ``input_residue_indices`` entry is
+            out of range for ``pdb.residue_ids`` — typically the
+            signal that the projection and the PDB came from
+            different primary sequences.
     """
-    if len(sequence_projection.raw_sequence) != len(pdb.sequence):
+    input_ids = sequence_projection.input_residue_indices
+    n_pdb = len(pdb.residue_ids)
+    if input_ids and max(input_ids) >= n_pdb:
         raise ValueError(
-            f"Raw-sequence length mismatch: projection has "
-            f"{len(sequence_projection.raw_sequence)} residues, "
-            f"PDB {pdb.structure_id}:{pdb.chain_id} has "
-            f"{len(pdb.sequence)}. Cannot map to PDB residue numbers."
+            f"input_residue_indices references position "
+            f"{max(input_ids)} but PDB {pdb.structure_id}:{pdb.chain_id}"
+            f" has only {n_pdb} residues. The SequenceProjection and "
+            "the PDBStructure appear to come from different primary "
+            "sequences."
         )
     out = []
     for members in sequence_projection.ic_memberships:
-        out.append([int(pdb.residue_ids[int(r)]) for r in members])
+        out.append([
+            int(pdb.residue_ids[input_ids[int(r)]]) for r in members
+        ])
     return out
 
 
