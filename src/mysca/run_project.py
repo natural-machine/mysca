@@ -55,10 +55,18 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 
 from mysca.logging_config import configure_logging
 from mysca.project import project_sequences, ALIGNERS
+
+
+def _safe_filename_component(s: str) -> str:
+    """Replace filesystem-unsafe characters so a FASTA ID can be used
+    as a filename component. Pfam IDs like ``VAV_HUMAN/788-834`` and
+    JGI IDs like ``4837_jgi||3708||...`` both land here."""
+    return re.sub(r'[/\\|:*?"<>\s]+', "_", s)
 
 PROJECT_LOG_FNAME = "projection.log"
 PROJECT_RESULTS_FNAME = "projection.json"
@@ -150,7 +158,10 @@ def main(args):
     per_seq_dir = os.path.join(outdir, PER_SEQUENCE_DIRNAME)
     os.makedirs(per_seq_dir, exist_ok=True)
     for proj in result.projections:
-        tsv_path = os.path.join(per_seq_dir, f"{proj.seq_id}_residues.tsv")
+        tsv_path = os.path.join(
+            per_seq_dir,
+            f"{_safe_filename_component(proj.seq_id)}_residues.tsv",
+        )
         with open(tsv_path, "w") as f:
             f.write("ic_index\traw_residue_idx\tprocessed_col\tv_ica_loading\n")
             for ic_idx, (members, loadings, cols) in enumerate(

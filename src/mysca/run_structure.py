@@ -70,6 +70,7 @@ import sys
 
 from mysca.logging_config import configure_logging
 from mysca.project import ALIGNERS
+from mysca.run_project import _safe_filename_component
 from mysca.structure import (
     PDBStructure,
     SequencePdbMap,
@@ -151,7 +152,8 @@ def _write_per_structure_tsv(outdir, proj):
     per_dir = os.path.join(outdir, PER_STRUCTURE_DIRNAME)
     os.makedirs(per_dir, exist_ok=True)
     path = os.path.join(
-        per_dir, f"{proj.structure_id}_ic_residues.tsv"
+        per_dir,
+        f"{_safe_filename_component(proj.structure_id)}_ic_residues.tsv",
     )
     seq_proj = proj.sequence_projection
     with open(path, "w") as f:

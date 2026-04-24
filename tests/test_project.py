@@ -307,6 +307,51 @@ def test_sca_project_cli_writes_expected_artifacts(prep_and_sca_dirs, tmp_path):
         assert p["in_sample"] is True
 
 
+def test_sca_project_cli_sanitizes_seq_ids_with_slashes(
+        prep_and_sca_dirs, tmp_path,
+):
+    """FASTA IDs with filesystem-unsafe characters (Pfam-style
+    ``NAME/start-end``, JGI's ``|``-separated fields) must not create
+    spurious subdirectories when the per-sequence TSV is written."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    rec = prep.msa_obj_orig[0]
+    raw = str(rec.seq).replace("-", "")
+    donor_id = rec.id  # real ID so the in-sample path is taken
+    # Alias the same sequence under a Pfam-style ID, then project both.
+    pfam_like_id = "FAKE_HUMAN/42-100"
+    assert "/" in pfam_like_id
+
+    in_fasta = tmp_path / "slashy.fasta"
+    in_fasta.write_text(
+        f">{donor_id}\n{raw}\n"
+        f">{pfam_like_id}\n{raw}\n"
+    )
+    out_dir = str(tmp_path / "slashy_out")
+    args = project_parse_args([
+        "-i", str(in_fasta),
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", out_dir,
+        "-v", "0",
+    ])
+    project_main(args)
+
+    per_seq_dir = os.path.join(out_dir, "per_sequence")
+    assert os.path.isdir(per_seq_dir)
+    # Two sibling .tsv files — no spurious "FAKE_HUMAN" subdirectory.
+    entries = sorted(os.listdir(per_seq_dir))
+    tsvs = [f for f in entries if f.endswith(".tsv")]
+    subdirs = [
+        f for f in entries
+        if os.path.isdir(os.path.join(per_seq_dir, f))
+    ]
+    assert len(tsvs) == 2, f"Expected 2 TSVs, got {entries}"
+    assert subdirs == [], f"No subdirs expected, got {subdirs}"
+    # The slash was sanitized to underscore.
+    assert any("FAKE_HUMAN_42-100" in f for f in tsvs), tsvs
+
+
 # ----------------------------------------------------------------------
 # Raw-sequence / aligned-sequence consistency invariant.
 #
