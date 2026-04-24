@@ -187,39 +187,92 @@ Writes to the specified output directory:
 
 ## sca-pymol
 
-Visualize sectors on 3D protein structures using PyMOL.
+Render SCA sectors on 3D protein structures using PyMOL. Consumes `sca-structure` output directly — the per-structure `ic_pdb_residues` list carries authoritative PDB residue numbers (via `PDBStructure.residue_ids`), and `pdb_path` tells `sca-pymol` which file to load. Protein-specific annotations (cofactors, iron-sulfur clusters, ligands, etc.) are supplied by a user Python file via `--features_py`.
 
-Requires the optional `pymol-open-source` dependency (see [installation](#pymol)).
+Requires the optional `pymol-open-source` dependency (`conda install -c conda-forge pymol-open-source`).
 
 ### Usage
 
 ```bash
-sca-pymol -s <scaffold> --pdb_dir <pdb-dir> --modes <modes-file> [options]
+sca-pymol --structure <structure-out-dir> \
+    [--structure_id ID] \
+    [--groups G [G ...]] \
+    [--multisector] \
+    [-r REF_STRUCTURE_ID] \
+    [--features_py PATH] [--features NAME[,NAME...]] \
+    [--views] [--animate] [--nframes N] [--duration SEC] \
+    -o <outdir> [-v N]
 ```
 
 ### Required Arguments
 
 | Argument | Description |
 |----------|-------------|
-| `-s, --scaffold` | Scaffold protein identifier |
-| `--pdb_dir` | Directory containing PDB files |
-| `--modes` | Path to modes file (`.npz`, typically `statsectors_seq.npz`) |
+| `--structure` | `sca-structure` output directory containing `structure_projection.json` |
+| `-o, --outdir` | Output directory for rendered images |
 
 ### Optional Arguments
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `-r, --reference` | None | Reference scaffold to align to |
-| `-o, --outdir` | None | Output directory |
-| `--groups` | -1 | Group indices (0-indexed) to plot. `-1` plots all groups |
-| `--features` | None | Path to JSON file with annotations to include |
-| `--multisector` | off | Plot sectors simultaneously on the same protein |
-| `--views` | off | Save rotated views of the structure |
-| `--animate` | off | Generate animation (GIF) |
-| `--nframes` | None | Number of frames for animation |
-| `--duration` | None | Duration in seconds for animation |
-| `--show_molybdenum` | off | Show molybdenum atoms |
+| `--structure_id` | None | Specific `structure_id` to render when the json has more than one entry. Default: render every entry |
+| `-r, --reference` | None | Another `structure_id` from the same json to align the target against via `cmd.align` |
+| `--groups` | all | IC group indices (0-based) to render. Default: every group present in the projection |
+| `--multisector` | off | Render all selected groups on a single frame per structure instead of one frame per group |
+| `--features_py` | None | Path to a user Python file supplying protein-specific annotation functions |
+| `--features` | None | Comma-separated names of callables in `--features_py` to invoke per render pass. Requires `--features_py` |
+| `--views` | off | Save four rotated side views per frame under `outdir/views/` |
+| `--animate` | off | Save a rotating GIF per frame under `outdir/` |
+| `--nframes` | 24 | Animation frame count (only used with `--animate`) |
+| `--duration` | 2.4 | Animation duration in seconds (only used with `--animate`) |
 | `-v, --verbosity` | 1 | Verbosity level |
+
+### Output
+
+Writes to the specified output directory:
+
+- `<structure_id>_group<N>.png` — one PNG per (structure, IC group) pair under the default rendering mode
+- `<structure_id>_groups_<idxs>.png` — one PNG per structure under `--multisector`
+- `views/` — four rotated views per frame when `--views` is passed
+- `frames/<structure_id>_group<N>_frames/` — raw frames for animations
+- `<structure_id>_group<N>.gif` — rotating animation when `--animate` is passed
+- `pymol.log` — run log
+
+### Features plugin
+
+Protein-specific annotations are supplied by a user Python file. Each
+function must match this signature:
+
+```python
+def feature_fn(struct, cmd, *, color=None, context=None) -> None:
+    ...
+```
+
+- `struct` — PyMOL object name (always `"struct"` in the current implementation).
+- `cmd` — PyMOL's `cmd` module, injected so the file does not need `from pymol import cmd`.
+- `color` — optional per-feature color (currently always `None`; plumbed for a future flag).
+- `context` — dict with `projection`, `scaffold`, `group_idx`, `outdir`. Read `projection["chain_id"]`, `projection["ic_pdb_residues"]`, `projection["pdb_path"]`, etc. as needed.
+
+Ship-ready example: [`demo/pymol_features/narg_1q16.py`](../demo/pymol_features/narg_1q16.py) ports the previously-hardcoded molybdenum / [4Fe-4S] / MGD cofactor selections for 1Q16 NarG:
+
+```python
+def show_molybdenum(struct, cmd, *, color=None, context=None):
+    cmd.select("mo", f"{struct}/F/A/6MO`1302/MO")
+    cmd.show("everything", "mo")
+    if isinstance(color, str):
+        cmd.color(color, "mo")
+```
+
+Invoke via:
+
+```bash
+sca-pymol --structure out/structure --structure_id NarG_1Q16 \
+    --features_py demo/pymol_features/narg_1q16.py \
+    --features show_molybdenum,show_sf4_cluster,show_mgd \
+    -o out/pymol
+```
+
+Loader errors surface at CLI startup (before any rendering): missing file → `FileNotFoundError`, missing attribute → `ValueError`, non-callable attribute → `TypeError`.
 
 ---
 

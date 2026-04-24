@@ -6,10 +6,13 @@ Project notes for Claude Code. See [README.md](README.md) for the user-facing in
 
 `mysca` — Statistical Coupling Analysis (SCA) pipeline for identifying co-evolving
 amino acid sectors in protein multiple sequence alignments. Exposes seven CLIs:
-`sca-prealign`, `sca-preprocess`, `sca-core`, `sca-pymol`, `sca-plots` (replay
-plotter that regenerates diagnostic figures from persisted results),
-`sca-project` (project primary-sequence records onto an existing SCA result),
-and `sca-structure` (project PDB structures, composing over `sca-project`).
+`sca-prealign`, `sca-preprocess`, `sca-core`,
+`sca-pymol` (renders sectors from `sca-structure` output; protein-specific
+annotations live in a user `--features_py` Python file),
+`sca-plots` (replay plotter that regenerates diagnostic figures from
+persisted results), `sca-project` (project primary-sequence records onto an
+existing SCA result), and `sca-structure` (project PDB structures, composing
+over `sca-project`).
 
 ## Layout
 
