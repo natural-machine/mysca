@@ -155,6 +155,25 @@ def test_get_rawseq_indices_of_msa(
     assert not errors, "Errors occurred:\n{}".format("\n".join(errors))
 
 
+def test_get_rawseq_indices_of_msa_treats_dot_as_gap():
+    """Defensive: `.` is the Stockholm insert-column gap. Biopython
+    normalizes it on read, so msa_obj_orig never contains `.` in
+    practice — but a hand-crafted MSA fed directly to this helper
+    must still get correct raw-residue indexing."""
+    msa_obj = msa_from_aligned_seqs([
+        "A.C-DE",
+        "AC-.EF",
+    ])
+    arr = get_rawseq_indices_of_msa(msa_obj)
+    expected = np.array([
+        [0, -1,  1, -1,  2, 3],  # A.C-DE : non-gap residues count {A,C,D,E}
+        [0,  1, -1, -1,  2, 3],  # AC-.EF : non-gap residues count {A,C,E,F}
+    ])
+    assert np.array_equal(arr, expected), (
+        f"`.` should be treated as a gap.\nExpected:\n{expected}\nGot:\n{arr}"
+    )
+
+
 @pytest.mark.parametrize(
         "seqs_aligned, retained_sequences, " \
         "conserved_msa_positions, conserved_rawseq_idxs_exp", [

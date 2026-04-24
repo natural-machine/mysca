@@ -48,6 +48,22 @@ def capture_run_sca_logs():
         target.setLevel(old_level)
 
 
+def _processed_line(msgs):
+    return next(m for m in msgs if "processed:" in m and "unprocessed" not in m)
+
+
+def _unprocessed_line(msgs):
+    return next(m for m in msgs if "unprocessed:" in m)
+
+
+def _reference_pos_line(msgs):
+    return next(m for m in msgs if "reference pos:" in m)
+
+
+def _reference_res_line(msgs):
+    return next(m for m in msgs if "reference res:" in m)
+
+
 def test_log_top_ic_summary_basic_marker_and_positions(capture_run_sca_logs):
     """With kstar=2, ICs 0-1 are `*`, ICs 2+ are `-`."""
     groups = [
@@ -71,26 +87,35 @@ def test_log_top_ic_summary_basic_marker_and_positions(capture_run_sca_logs):
     msgs = [r.getMessage() for r in capture_run_sca_logs]
     header = next(m for m in msgs if m.startswith("Top "))
     assert "3/3 ICs" in header
+    # Without a reference, header should not echo one.
+    assert "reference=" not in header
 
     ic_lines = [m for m in msgs if m.startswith("IC ")]
     assert ic_lines[0].startswith("IC 0: * ")
     assert "λ_0=1.5" in ic_lines[0]
-    assert "MSA positions: [0, 1]" in ic_lines[0]
+    assert "(2 positions)" in ic_lines[0]
     assert ic_lines[1].startswith("IC 1: * ")
-    assert ic_lines[2].startswith("IC 2: - ")   # below kstar
+    assert "(1 positions)" in ic_lines[1]
+    assert ic_lines[2].startswith("IC 2: - ")  # below kstar
 
-    # Unprocessed mapping reflects retained_positions indexing.
-    unproc_lines = [m for m in msgs if "(unprocessed)" in m]
-    assert "[10, 12]" in unproc_lines[0]  # IC 0: positions [0,1] → [10,12]
-    assert "[14]" in unproc_lines[1]
-    assert "[12, 16]" in unproc_lines[2]
+    # Three ICs × two indented lines (processed, unprocessed) = 6 lines.
+    processed_lines = [m for m in msgs if "processed:" in m and "unprocessed" not in m]
+    unprocessed_lines = [m for m in msgs if "unprocessed:" in m]
+    assert len(processed_lines) == 3
+    assert len(unprocessed_lines) == 3
 
-    # No reference requested → no "(reference)" line.
-    assert not any("(reference)" in m for m in msgs)
+    # IC 0 processed=[0, 1]; unprocessed = retained_positions[[0,1]] = [10,12].
+    assert processed_lines[0].endswith("[0, 1]")
+    assert unprocessed_lines[0].endswith("[10, 12]")
+    assert unprocessed_lines[1].endswith("[14]")
+    assert unprocessed_lines[2].endswith("[12, 16]")
+
+    # No reference requested → no reference lines.
+    assert not any("reference" in m for m in msgs if m.startswith("    "))
 
 
 def test_log_top_ic_summary_reference_mapping(capture_run_sca_logs):
-    """Reference residue indices respect gap columns (mapped to '-')."""
+    """Reference residue indices and letters respect gap columns."""
     # MSA columns:    0=A  1=-  2=C  3=D  4=E
     # Reference seq has A,-,C,D,E → raw indices 0,-1,1,2,3
     msa = _msa([
@@ -108,10 +133,14 @@ def test_log_top_ic_summary_reference_mapping(capture_run_sca_logs):
         n_logged_comps=5,
     )
     msgs = [r.getMessage() for r in capture_run_sca_logs]
-    ref_lines = [m for m in msgs if "(reference)" in m]
-    assert len(ref_lines) == 1
-    # Column 0 → raw idx 0; Column 1 is a gap → '-'; Column 2 → raw idx 1
-    assert ref_lines[0] == "  -> (reference) [0, '-', 1]"
+    header = next(m for m in msgs if m.startswith("Top "))
+    assert "reference=ref" in header
+
+    # Column 0 → raw idx 0, residue A
+    # Column 1 is a gap → '-' / '-'
+    # Column 2 → raw idx 1, residue C
+    assert _reference_pos_line(msgs).endswith("[0, -, 1]")
+    assert _reference_res_line(msgs).endswith("[A, -, C]")
 
 
 def test_log_top_ic_summary_with_dropped_cols_and_reference_gap(
@@ -145,10 +174,9 @@ def test_log_top_ic_summary_with_dropped_cols_and_reference_gap(
         n_logged_comps=5,
     )
     msgs = [r.getMessage() for r in capture_run_sca_logs]
-    unproc_line = next(m for m in msgs if "(unprocessed)" in m)
-    ref_line = next(m for m in msgs if "(reference)" in m)
-    assert "[0, 2, 3, 5]" in unproc_line
-    assert ref_line == "  -> (reference) [0, '-', 2, 4]"
+    assert _unprocessed_line(msgs).endswith("[0, 2, 3, 5]")
+    assert _reference_pos_line(msgs).endswith("[0, -, 2, 4]")
+    assert _reference_res_line(msgs).endswith("[A, -, D, F]")
 
 
 def test_log_top_ic_summary_respects_n_logged_comps(capture_run_sca_logs):

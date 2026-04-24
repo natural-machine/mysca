@@ -40,7 +40,11 @@ from mysca.run_preprocessing import (
     parse_args as prep_parse_args,
     main as prep_main,
 )
-from mysca.run_sca import parse_args as sca_parse_args, main as sca_main
+from mysca.run_sca import (
+    parse_args as sca_parse_args,
+    main as sca_main,
+    log_top_ic_summary,
+)
 from mysca.structure import PDBStructure, project_pdb, project_groups_to_pdb
 
 
@@ -565,4 +569,178 @@ def test_structure_ic_pdb_residues_query_with_gap_at_ic_position(
     assert got[2] == [], (
         "query_shorter_than_proc has a gap at proc col 6; IC 2 "
         "should not contain any PDB residue."
+    )
+
+
+# ---------------------------------------------------------------------- #
+# log_top_ic_summary against the synthetic fixture + hand-crafted groups.
+# Asserts the log's processed → unprocessed → reference-pos → reference-
+# res chain on both a clade-A reference (where the reference has gaps at
+# the dropped columns — a chance for the "-" rendering to misalign) and
+# a clade-B reference (no gaps in the reference, straightforward case).
+# ---------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def capture_run_sca_logs():
+    import logging
+    target = logging.getLogger("mysca.run_sca")
+    records = []
+
+    class _Collector(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    handler = _Collector(level=logging.DEBUG)
+    old_level = target.level
+    target.addHandler(handler)
+    target.setLevel(logging.DEBUG)
+    try:
+        yield records
+    finally:
+        target.removeHandler(handler)
+        target.setLevel(old_level)
+
+
+def test_log_top_ic_summary_synthetic_clade_B_reference(
+        prep_and_sca_dirs, expected, capture_run_sca_logs,
+):
+    """Clade-B reference (raw=ACTDEVFGWI, no gaps) means every
+    unprocessed col dereferences directly to a residue. Use the hand-
+    crafted groups (which are known to land each clade-B residue at a
+    deterministic raw index) so the reference lines are fully
+    predictable."""
+    prep_dir, _ = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    synth_groups = [
+        np.asarray(g, dtype=int)
+        for g in expected["synthetic_ic_groups"]["groups"]
+    ]
+
+    log_top_ic_summary(
+        synth_groups,
+        kstar=2,
+        evals_sca=np.array([2.5, 1.7, 0.4]),
+        retained_positions=prep.retained_positions,
+        msa_obj_orig=prep.msa_obj_orig,
+        reference_id="synth_clade_B_0",
+        n_logged_comps=10,
+    )
+    msgs = [r.getMessage() for r in capture_run_sca_logs]
+
+    header = next(m for m in msgs if m.startswith("Top "))
+    assert "reference=synth_clade_B_0" in header
+    assert "3/3 ICs" in header
+
+    # Expected from expected.json's index tables for synth_clade_B_0:
+    #   proc [0,1,4] -> unproc [0,1,6]  -> ref_pos [0,1,6]  -> res [A,C,F]
+    #   proc [2,3,5] -> unproc [3,4,7]  -> ref_pos [3,4,7]  -> res [D,E,G]
+    #   proc [6]     -> unproc [9]      -> ref_pos [9]      -> res [I]
+    expected_chain = [
+        ("[0, 1, 4]", "[0, 1, 6]", "[0, 1, 6]", "[A, C, F]"),
+        ("[2, 3, 5]", "[3, 4, 7]", "[3, 4, 7]", "[D, E, G]"),
+        ("[6]",       "[9]",       "[9]",       "[I]"),
+    ]
+    proc_lines = [m for m in msgs if "processed:" in m and "unprocessed" not in m]
+    unproc_lines = [m for m in msgs if "unprocessed:" in m]
+    ref_pos_lines = [m for m in msgs if "reference pos:" in m]
+    ref_res_lines = [m for m in msgs if "reference res:" in m]
+    assert len(proc_lines) == len(unproc_lines) == 3
+    assert len(ref_pos_lines) == len(ref_res_lines) == 3
+
+    for ic, (p, u, rp, rr) in enumerate(expected_chain):
+        assert proc_lines[ic].endswith(p), f"IC {ic} processed: {proc_lines[ic]!r}"
+        assert unproc_lines[ic].endswith(u), f"IC {ic} unproc: {unproc_lines[ic]!r}"
+        assert ref_pos_lines[ic].endswith(rp), f"IC {ic} ref pos: {ref_pos_lines[ic]!r}"
+        assert ref_res_lines[ic].endswith(rr), f"IC {ic} ref res: {ref_res_lines[ic]!r}"
+
+
+def test_log_top_ic_summary_synthetic_clade_A_reference(
+        prep_and_sca_dirs, expected, capture_run_sca_logs,
+):
+    """Clade-A reference (aligned=AC-DE-FG-I) has gaps at the dropped
+    original columns — but those columns don't appear in any
+    ``unprocessed`` list (because they're not in retained_positions),
+    so the reference lines here are gap-free. The interesting thing is
+    that the reference's raw indices compact over the real residues
+    only."""
+    prep_dir, _ = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    synth_groups = [
+        np.asarray(g, dtype=int)
+        for g in expected["synthetic_ic_groups"]["groups"]
+    ]
+
+    log_top_ic_summary(
+        synth_groups,
+        kstar=3,
+        evals_sca=np.array([1.0, 0.6, 0.2]),
+        retained_positions=prep.retained_positions,
+        msa_obj_orig=prep.msa_obj_orig,
+        reference_id="synth_clade_A_0",
+        n_logged_comps=10,
+    )
+    msgs = [r.getMessage() for r in capture_run_sca_logs]
+
+    header = next(m for m in msgs if m.startswith("Top "))
+    assert "reference=synth_clade_A_0" in header
+
+    # Clade A reference has raw sequence ACDEFGI (7 residues). Its
+    # raw-residue index per ORIGINAL MSA column:
+    #   col 0='A' → 0;  col 1='C' → 1;  col 2='-' → gap;
+    #   col 3='D' → 2;  col 4='E' → 3;  col 5='-' → gap;
+    #   col 6='F' → 4;  col 7='G' → 5;  col 8='-' → gap;
+    #   col 9='I' → 6.
+    # Since retained_positions excludes cols 2,5,8, no ref gaps appear.
+    expected_chain = [
+        # proc [0,1,4] → unproc [0,1,6] → ref_pos [0,1,4] → res [A,C,F]
+        ("[0, 1, 4]", "[0, 1, 6]", "[0, 1, 4]", "[A, C, F]"),
+        # proc [2,3,5] → unproc [3,4,7] → ref_pos [2,3,5] → res [D,E,G]
+        ("[2, 3, 5]", "[3, 4, 7]", "[2, 3, 5]", "[D, E, G]"),
+        # proc [6] → unproc [9] → ref_pos [6] → res [I]
+        ("[6]",       "[9]",       "[6]",       "[I]"),
+    ]
+    proc_lines = [m for m in msgs if "processed:" in m and "unprocessed" not in m]
+    unproc_lines = [m for m in msgs if "unprocessed:" in m]
+    ref_pos_lines = [m for m in msgs if "reference pos:" in m]
+    ref_res_lines = [m for m in msgs if "reference res:" in m]
+    for ic, (p, u, rp, rr) in enumerate(expected_chain):
+        assert proc_lines[ic].endswith(p)
+        assert unproc_lines[ic].endswith(u)
+        assert ref_pos_lines[ic].endswith(rp)
+        assert ref_res_lines[ic].endswith(rr)
+
+
+def test_log_top_ic_summary_synthetic_log_alignment(
+        prep_and_sca_dirs, expected, capture_run_sca_logs,
+):
+    """Alignment sanity: the four indented labels must start at the
+    same column, and all four data lists must also start at the same
+    column. Otherwise the log is hard to eyeball."""
+    prep_dir, _ = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    synth_groups = [
+        np.asarray(g, dtype=int)
+        for g in expected["synthetic_ic_groups"]["groups"]
+    ]
+
+    log_top_ic_summary(
+        synth_groups,
+        kstar=2,
+        evals_sca=np.array([2.5, 1.7, 0.4]),
+        retained_positions=prep.retained_positions,
+        msa_obj_orig=prep.msa_obj_orig,
+        reference_id="synth_clade_B_0",
+        n_logged_comps=1,  # just IC 0 is enough for the alignment check
+    )
+    msgs = [r.getMessage() for r in capture_run_sca_logs]
+    indented = [m for m in msgs if m.startswith("    ")]
+    # Expect processed, unprocessed, reference pos, reference res for IC 0.
+    assert len(indented) == 4
+
+    # Every indented line should have the data-list '[' at the same column.
+    bracket_cols = [m.index("[") for m in indented]
+    assert len(set(bracket_cols)) == 1, (
+        f"Label column misaligned across indented lines: "
+        f"{list(zip(bracket_cols, indented))}"
     )

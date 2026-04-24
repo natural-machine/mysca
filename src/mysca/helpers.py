@@ -72,25 +72,34 @@ def map_msa_positions_to_sequence(
 
 def get_rawseq_indices_of_msa(
         msa_obj: MultipleSeqAlignment,
-        gapstr: str = "-",
+        gapstr: str = "-.",
 ) -> NDArray[np.int_]:
     """Get indices of non-gap positions with respect to the raw sequence.
 
     Args:
         msa_obj (MultipleSeqAlignment): MSA object.
-        gapstr (str, optional): Gap string character. Defaults to "-".
+        gapstr (str, optional): String of characters treated as gaps.
+            Defaults to ``"-."``: ``-`` is the universal gap symbol;
+            ``.`` is the Stockholm insert-column gap convention. Our
+            pipeline normalizes Stockholm ``.`` to ``-`` at read time,
+            but this helper is defensive so a hand-crafted MSA that
+            leaks ``.`` through a library caller doesn't silently get
+            counted as a residue.
 
     Returns:
-        NDArray[np.int_]: Screen of the msa with -1 at gaps and positional 
+        NDArray[np.int_]: Screen of the msa with -1 at gaps and positional
             indices at amino acids. Same shape as the MultipleSeqAlignment.
     """
+    gap_chars = frozenset(gapstr)
     nseqs = len(msa_obj)
     npos = len(msa_obj[0].seq)
     rawseq_idxs = -1 * np.ones([nseqs, npos], dtype=int)
     for i, entry in enumerate(msa_obj):
         aln_seq = entry.seq
-        aa_screen = np.array([c != gapstr for c in aln_seq], dtype=bool)
-        rawseq_idxs[i,aa_screen] = np.arange(aa_screen.sum())
+        aa_screen = np.array(
+            [c not in gap_chars for c in aln_seq], dtype=bool,
+        )
+        rawseq_idxs[i, aa_screen] = np.arange(aa_screen.sum())
     return rawseq_idxs
 
 

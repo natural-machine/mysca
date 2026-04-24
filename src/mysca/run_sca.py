@@ -727,38 +727,62 @@ def apply_ica(
     return v_ica_normalized, v_ica, w_ica
 
 
+_IC_LABEL_WIDTH = 15  # aligns "processed:" / "unprocessed:" / "reference ..."
+
+
+def _format_list(values):
+    """Render a homogeneous list to ``[a, b, c]`` without Python's
+    default-repr quoting of strings (so gap-representing ``"-"`` and
+    residue letters print bare)."""
+    return "[" + ", ".join(str(v) for v in values) + "]"
+
+
 def log_top_ic_summary(
         groups, kstar, evals_sca, retained_positions,
         msa_obj_orig, reference_id, *, n_logged_comps=10,
 ):
     """Write a human-readable summary of the top-N ICs to the module logger.
 
-    Each IC's line shows a significance marker (``*`` if the IC index is
-    below ``kstar``, ``-`` otherwise), the associated eigenvalue, a count
-    of processed MSA positions that were assigned to the IC, the processed
-    MSA indices, the corresponding unprocessed (pre-filter) indices, and —
-    when a reference sequence is available in ``msa_obj_orig`` — the
-    residue indices in that reference's raw (un-gapped) sequence (with
-    ``"-"`` where the reference has a gap at the MSA column).
+    Each IC gets a header line (significance marker + eigenvalue +
+    position count) and a multi-line, left-aligned block showing:
+
+    - ``processed``: positions in the *processed* (post-filter) MSA.
+    - ``unprocessed``: same positions in the *original* (pre-filter)
+      MSA, via ``retained_positions``.
+    - ``reference pos``: residue indices in the reference's raw
+      (ungapped) sequence at each unprocessed position, with ``"-"``
+      where the reference has a gap.
+    - ``reference res``: residue letters at each reference position
+      (``"-"`` for gaps), useful for identifying the actual amino
+      acids involved without cross-referencing the MSA.
+
+    The reference block is only emitted when ``reference_id`` resolves
+    to a row in ``msa_obj_orig``; the header echoes the chosen
+    reference so downstream readers aren't guessing.
 
     No-op when ``n_logged_comps <= 0`` or ``groups`` is empty.
     """
     if n_logged_comps <= 0 or not groups:
         return
 
+    aligned_ref = None
     ref_raw_positions = None
     if reference_id is not None:
         ids = [rec.id for rec in msa_obj_orig]
         if reference_id in ids:
             ref_row = ids.index(reference_id)
+            aligned_ref = str(msa_obj_orig[ref_row].seq)
             all_raw = get_rawseq_indices_of_msa(msa_obj_orig)
             ref_raw_positions = all_raw[ref_row]  # shape (npos_orig,)
 
     n_show = min(n_logged_comps, len(groups))
+    header_tag = (
+        f"reference={reference_id}; " if aligned_ref is not None else ""
+    )
     logger.info(
-        "Top %d/%d ICs (marker: * significant, - not; λ_i is the i-th "
-        "sorted SCA eigenvalue):",
-        n_show, len(groups),
+        "Top %d/%d ICs (%s* significant, - not). "
+        "λ_i = i-th sorted SCA eigenvalue.",
+        n_show, len(groups), header_tag,
     )
     for i in range(n_show):
         g = groups[i]
@@ -766,18 +790,34 @@ def log_top_ic_summary(
         eigval = float(evals_sca[i]) if i < len(evals_sca) else float("nan")
         processed = [int(x) for x in g]
         unprocessed = [int(retained_positions[x]) for x in g]
+
         logger.info(
-            "IC %d: %s λ_%d=%.4g | %d (processed) MSA positions: %s",
-            i, marker, i, eigval, len(g), processed,
+            "IC %d: %s λ_%d=%.4g  (%d positions)",
+            i, marker, i, eigval, len(g),
         )
-        logger.info("  -> (unprocessed) %s", unprocessed)
-        if ref_raw_positions is not None:
+        logger.info(
+            "    %-*s%s",
+            _IC_LABEL_WIDTH, "processed:", _format_list(processed),
+        )
+        logger.info(
+            "    %-*s%s",
+            _IC_LABEL_WIDTH, "unprocessed:", _format_list(unprocessed),
+        )
+        if aligned_ref is not None:
             ref_positions = [
                 int(ref_raw_positions[mp]) if ref_raw_positions[mp] >= 0
                 else "-"
                 for mp in unprocessed
             ]
-            logger.info("  -> (reference) %s", ref_positions)
+            ref_residues = [aligned_ref[mp] for mp in unprocessed]
+            logger.info(
+                "    %-*s%s",
+                _IC_LABEL_WIDTH, "reference pos:", _format_list(ref_positions),
+            )
+            logger.info(
+                "    %-*s%s",
+                _IC_LABEL_WIDTH, "reference res:", _format_list(ref_residues),
+            )
 
 
 def _safe_concat_int(arrays):
