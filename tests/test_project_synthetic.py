@@ -18,6 +18,9 @@ Scope:
   and a query
 - `project_groups_to_pdb` raises when the query-longer-than-L_orig
   PDB (length 12) is projected (post-alignment raw is length 10)
+- synthetic IC groups injected into the sca_dir exercise the
+  "each residue lands in the correct IC, or drops out when the
+  sequence has a gap at that MSA position" guarantee.
 """
 
 import json
@@ -31,7 +34,7 @@ from tests.conftest import DATDIR
 from tests.test_structure import _write_minimal_pdb  # fixture helper
 
 from mysca.project import project_sequences
-from mysca.project.projection import _residue_indices_for_aligned
+from mysca.project.projection import _gapless, _residue_indices_for_aligned
 from mysca.results import PreprocessingResults, SCAResults
 from mysca.run_preprocessing import (
     parse_args as prep_parse_args,
@@ -180,7 +183,7 @@ def test_queries_out_of_sample_mappings(prep_and_sca_dirs, expected, aligner):
             )
         # Raw/aligned invariant — same test as test_project.py but
         # exercised across every length regime here.
-        assert proj.raw_sequence == proj.aligned_sequence.replace("-", ""), (
+        assert proj.raw_sequence == _gapless(proj.aligned_sequence), (
             f"{q_id} [{aligner}] invariant violated"
         )
 
@@ -351,3 +354,215 @@ def test_structure_projection_query_longer_than_orig_raises(
             preproc_result_dir=prep_dir,
             seq_id=q_id,
         )
+
+
+# ---------------------------------------------------------------------- #
+# Gap-character handling: both `-` and `.` are recognized as gaps.       #
+# ---------------------------------------------------------------------- #
+
+
+def test_gap_chars_include_dot():
+    """`.` is the Stockholm insert-column gap symbol. Our pipeline
+    normalizes it away in practice (Biopython normalizes Stockholm `.`
+    to `-` on read; _hmmalign strips `.` during insert-column
+    filtering), but defend against it leaking through: both `_gapless`
+    and `_residue_indices_for_aligned` must treat `.` as a gap."""
+    # Hand-crafted aligned row mixing both gap conventions.
+    aligned = "A.C-DE.F-G"
+    assert _gapless(aligned) == "ACDEFG"
+    # Residue indices: A=0 at col 0, C=1 at col 2, D=2 at col 4,
+    # E=3 at col 5, F=4 at col 7, G=5 at col 9; everything else -1.
+    expected = [0, -1, 1, -1, 2, 3, -1, 4, -1, 5]
+    got = _residue_indices_for_aligned(aligned).tolist()
+    assert got == expected, (
+        f"`.` should be treated as a gap in residue indexing.\n"
+        f"  aligned:  {aligned!r}\n"
+        f"  expected: {expected}\n"
+        f"  got:      {got}"
+    )
+
+
+# ---------------------------------------------------------------------- #
+# Artificial IC assignment: overwrite the sca_dir's groups with hand-   #
+# crafted processed-MSA positions and verify that each sequence/PDB's   #
+# residues land in the intended IC (or drop out when the sequence has   #
+# a gap at the IC's processed column).                                  #
+# ---------------------------------------------------------------------- #
+
+
+def _inject_synthetic_groups(sca_dir, groups):
+    """Overwrite the group files SCAResults.load() reads with the given
+    hand-crafted groups (list of lists of processed-MSA col indices).
+    Also clears the paired scores files so group_scores loads as None
+    (projection doesn't use scores, but mismatched lengths would be
+    misleading)."""
+    sector_dir = os.path.join(sca_dir, "sca_results", "msa_sectors")
+    groups_dir = os.path.join(sca_dir, "groups")
+    for d in (sector_dir, groups_dir):
+        if os.path.isdir(d):
+            for fn in os.listdir(d):
+                fp = os.path.join(d, fn)
+                if fn.startswith(("sector_", "group_")):
+                    os.remove(fp)
+    os.makedirs(sector_dir, exist_ok=True)
+    os.makedirs(groups_dir, exist_ok=True)
+    for i, g in enumerate(groups):
+        arr = np.asarray(g, dtype=int)
+        np.save(os.path.join(sector_dir, f"sector_{i}_msapos.npy"), arr)
+        np.save(os.path.join(groups_dir, f"group_{i}_msapos.npy"), arr)
+
+
+@pytest.fixture(scope="module")
+def sca_dir_with_synthetic_groups(prep_and_sca_dirs, expected, tmp_path_factory):
+    """Copy the shared sca_dir to a fresh path, overwrite its groups
+    with the hand-crafted ones from expected.json."""
+    _, src_sca = prep_and_sca_dirs
+    dest = str(tmp_path_factory.mktemp("synth_sca_hand_groups"))
+    # Copy contents of src_sca into dest (dest exists, so use copytree
+    # with dirs_exist_ok).
+    shutil.copytree(src_sca, dest, dirs_exist_ok=True)
+    synth_groups = expected["synthetic_ic_groups"]["groups"]
+    _inject_synthetic_groups(dest, synth_groups)
+    return dest
+
+
+def test_injected_groups_roundtrip(sca_dir_with_synthetic_groups, expected):
+    """Sanity: SCAResults.load() picks up exactly the hand-crafted
+    groups we wrote, in order."""
+    sca = SCAResults.load(sca_dir_with_synthetic_groups)
+    assert sca.groups is not None
+    got = [g.tolist() for g in sca.groups]
+    assert got == expected["synthetic_ic_groups"]["groups"]
+
+
+def test_training_ic_memberships_against_synthetic_groups(
+        prep_and_sca_dirs, sca_dir_with_synthetic_groups, expected, tmp_path,
+):
+    """Every training sequence, projected in-sample through the
+    hand-crafted groups, should land each residue in the expected IC."""
+    prep_dir, _ = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    expected_map = expected["expected_ic_memberships"]
+
+    in_fasta = tmp_path / "training_for_ic_test.fasta"
+    with open(in_fasta, "w") as f:
+        for rec in prep.msa_obj_orig:
+            raw = str(rec.seq).replace("-", "")
+            f.write(f">{rec.id}\n{raw}\n")
+
+    result = project_sequences(
+        str(in_fasta),
+        sca_result_dir=sca_dir_with_synthetic_groups,
+        preproc_result_dir=prep_dir,
+    )
+    for proj in result.projections:
+        assert proj.seq_id in expected_map
+        exp = expected_map[proj.seq_id]
+        got = [m.tolist() for m in proj.ic_memberships]
+        assert got == exp, (
+            f"{proj.seq_id} ic_memberships mismatch:\n"
+            f"  expected: {exp}\n"
+            f"  got:      {got}"
+        )
+
+
+@pytest.mark.parametrize("aligner", [
+    pytest.param("mafft_add", marks=needs_mafft),
+    pytest.param("hmmalign", marks=needs_hmmer),
+])
+def test_query_ic_memberships_against_synthetic_groups(
+        prep_and_sca_dirs, sca_dir_with_synthetic_groups, expected, aligner,
+):
+    """Every query, projected out-of-sample, should land each residue
+    in the expected IC. query_shorter_than_proc specifically produces
+    an empty IC 2 because proc col 6 is a gap for that query."""
+    prep_dir, _ = prep_and_sca_dirs
+    expected_map = expected["expected_ic_memberships"]
+    result = project_sequences(
+        QUERIES_FPATH,
+        sca_result_dir=sca_dir_with_synthetic_groups,
+        preproc_result_dir=prep_dir,
+        aligner=aligner,
+    )
+    for proj in result.projections:
+        exp = expected_map[proj.seq_id]
+        got = [m.tolist() for m in proj.ic_memberships]
+        assert got == exp, (
+            f"[{aligner}] {proj.seq_id} ic_memberships mismatch:\n"
+            f"  expected: {exp}\n"
+            f"  got:      {got}"
+        )
+    # Spot check the "IC 2 empty because of gap" case directly.
+    short = next(
+        p for p in result.projections if p.seq_id == "query_shorter_than_proc"
+    )
+    assert short.ic_memberships[2].size == 0, (
+        f"[{aligner}] query_shorter_than_proc IC 2 should be empty "
+        f"(proc col 6 is a gap for this query); got "
+        f"{short.ic_memberships[2].tolist()}"
+    )
+
+
+def test_structure_ic_pdb_residues_against_synthetic_groups(
+        prep_and_sca_dirs, sca_dir_with_synthetic_groups, expected, tmp_path,
+):
+    """Structure projection: for a clade B training sequence with PDB
+    residues 50..59, each IC's ic_pdb_residues should be the PDB
+    residue numbers corresponding to the ic_memberships raw indices."""
+    prep_dir, _ = prep_and_sca_dirs
+    seq_id = "synth_clade_B_0"
+    raw = expected["training"][seq_id]["raw_sequence"]
+    pdb_path, residue_numbers = _pdb_from_fixture(
+        seq_id, raw, expected, tmp_path,
+    )
+    pdb = PDBStructure.from_file(pdb_path)
+
+    proj = project_pdb(
+        pdb,
+        sca_result_dir=sca_dir_with_synthetic_groups,
+        preproc_result_dir=prep_dir,
+        seq_id=seq_id,
+    )
+    expected_raw = expected["expected_ic_memberships"][seq_id]
+    expected_pdb = [
+        [residue_numbers[r] for r in ic_members] for ic_members in expected_raw
+    ]
+    got_pdb = [list(xs) for xs in proj.ic_pdb_residues]
+    assert got_pdb == expected_pdb, (
+        f"{seq_id} ic_pdb_residues mismatch:\n"
+        f"  expected: {expected_pdb}\n"
+        f"  got:      {got_pdb}"
+    )
+
+
+@needs_mafft
+def test_structure_ic_pdb_residues_query_with_gap_at_ic_position(
+        prep_and_sca_dirs, sca_dir_with_synthetic_groups, expected, tmp_path,
+):
+    """The short query has a gap at proc col 6 (IC 2's only column),
+    so its PDB has NO residue in IC 2 — ic_pdb_residues[2] must be
+    empty even though ic_pdb_residues[0] and [1] have residues."""
+    prep_dir, _ = prep_and_sca_dirs
+    seq_id = "query_shorter_than_proc"
+    raw = expected["queries"][seq_id]["raw_sequence"]
+    pdb_path, residue_numbers = _pdb_from_fixture(
+        seq_id, raw, expected, tmp_path,
+    )
+    pdb = PDBStructure.from_file(pdb_path)
+
+    proj = project_pdb(
+        pdb,
+        sca_result_dir=sca_dir_with_synthetic_groups,
+        preproc_result_dir=prep_dir,
+        seq_id=seq_id,
+    )
+    exp_raw = expected["expected_ic_memberships"][seq_id]
+    exp_pdb = [
+        [residue_numbers[r] for r in ic_members] for ic_members in exp_raw
+    ]
+    got = [list(xs) for xs in proj.ic_pdb_residues]
+    assert got == exp_pdb
+    assert got[2] == [], (
+        "query_shorter_than_proc has a gap at proc col 6; IC 2 "
+        "should not contain any PDB residue."
+    )

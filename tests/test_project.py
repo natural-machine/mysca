@@ -34,6 +34,7 @@ from mysca.project import (
     SequenceProjection,
 )
 from mysca.project.alignment import _hmmalign
+from mysca.project.projection import _gapless, _residue_indices_for_aligned
 from mysca.results import PreprocessingResults, SCAResults
 from mysca.run_preprocessing import (
     parse_args as prep_parse_args,
@@ -319,9 +320,10 @@ def test_sca_project_cli_writes_expected_artifacts(prep_and_sca_dirs, tmp_path):
 
 
 def _assert_raw_matches_aligned_gapless(proj):
-    gapless = proj.aligned_sequence.replace("-", "")
+    gapless = _gapless(proj.aligned_sequence)
     assert proj.raw_sequence == gapless, (
-        f"raw_sequence must equal aligned_sequence.replace('-', '').\n"
+        f"raw_sequence must equal _gapless(aligned_sequence) (strips "
+        f"both '-' and '.').\n"
         f"  raw:     {proj.raw_sequence!r}\n"
         f"  aligned: {proj.aligned_sequence!r}\n"
         f"  gapless: {gapless!r}"

@@ -180,17 +180,32 @@ class ProjectionResult:
         raise KeyError(f"seq_id {seq_id!r} not found in projections")
 
 
-def _residue_indices_for_aligned(aligned_seq: str, gapsym: str = "-") -> np.ndarray:
+# Gap chars recognized in an aligned sequence. `-` is the universal gap
+# character; `.` is the Stockholm convention for insert-column gaps. Our
+# pipeline never produces `.` internally (Biopython normalizes Stockholm
+# `.` to `-` on parse, and `_hmmalign` strips `.` during insert-column
+# filtering), but we treat both defensively so a hand-crafted MSA that
+# leaks `.` through an out-of-band path doesn't silently get counted as
+# a residue.
+_GAP_CHARS = frozenset("-.")
+
+
+def _gapless(aligned_seq: str) -> str:
+    """Strip every recognized gap char from an aligned sequence."""
+    return "".join(c for c in aligned_seq if c not in _GAP_CHARS)
+
+
+def _residue_indices_for_aligned(aligned_seq: str) -> np.ndarray:
     """Raw-residue-index array for one aligned sequence (length = len(aligned_seq)).
 
     Entry j is the 0-based residue index at aligned column j, or -1 if
-    that column is a gap. Mirrors ``get_rawseq_indices_of_msa`` for a
-    single sequence.
+    that column is a gap (either ``-`` or ``.``). Mirrors
+    ``get_rawseq_indices_of_msa`` for a single sequence.
     """
     out = np.full(len(aligned_seq), -1, dtype=int)
     idx = 0
     for j, ch in enumerate(aligned_seq):
-        if ch == gapsym:
+        if ch in _GAP_CHARS:
             continue
         out[j] = idx
         idx += 1
@@ -275,7 +290,7 @@ def project_sequences(
         if not is_in_sample:
             # Feed the raw (ungapped) sequence to the aligner, not the
             # input FASTA line, since the aligner expects ungapped input.
-            raw = str(rec.seq).replace("-", "")
+            raw = _gapless(str(rec.seq))
             needs_align.append(SeqRecord(Seq(raw), id=rec.id, description=""))
 
     # Out-of-sample alignment (if any).
@@ -310,7 +325,7 @@ def project_sequences(
                 aligned_seq = str(
                     msa_obj_orig[ids_in_msa[rec.id]].seq
                 )
-                raw = aligned_seq.replace("-", "")
+                raw = _gapless(aligned_seq)
             else:
                 aligned_seq = aligned_by_id.get(rec.id)
                 if aligned_seq is None:
@@ -327,7 +342,7 @@ def project_sequences(
                 # aligned_seq, so raw_sequence must do the same for
                 # `raw_sequence[ic_memberships[i]]` to dereference
                 # correctly downstream.
-                raw = aligned_seq.replace("-", "")
+                raw = _gapless(aligned_seq)
             if len(aligned_seq) != L_orig:
                 raise RuntimeError(
                     f"Aligned sequence for {rec.id!r} has length "
