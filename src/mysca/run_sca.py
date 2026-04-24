@@ -1,80 +1,100 @@
 """SCA core pipeline
 
-Runs SCA, given preprocessed data.
-Stores all output in a specified directory.
-See references:
+Runs SCA on preprocessed data: computes the SCA covariance matrix,
+performs its eigendecomposition + bootstrap for significance, runs
+ICA on the top eigenvectors, and assigns positions to IC groups
+(sectors). Reference:
     [1] SI to Rivoire et al., 2016
+
+See `docs/cli_reference.md` for the canonical per-argument table.
 
 -------------------------------------------------------------------------------
 COMMAND LINE ARGUMENTS:
-    -i --indir : Path to preprocessed input data.
-    -o --outdir : Output directory.
-    --regularization : (Default 0.03) SCA regularization parameter λ.
-    -nb --n_boot : (Default 10) Number of bootstrap samples to perform in order
-        to determine the number of statistically significant components. If 0 
-        and `load_data` is specified, will attempt to load existing bootstrap
-        results and use these to determine the significance cutoff. If -1, will 
-        will skip bootstrapping and treat all components as significant.
-    --load_data : (Optional) Path to existing output with SCA results, to load.
-    --sectors_for : (Default None) Which sequences to generate per-sequence
-        sector mappings for. Default: only the reference sequence. Use 'all'
-        for every retained sequence, or provide a path to a text file
-        containing one sequence ID per line.
+
+Required:
+    -i --indir            : sca-preprocess output directory.
+    -o --outdir           : output directory for SCA results.
+
+SCA parameters (see SI of [1]):
+    --regularization λ    : SCA regularization (default 0.03).
+    --background          : optional JSON file of background frequencies
+                            (default: built-in DEFAULT_BACKGROUND_FREQ).
+    -nb --n_boot          : bootstrap iterations used to set the
+                            significance cutoff (default 10). 0 reuses an
+                            existing bootstrap from --load_data; -1 skips
+                            bootstrapping entirely (all evals significant).
+    -k --kstar            : override the bootstrap-derived kstar (0 keeps
+                            the bootstrap estimate).
+    --n_components        : number of ICs to compute (>= kstar). Integer
+                            or "all" (=L, the number of retained
+                            positions). Default: kstar.
+    -p --pstar            : percentile defining the t-distribution cutoff
+                            that nominates positions per IC (default 95).
+    --assignment          : "overlap" (default) keeps a qualifying
+                            position in every IC that nominates it;
+                            "exclusive" assigns only to the IC with the
+                            maximal projection.
+    --weak_assignment     : IC indices to exclude from the
+                            "exclusive" tie-break (ignored otherwise).
+    --n_logged_comps      : top-N ICs to emit in the human-readable
+                            summary log (default 10; 0 disables).
+    --sectors_for         : which sequences get per-sequence sector
+                            mappings. Default: reference only. "all" or a
+                            text file of IDs.
+
+Optional:
+    --seed                : random seed (None or non-positive auto-picks).
+    --load_data           : previous sca-core output directory to reload.
+    --save_all            : also write the large Cijab_raw / fijab arrays.
+    --use_jax             : use JAX in the core computations.
+    --nodendro            : skip the sequence-similarity / dendrogram plots.
+    --sector_cmap         : {"default", "none"} sector palette for the
+                            sector-subset plot.
+    --pbar                : tqdm progress bars for bootstrap iterations.
+    -v --verbosity        : 0=warnings only; higher = more detail.
 
 -------------------------------------------------------------------------------
-OUTPUTS:
+OUTPUTS (see docs/cli_reference.md ## sca-core for the exhaustive list):
 
-Core results are stored in a numpy archive file `scarun_results.npz`. Command 
-line arguments are stored `scarun_args.json`. A subdirectory 
-`sca_results` is created to store additional data. An `images` subdirectory is 
-also created.
+scarun_results.npz
+    Dia, conservation, sca_matrix, phi_ia, fi0, fia, Cij_raw; plus
+    Cijab_raw, fijab if --save_all.
 
-scarun_results.npz: (Computed SCA statistics)
-    Dia : Conservation measure per position and amino acid $D_i^a$.
-    conservation : Aggregated position-wise conservation measure $D_i$.
-    sca_matrix : Weighted SCA covariance matrix $\\tilde{C}_{ij}$.
-    phi_ia : Conservation weights $\\phi_i^a$.
-    fi0 : Gap frequency at each position $f_i^0$.
-    fia : Position-wise amino acid frequencies $f_i^a$.
+sca_eigendecomp.npz
+    Full + significant eigenvalues/eigenvectors of sca_matrix.
 
 scarun_args.json
-    Mapping from command line SCA parameters to their values.
+    CLI arguments used for the run.
 
-t_dists_info.json
-    Information pertaining to empirical distributions made to call statistical 
-    sectors.
-
-sector_idxs.npy:
-    Integer array containing values [0, ..., K-1] where K is the number of 
-    identified statistical sectors.
-    
-sectors.npz:
-    sector_{i} : Positional indices defining sector i, wrt the input, PROCESSED 
-        MSA, for i in {0, ..., K-1}.
-
-sectors_msaorig.npz:
-    sector_{i} : Positional indices defining sector i, wrt the ORIGINAL MSA,
-        for i in {0, ..., K-1}.
-
-sectored_sequences.npz:
-    group_{gidx}_{id} : 
-
-statsectors_seq.npz:
+statsectors_msa.npz / statsectors_seq.npz
+    Per-sequence sector mappings in processed-MSA and raw-sequence
+    coordinates. Only top-kstar ICs are expanded per sequence.
 
 sca_results/
-    Subdirectory for additional results.
-    
+    v_ica_normalized.npy, w_ica.npy, t_dists_info.json, evals_shuff.npy,
+    sca_matrix_sector_subset.npy, scalar txt files, and per-IC sector
+    position / score arrays.
+
+groups/
+    group_{i}_msapos.npy (one per IC, in processed-MSA coordinates).
+
+scarun.log
+    Run log including the human-readable top-N IC summary.
+
 images/
-    Subdirectory for generated images.
+    Conservation, SCA-matrix, spectrum, dendrogram, t-distribution,
+    EV/IC 2D/3D scatter, and sector-subset figures.
 
 -------------------------------------------------------------------------------
 EXAMPLE USAGE:
 
-sca-core -i </path/to/preprocessed/data> -o </path/to/outdir> \
-    --regularization 0.03 --background </path/to/background.json>
+    sca-core -i </preprocess-out> -o </scacore-out> --regularization 0.03
 
-sca-core -i </path/to/preprocessed/data> -o </path/to/outdir> \
-    --regularization 0.03 --load_data </path/to/existing/data>
+    sca-core -i </preprocess-out> -o </scacore-out> \\
+        --kstar 6 --n_components 10 --sectors_for all --seed 42
+
+    sca-core -i </preprocess-out> -o </scacore-out> \\
+        --n_boot 0 --load_data </existing-scacore-out>
 
 """
 
@@ -153,9 +173,13 @@ def parse_args(args):
                         help="Path to preprocessed data.")
     parser.add_argument("-o", "--outdir", type=str, required=True, 
                         help="Output directory.")
-    parser.add_argument("--pbar", action="store_true")
-    parser.add_argument("-v", "--verbosity", type=int, default=1)
-    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--pbar", action="store_true",
+                        help="Enable tqdm progress bars during bootstrapping.")
+    parser.add_argument("-v", "--verbosity", type=int, default=1,
+                        help="Verbosity level (0=warnings only).")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Random seed for reproducibility. None or a "
+                        "non-positive value auto-generates one.")
     
     parser.add_argument("--use_jax", action="store_true", 
                         help="Use JAX in computations.")

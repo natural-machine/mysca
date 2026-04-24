@@ -298,7 +298,7 @@ sca-plots [--prealign DIR] [--preprocessing DIR] [--scacore DIR] [--imgdir DIR] 
 
 ### Notes
 
-`plot_covariance_matrix` depends on `Cij_raw`, which is persisted in `scarun_results.npz` as of sca-core commit HEAD. Directories produced by older `sca-core` runs will skip `covariance_matrix.png` and log a note; rerun `sca-core` to refresh them.
+`plot_covariance_matrix` depends on `Cij_raw`, which is persisted in `scarun_results.npz` as of this version of sca-core. Directories produced by older `sca-core` runs will skip `covariance_matrix.png` and log a note; rerun `sca-core` to refresh them.
 
 ---
 

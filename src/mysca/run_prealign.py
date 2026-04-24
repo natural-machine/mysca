@@ -54,8 +54,10 @@ def parse_args(args):
                         help="Filepath of input (raw) FASTA.")
     parser.add_argument("-o", "--outdir", type=str, required=True,
                         help="Output directory.")
-    parser.add_argument("-v", "--verbosity", type=int, default=1)
-    parser.add_argument("--pbar", action="store_true")
+    parser.add_argument("-v", "--verbosity", type=int, default=1,
+                        help="Verbosity level (0=warnings only).")
+    parser.add_argument("--pbar", action="store_true",
+                        help="Enable tqdm progress bars.")
     parser.add_argument(
         "--plot", action="store_true",
         help="Write a per-stage sequence-count diagnostic plot to outdir/images/",

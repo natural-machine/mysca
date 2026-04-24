@@ -144,9 +144,19 @@ def parse_args(args):
         "--animate", action="store_true",
         help="Save a rotating GIF per frame.",
     )
-    parser.add_argument("--nframes", type=int, default=None)
-    parser.add_argument("--duration", type=float, default=None)
-    parser.add_argument("-v", "--verbosity", type=int, default=1)
+    parser.add_argument(
+        "--nframes", type=int, default=None,
+        help="Animation frame count (used with --animate). Default 24.",
+    )
+    parser.add_argument(
+        "--duration", type=float, default=None,
+        help="Animation duration in seconds (used with --animate). "
+        "Default 2.4.",
+    )
+    parser.add_argument(
+        "-v", "--verbosity", type=int, default=1,
+        help="Verbosity level (0=warnings only).",
+    )
 
     parsed = parser.parse_args(args)
     if parsed.features and not parsed.features_py:

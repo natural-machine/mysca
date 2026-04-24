@@ -143,8 +143,12 @@ def parse_args(args):
         "'_v6') remain callable via the preprocess_msa library API but "
         "are intentionally not exposed here.",
     )
-    parser.add_argument("--block_size", type=int, default=512, 
-                        help="block size to use for relevant weight computations")
+    parser.add_argument(
+        "--block_size", type=int, default=512,
+        help="Row-block size for pairwise sequence-similarity "
+        "computation inside weight_method='sparse'. Smaller blocks "
+        "cap peak memory; larger blocks amortize overhead. Default 512.",
+    )
     
     sca_params = parser.add_argument_group("SCA parameters")
     sca_params.add_argument(
