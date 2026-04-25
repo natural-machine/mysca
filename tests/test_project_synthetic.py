@@ -480,24 +480,17 @@ def test_gap_chars_include_dot():
 def _inject_synthetic_groups(sca_dir, groups):
     """Overwrite the IC-position files SCAResults.load() reads with the
     given hand-crafted groups (list of lists of processed-MSA col
-    indices). Also clears the paired scores files so group_scores loads
-    as None (projection doesn't use scores, but mismatched lengths
+    indices). Also clears the paired loadings files so group_scores
+    loads as None (projection doesn't use scores, but mismatched lengths
     would be misleading)."""
-    sector_dir = os.path.join(sca_dir, "sca_results", "msa_sectors")
     ic_pos_dir = os.path.join(sca_dir, "ic_positions")
-    for d in (sector_dir, ic_pos_dir):
-        if os.path.isdir(d):
-            for fn in os.listdir(d):
-                fp = os.path.join(d, fn)
-                if fn.startswith(("sector_", "ic_")):
-                    os.remove(fp)
-    os.makedirs(sector_dir, exist_ok=True)
+    if os.path.isdir(ic_pos_dir):
+        for fn in os.listdir(ic_pos_dir):
+            if fn.startswith("ic_"):
+                os.remove(os.path.join(ic_pos_dir, fn))
     os.makedirs(ic_pos_dir, exist_ok=True)
     for i, g in enumerate(groups):
         arr = np.asarray(g, dtype=int)
-        # Internal load source (still under msa_sectors/ in Phase A).
-        np.save(os.path.join(sector_dir, f"sector_{i}_msapos.npy"), arr)
-        # New top-level mirror (Phase A).
         np.save(os.path.join(ic_pos_dir, f"ic_{i}_msaproc.npy"), arr)
 
 

@@ -104,20 +104,20 @@ def test_entrypoint_survives_all_empty_groups(prepped_indir):
 
     main(args)  # must not raise
 
-    # Load saved groups from disk; each should be empty.
-    sector_dir = os.path.join(outdir, "sca_results", "msa_sectors")
-    assert os.path.isdir(sector_dir)
+    # Load saved IC positions from disk; each should be empty.
+    ic_pos_dir = os.path.join(outdir, "ic_positions")
+    assert os.path.isdir(ic_pos_dir)
     i = 0
-    any_group_seen = False
+    any_ic_seen = False
     while True:
-        gpath = os.path.join(sector_dir, f"sector_{i}_msapos.npy")
+        gpath = os.path.join(ic_pos_dir, f"ic_{i}_msaproc.npy")
         if not os.path.isfile(gpath):
             break
-        any_group_seen = True
+        any_ic_seen = True
         g = np.load(gpath)
         assert len(g) == 0, f"IC {i} unexpectedly non-empty at pstar=100"
         i += 1
-    assert any_group_seen, "Expected at least one IC group file on disk"
+    assert any_ic_seen, "Expected at least one IC position file on disk"
 
     # Sector-subset SCA matrix should be 0x0.
     subset_path = os.path.join(

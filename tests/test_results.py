@@ -393,10 +393,7 @@ class TestSCAResults:
         assert os.path.isfile(
             os.path.join(scadir, "sca_matrix_sector_subset.npy")
         )
-        assert os.path.isfile(
-            os.path.join(scadir, "msa_sectors", "sector_0_msapos.npy")
-        )
-        # New top-level ic_positions/ directory written alongside.
+        # IC positions live in the top-level ic_positions/ directory.
         ic_pos_dir = os.path.join(OUTDIR_SCA, "ic_positions")
         assert os.path.isfile(
             os.path.join(ic_pos_dir, "ic_0_msaproc.npy")

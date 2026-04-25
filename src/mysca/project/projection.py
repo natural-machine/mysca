@@ -298,7 +298,7 @@ def project_sequences(
     if sca.ic_positions is None:
         raise FileNotFoundError(
             f"No IC positions found in {sca_result_dir}; sca-core must "
-            "produce sca_results/msa_sectors/sector_*_msapos.npy for "
+            "produce ic_positions/ic_*_msaproc.npy for "
             "projection."
         )
     if sca.v_ica is None:

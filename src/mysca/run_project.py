@@ -13,7 +13,7 @@ COMMAND LINE ARGUMENTS:
         MSA (``msa_orig.fasta-aln`` under --preprocessing) are resolved
         in-sample (no external alignment performed).
     --scacore : Path to an ``sca-core`` output directory
-        (contains ``sca_results/msa_sectors/sector_*_msapos.npy`` and
+        (contains ``ic_positions/ic_*_msaproc.npy`` and
         ``sca_results/v_ica_normalized.npy``).
     --preprocessing : Path to an ``sca-preprocess`` output directory
         (contains ``preprocessing_results.npz`` and ``msa_orig.fasta-aln``).
@@ -95,7 +95,7 @@ def parse_args(args):
     parser.add_argument(
         "--scacore", type=str, required=True, metavar="DIR",
         help="sca-core output directory (must include "
-        "sca_results/msa_sectors/sector_*_msapos.npy and "
+        "ic_positions/ic_*_msaproc.npy and "
         "sca_results/v_ica_normalized.npy).",
     )
     parser.add_argument(

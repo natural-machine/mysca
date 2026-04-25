@@ -38,9 +38,12 @@ SCA parameters (see SI of [1]):
                             "exclusive" tie-break (ignored otherwise).
     --n_logged_comps      : top-N ICs to emit in the human-readable
                             summary log (default 10; 0 disables).
-    --sectors_for         : which sequences get per-sequence sector
-                            mappings. Default: reference only. "all" or a
-                            text file of IDs.
+    --sectors_for         : target sequences to expand into the
+                            per-seq output files (ic_residues_per_seq.npz
+                            + ic_loadings_per_seq.npz). Default: reference
+                            only. Pass "all" to include every retained
+                            sequence, or a path to a text file listing
+                            sequence IDs (one per line).
 
 Optional:
     --seed                : random seed (None or non-positive auto-picks).
@@ -76,12 +79,13 @@ ic_loadings_per_seq.npz
 
 sca_results/
     v_ica_normalized.npy, w_ica.npy, t_dists_info.json, evals_shuff.npy,
-    sca_matrix_sector_subset.npy, scalar txt files, and per-IC position
-    / loading arrays under msa_sectors/.
+    sca_matrix_sector_subset.npy, scalar txt files.
 
 ic_positions/
-    ic_{i}_msaproc.npy, ic_{i}_msaorig.npy (one per IC, processed-MSA
-    and original-MSA coordinates respectively).
+    Per-IC bundle: ic_{i}_msaproc.npy (high-load positions in
+    processed-MSA cols), ic_{i}_msaorig.npy (the same positions in
+    original-MSA cols), ic_{i}_loadings.npy (IC loadings at those
+    positions).
 
 scarun.log
     Run log including the human-readable top-N IC summary.
@@ -234,11 +238,12 @@ def parse_args(args):
                         default=[])
 
     parser.add_argument("--sectors_for", type=str, default=None,
-                        help="Which sequences to generate per-sequence sector "
-                             "mappings for. Default: only the reference "
-                             "sequence. 'all' for every retained sequence, "
-                             "or a path to a text file with one sequence ID "
-                             "per line.")
+                        help="Which target sequences to expand into the "
+                             "per-seq output files (ic_residues_per_seq.npz "
+                             "+ ic_loadings_per_seq.npz). Default: only "
+                             "the reference sequence. 'all' for every "
+                             "retained sequence, or a path to a text file "
+                             "with one sequence ID per line.")
 
     return parser.parse_args(args)
 

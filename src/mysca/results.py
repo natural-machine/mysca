@@ -414,6 +414,7 @@ class SCAResults:
             ic_<i>_msaproc.npy        : high-load processed-MSA cols of IC i
             ic_<i>_msaorig.npy        : same positions in original-MSA cols
                                         (recovered via retained_positions)
+            ic_<i>_loadings.npy       : the IC's loadings at those positions
         sca_results/
             kstar.txt                 : number of significant eigenvalues used
             kstar_identified.txt      : number identified by bootstrap
@@ -424,8 +425,6 @@ class SCAResults:
             t_dists_info.json         : t-distribution fit parameters
             evals_shuff.npy           : bootstrap eigenvalues
             sca_matrix_sector_subset.npy
-            msa_sectors/sector_*      : per-IC position and loading arrays
-                                        (legacy load source; rename pending)
     """
 
     FIELD_DESCRIPTIONS = {
@@ -764,13 +763,11 @@ class SCAResults:
                 self.sca_matrix_sector_subset,
             )
 
-        # IC positions in processed-MSA coordinates (and optionally
-        # original-MSA coordinates as a sibling, if retained_positions
-        # is supplied).
+        # Per-IC bundle: high-load positions in both coord spaces, plus
+        # the IC's loadings at those positions. Single source of truth
+        # at the top level; from_directory() loads from here.
         if self.ic_positions is not None:
-            sector_dir = os.path.join(scadir, "msa_sectors")
             ic_pos_dir = os.path.join(outdir, "ic_positions")
-            os.makedirs(sector_dir, exist_ok=True)
             os.makedirs(ic_pos_dir, exist_ok=True)
             rp = (
                 np.asarray(retained_positions, dtype=int)
@@ -786,15 +783,9 @@ class SCAResults:
                         os.path.join(ic_pos_dir, f"ic_{i}_msaorig.npy"),
                         rp[np.asarray(positions, dtype=int)],
                     )
-                # Internal load-source path. Pending Phase B rename to
-                # sca_results/ic_positions/.
-                np.save(
-                    os.path.join(sector_dir, f"sector_{i}_msapos.npy"),
-                    positions,
-                )
                 if self.group_scores is not None:
                     np.save(
-                        os.path.join(sector_dir, f"sector_{i}_scores.npy"),
+                        os.path.join(ic_pos_dir, f"ic_{i}_loadings.npy"),
                         self.group_scores[i],
                     )
             # Combined mapping. Guard against the edge case where every IC
@@ -902,21 +893,20 @@ class SCAResults:
             os.path.join(scadir, "sca_matrix_sector_subset.npy")
         )
 
-        # IC positions from msa_sectors directory (legacy load source;
-        # pending rename to sca_results/ic_positions/).
+        # IC positions + loadings from the top-level ic_positions/ dir.
         ic_positions = None
         group_scores = None
-        sector_dir = os.path.join(scadir, "msa_sectors")
-        if os.path.isdir(sector_dir):
+        ic_pos_dir = os.path.join(dirpath, "ic_positions")
+        if os.path.isdir(ic_pos_dir):
             ic_positions = []
             group_scores = []
             i = 0
             while True:
-                gpath = os.path.join(sector_dir, f"sector_{i}_msapos.npy")
+                gpath = os.path.join(ic_pos_dir, f"ic_{i}_msaproc.npy")
                 if not os.path.isfile(gpath):
                     break
                 ic_positions.append(np.load(gpath))
-                spath = os.path.join(sector_dir, f"sector_{i}_scores.npy")
+                spath = os.path.join(ic_pos_dir, f"ic_{i}_loadings.npy")
                 if os.path.isfile(spath):
                     group_scores.append(np.load(spath))
                 i += 1

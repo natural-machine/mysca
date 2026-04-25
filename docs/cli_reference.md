@@ -159,7 +159,7 @@ sca-core -i <preprocessing-dir> -o <output-dir> [options]
 | `--assignment` | `overlap` | How to assign a position that clears the cutoff on multiple ICs. `overlap`: keep it in every qualifying IC (default). `exclusive`: assign only to the IC where its projection is maximal. `--weak_assignment` applies only under `exclusive` |
 | `--weak_assignment` | [] | IC indices to exclude from the `exclusive`-assignment tie-break (variadic integers). Ignored under `overlap` |
 | `--n_logged_comps` | 10 | Number of top ICs to summarize in the log after assignment (significance marker, eigenvalue, and MSA positions in processed / unprocessed / reference coordinates). `0` disables the summary |
-| `--sectors_for` | None | Which sequences get per-sequence sector mappings. `None`: reference only. `all`: every retained sequence. Otherwise: path to a text file with one sequence ID per line |
+| `--sectors_for` | None | Target sequences to expand into the per-seq output files (`ic_residues_per_seq.npz` + `ic_loadings_per_seq.npz`). `None`: reference only. `all`: every retained sequence. Otherwise: path to a text file with one sequence ID per line |
 
 ### Optional Arguments
 
@@ -183,8 +183,8 @@ Writes to the specified output directory:
 - `scarun_args.json` — arguments used
 - `ic_residues_per_seq.npz` — per-target IC residues in **raw-sequence coordinates**, keyed `ic_{i}_{seqid}` → 1D int array of residue indices
 - `ic_loadings_per_seq.npz` — per-residue IC loadings parallel to `ic_residues_per_seq`, same `ic_{i}_{seqid}` key format. Only the top-`kstar` ICs are expanded per sequence; which target sequences appear is controlled by `--sectors_for`
-- `sca_results/` — `v_ica_normalized.npy`, `w_ica.npy`, `t_dists_info.json`, `evals_shuff.npy`, `sca_matrix_sector_subset.npy`, scalar text files (`kstar.txt`, `n_components.txt`, etc.), `msa_sectors/sector_*_msapos.npy` + `sector_*_scores.npy`
-- `ic_positions/` — `ic_{i}_msaproc.npy` (high-load IC positions in processed-MSA coordinates) and `ic_{i}_msaorig.npy` (the same positions in original-MSA coordinates), one pair per IC
+- `sca_results/` — `v_ica_normalized.npy`, `w_ica.npy`, `t_dists_info.json`, `evals_shuff.npy`, `sca_matrix_sector_subset.npy`, scalar text files (`kstar.txt`, `n_components.txt`, etc.)
+- `ic_positions/` — per-IC bundle: `ic_{i}_msaproc.npy` (high-load positions in processed-MSA coordinates), `ic_{i}_msaorig.npy` (the same positions in original-MSA coordinates), `ic_{i}_loadings.npy` (IC loadings at those positions)
 - `scarun.log` — run log
 - `images/` — plots (conservation, SCA matrix, spectrum vs null, dendrogram, t-distributions, EV/IC scatter sweeps)
 
@@ -405,7 +405,7 @@ Records whose ID is already present in the reference MSA (under `--preprocessing
 |----------|-------------|
 | `-i, --input_fpath` | Path to an input FASTA of sequences to project |
 | `--preprocessing` | `sca-preprocess` output directory (must include `msa_orig.fasta-aln`) |
-| `--scacore` | `sca-core` output directory (must include `sca_results/msa_sectors/sector_*_msapos.npy` and `sca_results/v_ica_normalized.npy`) |
+| `--scacore` | `sca-core` output directory (must include `ic_positions/ic_*_msaproc.npy` and `sca_results/v_ica_normalized.npy`) |
 | `-o, --outdir` | Output directory |
 
 ### Optional Arguments

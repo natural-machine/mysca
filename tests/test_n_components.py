@@ -175,12 +175,12 @@ def test_per_sequence_sector_mapping_scoped_to_kstar(prepped_indir):
         f"saw {sorted(ic_indices_seen)}"
     )
 
-    # All IC groups (0..n_components-1) are still saved as per-IC msa_sectors files.
-    sector_dir = os.path.join(outdir, "sca_results", "msa_sectors")
-    files = sorted(os.listdir(sector_dir))
+    # All ICs (0..n_components-1) are still saved as per-IC ic_positions files.
+    ic_pos_dir = os.path.join(outdir, "ic_positions")
+    files = sorted(os.listdir(ic_pos_dir))
     for i in range(n_components):
-        assert f"sector_{i}_msapos.npy" in files, (
-            f"Missing per-IC msa_sectors file for IC {i}"
+        assert f"ic_{i}_msaproc.npy" in files, (
+            f"Missing per-IC ic_positions file for IC {i}"
         )
 
     remove_dir(outdir)

@@ -165,11 +165,11 @@ def _run_sca(indir, outdir, assignment):
 
 
 def _load_groups(outdir):
-    sector_dir = os.path.join(outdir, "sca_results", "msa_sectors")
+    ic_pos_dir = os.path.join(outdir, "ic_positions")
     groups = []
     i = 0
     while True:
-        gpath = os.path.join(sector_dir, f"sector_{i}_msapos.npy")
+        gpath = os.path.join(ic_pos_dir, f"ic_{i}_msaproc.npy")
         if not os.path.isfile(gpath):
             break
         groups.append(np.load(gpath))
