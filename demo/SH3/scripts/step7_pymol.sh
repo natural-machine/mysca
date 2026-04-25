@@ -35,11 +35,12 @@ if ! python -c "import imageio, PIL" >/dev/null 2>&1; then
     exit 0
 fi
 
-# Per-group rotations: one GIF each for IC 0 and IC 1.
+# Per-group rotations: one GIF each for IC 0 and IC 1. Smooth ~10fps
+# spin (36 frames over 3.6s).
 sca-pymol \
     --structure ${outdir}/structure \
     --groups 0 1 \
-    --animate \
+    --animate --nframes 36 --duration 3.6 \
     -o ${outdir}/pymol_anim
 
 # Combined rotation: single GIF with both ICs lit up at once.
@@ -47,7 +48,7 @@ sca-pymol \
     --structure ${outdir}/structure \
     --groups 0 1 \
     --multisector \
-    --animate \
+    --animate --nframes 36 --duration 3.6 \
     -o ${outdir}/pymol_anim_multi
 
 # MP4 pass: same combined rotation also written as MP4 alongside the
@@ -58,7 +59,7 @@ if python -c "import imageio_ffmpeg" >/dev/null 2>&1; then
         --structure ${outdir}/structure \
         --groups 0 1 \
         --multisector \
-        --animate \
+        --animate --nframes 36 --duration 3.6 \
         --format both \
         -o ${outdir}/pymol_anim_mp4
 else
@@ -69,17 +70,21 @@ fi
 # Reveal-mode passes: still-camera narrative animations that walk the
 # top 2 ICs through stages of which groups are visible. Three sub-
 # modes exercised — cumulative (groups stack), sequential (one at a
-# time), and custom (explicit stage list).
+# time), and custom (explicit stage list). Reveal mode benefits from
+# low framerate + long per-stage holds since there's no motion
+# within a stage; ~5fps with ~2s per stage.
 sca-pymol \
     --structure ${outdir}/structure \
     --groups 0 1 \
     --animate --mode reveal --reveal_schedule cumulative \
+    --nframes 20 --duration 4.0 \
     -o ${outdir}/pymol_reveal_cum
 
 sca-pymol \
     --structure ${outdir}/structure \
     --groups 0 1 \
     --animate --mode reveal --reveal_schedule sequential \
+    --nframes 20 --duration 4.0 \
     -o ${outdir}/pymol_reveal_seq
 
 sca-pymol \
@@ -87,4 +92,5 @@ sca-pymol \
     --groups 0 1 \
     --animate --mode reveal --reveal_schedule custom \
     --reveal_custom "0" "0,1" "1" \
+    --nframes 30 --duration 6.0 \
     -o ${outdir}/pymol_reveal_custom
