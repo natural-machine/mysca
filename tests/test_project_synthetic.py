@@ -515,21 +515,21 @@ def sca_dir_with_synthetic_groups(prep_and_sca_dirs, expected, tmp_path_factory)
     return dest
 
 
-def test_synthetic_statsectors_construction_matches_ground_truth(
+def test_synthetic_ic_residues_per_seq_construction_matches_ground_truth(
         prep_and_sca_dirs, expected,
 ):
     """Independent ground-truth contract test for the per-target IC
-    residue projection that backs `statsectors_msa.npz`.
+    residue projection that backs `ic_residues_per_seq.npz`.
 
     Replicates the exact chain `run_sca.py` uses to populate
-    `statsectors_msa` (raw-sequence index lookup → retained-positions
+    `ic_residues_per_seq` (raw-sequence index lookup → retained-positions
     slice → `get_rawseq_positions_in_groups`) against the hand-crafted
     synthetic groups, and asserts the output matches the
     *independently hand-specified* `expected_ic_residues` table in
     `expected.json`.
 
-    The sibling tests `test_statsectors_msa_values_are_target_residue_indices`
-    and `test_statsectors_msa_values_match_raw_seq_lookup_from_groups`
+    The sibling tests `test_ic_residues_per_seq_values_are_target_residue_indices`
+    and `test_ic_residues_per_seq_values_match_raw_seq_lookup_from_ic_positions`
     in test_project.py are *consistency* tests: they verify that the
     file's contents are reachable via the producer chain. This test
     closes the loop with an independent ground truth — it would catch
@@ -561,7 +561,7 @@ def test_synthetic_statsectors_construction_matches_ground_truth(
             got = sorted(per_seq_per_ic[retained_idx][ic])
             exp = sorted(exp_residues)
             assert got == exp, (
-                f"Synthetic statsectors construction for {seqid} IC "
+                f"Synthetic ic_residues_per_seq construction for {seqid} IC "
                 f"{ic}: got {got}, expected {exp} (independent "
                 f"ground truth from expected.json). The producer "
                 f"chain (rawseq_idxs → retained_positions → "

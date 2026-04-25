@@ -3,7 +3,7 @@
 Library tests exercise:
 - In-sample roundtrip: project each training sequence and verify its
   per-IC residue set matches what sca-core already persisted in
-  ``statsectors_msa.npz``.
+  ``ic_residues_per_seq.npz``.
 - In-sample short-circuit: no external aligner is invoked when every
   input ID is already in the reference MSA.
 - Aligner dispatch: unknown method raises.
@@ -112,9 +112,9 @@ def test_hmmalign_backend_is_registered():
     assert "hmmalign" in ALIGNERS
 
 
-def test_project_in_sample_matches_statsectors_msa(prep_and_sca_dirs):
-    """Projecting training sequences should reproduce statsectors_msa.npz
-    entry-for-entry for the top-kstar ICs.
+def test_project_in_sample_matches_ic_residues_per_seq(prep_and_sca_dirs):
+    """Projecting training sequences should reproduce
+    ic_residues_per_seq.npz entry-for-entry for the top-kstar ICs.
     """
     prep_dir, sca_dir = prep_and_sca_dirs
     prep = PreprocessingResults.load(prep_dir)
@@ -140,48 +140,48 @@ def test_project_in_sample_matches_statsectors_msa(prep_and_sca_dirs):
     assert isinstance(result, ProjectionResult)
     assert all(p.in_sample for p in result.projections)
 
-    # Roundtrip check against statsectors_msa.npz for the top-kstar ICs
-    # (only those were expanded per sequence per the kstar scoping).
+    # Roundtrip check against ic_residues_per_seq for the top-kstar ICs
+    # (only those are expanded per sequence under the kstar scoping).
     kstar = sca.kstar
-    stats = sca.statsectors_msa
+    per_seq = sca.ic_residues_per_seq
     for proj in result.projections:
         for ic in range(kstar):
-            key = f"group_{ic}_{proj.seq_id}"
-            if key not in stats:
+            key = f"ic_{ic}_{proj.seq_id}"
+            if key not in per_seq:
                 continue
-            expected = np.asarray(stats[key], dtype=int)
+            expected = np.asarray(per_seq[key], dtype=int)
             got = np.asarray(proj.ic_residues[ic], dtype=int)
             assert np.array_equal(np.sort(got), np.sort(expected)), (
                 f"Mismatch for {proj.seq_id} IC {ic}: "
-                f"project={got.tolist()} vs statsectors={expected.tolist()}"
+                f"project={got.tolist()} vs persisted={expected.tolist()}"
             )
 
 
 # ---------------------------------------------------------------------- #
-# statsectors_msa coordinate-space contract tests.                       #
+# ic_residues_per_seq coordinate-space contract tests.                   #
 #                                                                        #
-# Despite the historical `_msa` filename suffix, statsectors_msa.npz     #
-# values are in *raw-sequence target-residue* coordinates, NOT MSA-col   #
-# coordinates. These tests pin that contract so any future refactor      #
-# that confuses the two will fail loudly.                                #
+# Values are raw-sequence target-residue indices, NOT MSA-col indices.   #
+# These tests pin that contract so any future refactor that confuses     #
+# the two will fail loudly.                                              #
 # ---------------------------------------------------------------------- #
 
 
-def test_statsectors_msa_values_are_target_residue_indices(prep_and_sca_dirs):
-    """Bounds check: every value in statsectors_msa is a valid 0-based
-    index into the target's raw (gap-free) sequence.
+def test_ic_residues_per_seq_values_are_target_residue_indices(
+        prep_and_sca_dirs,
+):
+    """Bounds check: every value in ic_residues_per_seq is a valid
+    0-based index into the target's raw (gap-free) sequence.
 
     If values were MSA col indices they'd be bounded by L_orig (the
     alignment length), which is generally larger than any individual
-    target's raw-sequence length. This test would have caught the
-    historical _msa-suffix misnomer for any sequence whose raw length
-    is shorter than L_orig (i.e. any sequence with at least one gap).
+    target's raw-sequence length. This test catches any future drift
+    where MSA-col indices accidentally land in the per-seq dict.
     """
     prep_dir, sca_dir = prep_and_sca_dirs
     prep = PreprocessingResults.load(prep_dir)
     sca = SCAResults.load(sca_dir)
-    if not sca.statsectors_msa:
-        pytest.skip("statsectors_msa not populated by fixture")
+    if not sca.ic_residues_per_seq:
+        pytest.skip("ic_residues_per_seq not populated by fixture")
 
     raw_lengths = {
         rec.id: len(str(rec.seq).replace("-", "").replace(".", ""))
@@ -189,11 +189,11 @@ def test_statsectors_msa_values_are_target_residue_indices(prep_and_sca_dirs):
     }
     L_orig = prep.msa_obj_orig.get_alignment_length()
 
-    for key, arr in sca.statsectors_msa.items():
-        # Key format: "group_{j}_{seqid}". seqid may contain underscores
+    for key, arr in sca.ic_residues_per_seq.items():
+        # Key format: "ic_{j}_{seqid}". seqid may contain underscores
         # (e.g. Pfam-style "VAV_HUMAN/788-834"); split only the leading 2.
         prefix, _j_str, seqid = key.split("_", 2)
-        assert prefix == "group", f"unexpected key format: {key}"
+        assert prefix == "ic", f"unexpected key format: {key}"
         L_target = raw_lengths[seqid]
         arr_np = np.asarray(arr, dtype=int)
         if arr_np.size == 0:
@@ -210,14 +210,14 @@ def test_statsectors_msa_values_are_target_residue_indices(prep_and_sca_dirs):
         )
 
 
-def test_statsectors_msa_values_match_raw_seq_lookup_from_groups(
+def test_ic_residues_per_seq_values_match_raw_seq_lookup_from_ic_positions(
         prep_and_sca_dirs,
 ):
-    """Semantic contract: statsectors_msa[group_{j}_{seqid}] equals the
-    raw-sequence residue indices recovered by looking up groups[j]
-    (processed-MSA cols) → original-MSA cols (via retained_positions) →
-    the target sequence's raw-residue indices (via the MSA row, with
-    target-gap cols dropped).
+    """Semantic contract: ic_residues_per_seq[ic_{j}_{seqid}] equals
+    the raw-sequence residue indices recovered by looking up
+    ic_positions[j] (processed-MSA cols) → original-MSA cols (via
+    retained_positions) → the target sequence's raw-residue indices
+    (via the MSA row, with target-gap cols dropped).
 
     This is the canonical reconstruction. It enforces that the file's
     contents are in *target raw-sequence* coordinates and pins the data
@@ -226,8 +226,8 @@ def test_statsectors_msa_values_match_raw_seq_lookup_from_groups(
     prep_dir, sca_dir = prep_and_sca_dirs
     prep = PreprocessingResults.load(prep_dir)
     sca = SCAResults.load(sca_dir)
-    if not sca.statsectors_msa or not sca.ic_positions:
-        pytest.skip("statsectors_msa or groups not populated by fixture")
+    if not sca.ic_residues_per_seq or not sca.ic_positions:
+        pytest.skip("ic_residues_per_seq or ic_positions not populated")
 
     rawseq_idxs = get_rawseq_indices_of_msa(prep.msa_obj_orig)
     seq_msa_idx_by_id = {
@@ -235,9 +235,9 @@ def test_statsectors_msa_values_match_raw_seq_lookup_from_groups(
     }
     retained_positions = np.asarray(prep.retained_positions, dtype=int)
 
-    for key, arr in sca.statsectors_msa.items():
+    for key, arr in sca.ic_residues_per_seq.items():
         prefix, j_str, seqid = key.split("_", 2)
-        assert prefix == "group"
+        assert prefix == "ic"
         j = int(j_str)
         seq_msa_idx = seq_msa_idx_by_id[seqid]
         original_msa_cols = retained_positions[
@@ -250,8 +250,7 @@ def test_statsectors_msa_values_match_raw_seq_lookup_from_groups(
             np.sort(got), np.sort(expected),
             err_msg=(
                 f"{key}: values do not match the raw-seq lookup of "
-                f"groups[{j}]. If you've changed how statsectors_msa "
-                f"is populated, the on-disk contract has drifted."
+                f"ic_positions[{j}]. The on-disk contract has drifted."
             ),
         )
 
@@ -288,7 +287,7 @@ def test_project_in_sample_does_not_invoke_aligner(prep_and_sca_dirs, tmp_path):
 def _out_of_sample_roundtrip(prep_dir, sca_dir, tmp_path, aligner):
     """Shared body: project a sequence under a new ID (forcing the
     out-of-sample path) that is byte-identical to a training sequence;
-    per-IC memberships must match statsectors_msa for the donor."""
+    per-IC residues must match ic_residues_per_seq for the donor."""
     prep = PreprocessingResults.load(prep_dir)
     sca = SCAResults.load(sca_dir)
     msa_obj = prep.msa_obj_orig
@@ -313,12 +312,12 @@ def _out_of_sample_roundtrip(prep_dir, sca_dir, tmp_path, aligner):
     assert proj.raw_sequence == donor_raw
 
     kstar = sca.kstar
-    stats = sca.statsectors_msa
+    per_seq = sca.ic_residues_per_seq
     for ic in range(kstar):
-        key = f"group_{ic}_{donor_id}"
-        if key not in stats:
+        key = f"ic_{ic}_{donor_id}"
+        if key not in per_seq:
             continue
-        expected = np.sort(np.asarray(stats[key], dtype=int))
+        expected = np.sort(np.asarray(per_seq[key], dtype=int))
         got = np.sort(np.asarray(proj.ic_residues[ic], dtype=int))
         assert np.array_equal(got, expected), (
             f"[{aligner}] Out-of-sample IC {ic} membership differs from "

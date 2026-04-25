@@ -306,13 +306,13 @@ class TestSCAResults:
                 rng.random(3),
             ]
             results.sca_matrix_sector_subset = rng.random((8, 8))
-            results.statsectors_msa = {
-                "group_0_seq1": np.array([0, 3, 5]),
-                "group_1_seq1": np.array([1, 7]),
+            results.ic_residues_per_seq = {
+                "ic_0_seq1": np.array([0, 3, 5]),
+                "ic_1_seq1": np.array([1, 7]),
             }
-            results.statsectors_seq = {
-                "sector_0_pdbpos_seq1": np.array([0, 3, 5]),
-                "sector_0_scores_seq1": rng.random(3),
+            results.ic_loadings_per_seq = {
+                "ic_0_seq1": rng.random(3),
+                "ic_1_seq1": rng.random(2),
             }
 
         return results
@@ -369,9 +369,16 @@ class TestSCAResults:
             os.path.join(OUTDIR_SCA, "sca_eigendecomp.npz")
         )
         assert os.path.isfile(
-            os.path.join(OUTDIR_SCA, "statsectors_msa.npz")
+            os.path.join(OUTDIR_SCA, "ic_residues_per_seq.npz")
         )
         assert os.path.isfile(
+            os.path.join(OUTDIR_SCA, "ic_loadings_per_seq.npz")
+        )
+        # Legacy file names should not be written.
+        assert not os.path.isfile(
+            os.path.join(OUTDIR_SCA, "statsectors_msa.npz")
+        )
+        assert not os.path.isfile(
             os.path.join(OUTDIR_SCA, "statsectors_seq.npz")
         )
 
@@ -501,26 +508,29 @@ class TestSCAResults:
                 loaded.group_scores[i], original.group_scores[i]
             )
 
-    def test_round_trip_statsectors(self):
-        """Save then load and verify statsectors npz dicts."""
+    def test_round_trip_per_seq_dicts(self):
+        """Save then load and verify ic_residues_per_seq /
+        ic_loadings_per_seq npz dicts."""
         original = self._make_sample_results()
         original.save(OUTDIR_SCA)
         loaded = SCAResults.load(OUTDIR_SCA)
 
-        assert set(loaded.statsectors_msa.keys()) == set(
-            original.statsectors_msa.keys()
+        assert set(loaded.ic_residues_per_seq.keys()) == set(
+            original.ic_residues_per_seq.keys()
         )
-        for k in original.statsectors_msa:
+        for k in original.ic_residues_per_seq:
             np.testing.assert_array_equal(
-                loaded.statsectors_msa[k], original.statsectors_msa[k]
+                loaded.ic_residues_per_seq[k],
+                original.ic_residues_per_seq[k],
             )
 
-        assert set(loaded.statsectors_seq.keys()) == set(
-            original.statsectors_seq.keys()
+        assert set(loaded.ic_loadings_per_seq.keys()) == set(
+            original.ic_loadings_per_seq.keys()
         )
-        for k in original.statsectors_seq:
+        for k in original.ic_loadings_per_seq:
             np.testing.assert_allclose(
-                loaded.statsectors_seq[k], original.statsectors_seq[k]
+                loaded.ic_loadings_per_seq[k],
+                original.ic_loadings_per_seq[k],
             )
 
     def test_save_all_includes_large_arrays(self):

@@ -66,12 +66,13 @@ sca_eigendecomp.npz
 scarun_args.json
     CLI arguments used for the run.
 
-statsectors_msa.npz / statsectors_seq.npz
-    Per-target IC residues in raw-sequence coordinates (despite the
-    `_msa` suffix on the first file — see Glossary). Both files contain
-    the same residue indices; `_seq.npz` additionally has per-residue
-    IC loadings. Rename to ic_residues_per_seq / ic_loadings_per_seq
-    pending Phase B.
+ic_residues_per_seq.npz
+    Per-target IC residues in raw-sequence coordinates, keyed
+    `ic_{i}_{seqid}`. Only top-kstar ICs expanded per sequence.
+
+ic_loadings_per_seq.npz
+    Per-residue IC loadings parallel to ic_residues_per_seq, same
+    `ic_{i}_{seqid}` key format.
 
 sca_results/
     v_ica_normalized.npy, w_ica.npy, t_dists_info.json, evals_shuff.npy,
@@ -120,8 +121,6 @@ from mysca.results import (
     SCAResults,
     SCARUN_RESULTS_FNAME as OUTPUT_RESULTS_FNAME,
     SCARUN_ARGS_FNAME as OUTPUT_ARGS_FNAME,
-    STATSECTORS_MSA_FNAME as OUTPUT_STATSECTORS_MSA_FNAME,
-    STATSECTORS_SEQ_FNAME as OUTPUT_STATSECTORS_SEQ_FNAME,
     EVALS_SHUFF_FNAME as EVALS_SHUFF_SAVEAS,
 )
 from mysca.core import run_sca, run_ica
@@ -638,33 +637,34 @@ def main(args):
     group_rawseq_scores_by_entry = get_group_rawseq_scores_by_entry(
         msa_obj_orig, sector_seqidxs, groups, group_rawseq_scores
     )
-    # Per-sequence sector mappings scale with n_components × |sector_seqidxs|
-    # and dominate on-disk size when the user requests many ICs plus
-    # `--sectors_for all`. Restrict this to the kstar significant ICs;
-    # non-significant IC groups still get their group-index file on disk
-    # (via SCAResults.save), but we don't expand them per sequence.
-    msa_stat_sectors_data = {}
-    pdb_stat_sectors_data = {}
+    # Per-target IC residues (and parallel IC loadings) scale with
+    # n_components × |sector_seqidxs| and dominate on-disk size when the
+    # user requests many ICs plus `--sectors_for all`. Restrict to the
+    # kstar significant ICs; non-significant ICs still have their
+    # position arrays on disk (via SCAResults.save) but aren't expanded
+    # per sequence.
+    ic_residues_per_seq = {}
+    ic_loadings_per_seq = {}
     n_sector_groups = min(kstar, len(groups))
     for gidx in range(n_sector_groups):
-        for i, seqidx in enumerate(sector_seqidxs):
+        for seqidx in sector_seqidxs:
             entry = msa_obj_orig[int(seqidx)]
-            id = entry.id
-            group_arr = group_rawseq_positions_by_entry[id][gidx]
-            group_scores_arr = group_rawseq_scores_by_entry[id][gidx]
-            msa_stat_sectors_data[f"group_{gidx}_{id}"] = group_arr
-            pdb_stat_sectors_data[f"sector_{gidx}_pdbpos_{id}"] = group_arr
-            pdb_stat_sectors_data[f"sector_{gidx}_scores_{id}"] = group_scores_arr
+            sid = entry.id
+            residues = group_rawseq_positions_by_entry[sid][gidx]
+            loadings = group_rawseq_scores_by_entry[sid][gidx]
+            key = f"ic_{gidx}_{sid}"
+            ic_residues_per_seq[key] = residues
+            ic_loadings_per_seq[key] = loadings
     if len(groups) > n_sector_groups:
         logger.info(
-            "Per-sequence sector mappings generated for the top %d "
+            "Per-target IC residues generated for the top %d "
             "(significant) ICs only; %d additional non-significant IC "
             "group(s) are saved as index files but not expanded per sequence.",
             n_sector_groups, len(groups) - n_sector_groups,
         )
 
-    results.statsectors_msa = msa_stat_sectors_data
-    results.statsectors_seq = pdb_stat_sectors_data
+    results.ic_residues_per_seq = ic_residues_per_seq
+    results.ic_loadings_per_seq = ic_loadings_per_seq
 
     # Save all results
     results.args = {

@@ -3,8 +3,8 @@
 Loader tests use the real Soil3 fixture. Project-roundtrip tests
 generate a minimal but well-formatted PDB on the fly whose sequence
 matches a retained MSA sequence, so the in-sample short-circuit path
-can reproduce the sector assignments already persisted in
-``statsectors_msa.npz``.
+can reproduce the per-IC residues already persisted in
+``ic_residues_per_seq.npz``.
 """
 
 import json
@@ -226,10 +226,12 @@ def test_sifts_lookup_requires_pdb_dir():
 # ----------------------------------------------------------------------
 
 
-def test_project_pdb_in_sample_matches_statsectors(prep_and_sca_dirs, tmp_path):
+def test_project_pdb_in_sample_matches_ic_residues_per_seq(
+        prep_and_sca_dirs, tmp_path,
+):
     """Build a synthetic PDB whose sequence matches a retained training
     sequence (in-sample path). IC-group residues from the projection
-    must match what statsectors_msa.npz already has for that sequence,
+    must match what ic_residues_per_seq.npz already has for that sequence,
     and project_groups_to_pdb must push those through to PDB residue
     numbers 1..L_raw.
     """
@@ -259,12 +261,12 @@ def test_project_pdb_in_sample_matches_statsectors(prep_and_sca_dirs, tmp_path):
     )
     assert proj.sequence_projection.in_sample
 
-    # Compare membership to statsectors_msa.npz (top-kstar only — the
-    # only groups expanded per sequence per the kstar scoping).
+    # Compare membership to ic_residues_per_seq (top-kstar only — the
+    # only ICs expanded per sequence per the kstar scoping).
     kstar = sca.kstar
-    stats = sca.statsectors_msa
+    stats = sca.ic_residues_per_seq
     for ic in range(kstar):
-        key = f"group_{ic}_{seq_id}"
+        key = f"ic_{ic}_{seq_id}"
         if key not in stats:
             continue
         expected_raw = np.sort(np.asarray(stats[key], dtype=int))

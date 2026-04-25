@@ -82,8 +82,8 @@ def _filter_history_from_jsonable(raw):
 SCARUN_RESULTS_FNAME = "scarun_results.npz"
 SCARUN_ARGS_FNAME = "scarun_args.json"
 SCARUN_EIGENDECOMP_FNAME = "sca_eigendecomp.npz"
-STATSECTORS_MSA_FNAME = "statsectors_msa.npz"
-STATSECTORS_SEQ_FNAME = "statsectors_seq.npz"
+IC_RESIDUES_PER_SEQ_FNAME = "ic_residues_per_seq.npz"
+IC_LOADINGS_PER_SEQ_FNAME = "ic_loadings_per_seq.npz"
 EVALS_SHUFF_FNAME = "evals_shuff.npy"
 
 
@@ -406,13 +406,10 @@ class SCAResults:
         sca_eigendecomp.npz
             evals_sca, evecs_sca, significant_evals_sca, significant_evecs_sca
         scarun_args.json              : dict of SCA parameters
-        statsectors_msa.npz           : per-target IC residues in raw-sequence
-                                        coordinates (despite the `_msa` suffix —
-                                        see Glossary; renaming pending Phase B)
-        statsectors_seq.npz           : same content as `_msa.npz`, plus
-                                        per-position IC loadings; both files
-                                        being migrated to ic_residues_per_seq /
-                                        ic_loadings_per_seq
+        ic_residues_per_seq.npz       : per-target IC residues in raw-sequence
+                                        coordinates, keyed `ic_<i>_<seqid>`
+        ic_loadings_per_seq.npz       : per-residue IC loadings parallel to
+                                        ic_residues_per_seq, same key format
         ic_positions/
             ic_<i>_msaproc.npy        : high-load processed-MSA cols of IC i
             ic_<i>_msaorig.npy        : same positions in original-MSA cols
@@ -527,15 +524,16 @@ class SCAResults:
             "List of per-IC t-distribution fits (df, loc, scale, cutoff) "
             "used to nominate positions. Length n_components."
         ),
-        "statsectors_msa": (
-            "Per-sequence sector mappings keyed `group_{i}_{seqid}` in "
+        "ic_residues_per_seq": (
+            "Per-target IC residues keyed `ic_{i}_{seqid}` in "
             "raw-sequence residue coordinates. Only populated for the "
             "top-kstar ICs and for sequences selected by `--sectors_for`."
         ),
-        "statsectors_seq": (
-            "Companion dict to `statsectors_msa`, containing both "
-            "`sector_{i}_pdbpos_{seqid}` and `sector_{i}_scores_{seqid}` "
-            "arrays keyed by sector index and sequence ID."
+        "ic_loadings_per_seq": (
+            "IC loadings parallel to `ic_residues_per_seq`, same "
+            "`ic_{i}_{seqid}` key format. The j-th value of "
+            "`ic_loadings_per_seq[ic_{i}_{seqid}]` is the IC i loading "
+            "at the residue `ic_residues_per_seq[ic_{i}_{seqid}][j]`."
         ),
         "sca_matrix_sector_subset": (
             "Submatrix of `sca_matrix` restricted to all group positions "
@@ -591,8 +589,8 @@ class SCAResults:
         ic_positions=None,
         group_scores=None,
         t_dists_info=None,
-        statsectors_msa=None,
-        statsectors_seq=None,
+        ic_residues_per_seq=None,
+        ic_loadings_per_seq=None,
         sca_matrix_sector_subset=None,
         # Args
         args=None,
@@ -620,8 +618,8 @@ class SCAResults:
         self.ic_positions = ic_positions
         self.group_scores = group_scores
         self.t_dists_info = t_dists_info
-        self.statsectors_msa = statsectors_msa
-        self.statsectors_seq = statsectors_seq
+        self.ic_residues_per_seq = ic_residues_per_seq
+        self.ic_loadings_per_seq = ic_loadings_per_seq
         self.sca_matrix_sector_subset = sca_matrix_sector_subset
         self.args = args
 
@@ -819,16 +817,17 @@ class SCAResults:
                 os.path.join(scadir, "all_important_positions.npy"), all_imp
             )
 
-        # Statistical sectors in MSA and sequence coordinates
-        if self.statsectors_msa is not None:
+        # Per-target IC residues (raw-sequence coords) and parallel
+        # IC loadings.
+        if self.ic_residues_per_seq is not None:
             np.savez_compressed(
-                os.path.join(outdir, STATSECTORS_MSA_FNAME),
-                **self.statsectors_msa,
+                os.path.join(outdir, IC_RESIDUES_PER_SEQ_FNAME),
+                **self.ic_residues_per_seq,
             )
-        if self.statsectors_seq is not None:
+        if self.ic_loadings_per_seq is not None:
             np.savez_compressed(
-                os.path.join(outdir, STATSECTORS_SEQ_FNAME),
-                **self.statsectors_seq,
+                os.path.join(outdir, IC_LOADINGS_PER_SEQ_FNAME),
+                **self.ic_loadings_per_seq,
             )
 
     @classmethod
@@ -927,16 +926,20 @@ class SCAResults:
             elif not group_scores:
                 group_scores = None
 
-        # Statistical sectors
-        statsectors_msa = None
-        msa_path = os.path.join(dirpath, STATSECTORS_MSA_FNAME)
-        if os.path.isfile(msa_path):
-            statsectors_msa = dict(np.load(msa_path, allow_pickle=True))
+        # Per-target IC residues + loadings.
+        ic_residues_per_seq = None
+        residues_path = os.path.join(dirpath, IC_RESIDUES_PER_SEQ_FNAME)
+        if os.path.isfile(residues_path):
+            ic_residues_per_seq = dict(
+                np.load(residues_path, allow_pickle=True)
+            )
 
-        statsectors_seq = None
-        seq_path = os.path.join(dirpath, STATSECTORS_SEQ_FNAME)
-        if os.path.isfile(seq_path):
-            statsectors_seq = dict(np.load(seq_path, allow_pickle=True))
+        ic_loadings_per_seq = None
+        loadings_path = os.path.join(dirpath, IC_LOADINGS_PER_SEQ_FNAME)
+        if os.path.isfile(loadings_path):
+            ic_loadings_per_seq = dict(
+                np.load(loadings_path, allow_pickle=True)
+            )
 
         return cls(
             Dia=Dia,
@@ -961,9 +964,9 @@ class SCAResults:
             w_ica=w_ica,
             ic_positions=ic_positions,
             group_scores=group_scores,
+            ic_residues_per_seq=ic_residues_per_seq,
+            ic_loadings_per_seq=ic_loadings_per_seq,
             t_dists_info=t_dists_info,
-            statsectors_msa=statsectors_msa,
-            statsectors_seq=statsectors_seq,
             sca_matrix_sector_subset=sca_matrix_sector_subset,
             args=args,
         )

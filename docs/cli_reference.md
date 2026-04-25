@@ -181,7 +181,8 @@ Writes to the specified output directory:
 - `scarun_results.npz` — core SCA results (`Dia`, `conservation`, `sca_matrix`, `phi_ia`, `fi0`, `fia`, `Cij_raw`; optionally `Cijab_raw`, `fijab` with `--save_all`)
 - `sca_eigendecomp.npz` — full + significant eigenvalues/eigenvectors
 - `scarun_args.json` — arguments used
-- `statsectors_msa.npz` / `statsectors_seq.npz` — per-target IC residues in **raw-sequence coordinates** (despite the `_msa` suffix on the first file — see the Glossary's naming note); both files contain the same residue indices, with `_seq.npz` additionally carrying per-residue IC loadings. Only the top-`kstar` ICs are expanded per sequence; selection of which target sequences appear is controlled by `--sectors_for`
+- `ic_residues_per_seq.npz` — per-target IC residues in **raw-sequence coordinates**, keyed `ic_{i}_{seqid}` → 1D int array of residue indices
+- `ic_loadings_per_seq.npz` — per-residue IC loadings parallel to `ic_residues_per_seq`, same `ic_{i}_{seqid}` key format. Only the top-`kstar` ICs are expanded per sequence; which target sequences appear is controlled by `--sectors_for`
 - `sca_results/` — `v_ica_normalized.npy`, `w_ica.npy`, `t_dists_info.json`, `evals_shuff.npy`, `sca_matrix_sector_subset.npy`, scalar text files (`kstar.txt`, `n_components.txt`, etc.), `msa_sectors/sector_*_msapos.npy` + `sector_*_scores.npy`
 - `ic_positions/` — `ic_{i}_msaproc.npy` (high-load IC positions in processed-MSA coordinates) and `ic_{i}_msaorig.npy` (the same positions in original-MSA coordinates), one pair per IC
 - `scarun.log` — run log

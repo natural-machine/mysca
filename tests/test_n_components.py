@@ -163,16 +163,16 @@ def test_per_sequence_sector_mapping_scoped_to_kstar(prepped_indir):
     assert kstar == 2
     assert n_components > kstar
 
-    # statsectors_msa keys are "group_{gidx}_{seqid}".
-    statsectors = dict(np.load(
-        os.path.join(outdir, "statsectors_msa.npz"), allow_pickle=True,
+    # ic_residues_per_seq keys are "ic_{gidx}_{seqid}".
+    per_seq = dict(np.load(
+        os.path.join(outdir, "ic_residues_per_seq.npz"), allow_pickle=True,
     ))
-    group_indices_seen = {
-        int(key.split("_")[1]) for key in statsectors if key.startswith("group_")
+    ic_indices_seen = {
+        int(key.split("_")[1]) for key in per_seq if key.startswith("ic_")
     }
-    assert group_indices_seen <= set(range(kstar)), (
-        f"Expected statsectors only for groups 0..{kstar - 1}; "
-        f"saw {sorted(group_indices_seen)}"
+    assert ic_indices_seen <= set(range(kstar)), (
+        f"Expected ic_residues_per_seq entries only for ICs 0..{kstar - 1}; "
+        f"saw {sorted(ic_indices_seen)}"
     )
 
     # All IC groups (0..n_components-1) are still saved as per-IC msa_sectors files.
