@@ -716,7 +716,10 @@ def _compose_and_save(outdir, basename, nframes, duration, format):
     a white background and save as GIF / MP4 / both, depending on
     ``format``. Shared by spin and reveal animation paths."""
     imageio, Image = _load_animation_deps()
-    seconds_per_frame = duration / nframes
+    # imageio's Pillow GIF writer interprets `duration` as MILLISECONDS
+    # per frame; passing 0.x seconds rounds to 0 and the GIF plays at
+    # the minimum-frame-time fallback (~10ms). Convert to int ms here.
+    ms_per_frame = max(1, int(round(1000 * duration / nframes)))
     fps = nframes / duration
     framesdir = os.path.join(outdir, "frames", f"{basename}_frames")
     frames = []
@@ -730,7 +733,7 @@ def _compose_and_save(outdir, basename, nframes, duration, format):
     if format in ("gif", "both"):
         imageio.mimsave(
             os.path.join(outdir, f"{basename}.gif"),
-            frames, duration=seconds_per_frame, loop=0, disposal=2,
+            frames, duration=ms_per_frame, loop=0, disposal=2,
         )
     if format in ("mp4", "both"):
         _require_ffmpeg()

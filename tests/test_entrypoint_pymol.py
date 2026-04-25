@@ -527,6 +527,33 @@ def test_write_animation_format_gif_default(tmp_path):
     assert "fps" not in mock_imageio.mimsave.call_args.kwargs
 
 
+def test_write_animation_gif_duration_in_milliseconds(tmp_path):
+    """Regression: imageio's Pillow GIF writer interprets `duration`
+    as milliseconds, not seconds. nframes=20 + duration=4.0s → 200ms
+    per frame, NOT 0.2 (which would round to 0ms = flashing GIF)."""
+    cmd = MagicMock()
+    mock_imageio, mock_Image = MagicMock(), MagicMock()
+    with patch("mysca.run_pymol._load_animation_deps",
+               return_value=(mock_imageio, mock_Image)):
+        _write_animation(cmd, str(tmp_path), "X", nframes=20, duration=4.0)
+    duration_passed = mock_imageio.mimsave.call_args.kwargs["duration"]
+    assert duration_passed == 200, (
+        f"Expected 200ms/frame, got {duration_passed} (GIF would flash)"
+    )
+
+
+def test_write_animation_gif_duration_floor_at_one_ms(tmp_path):
+    """Even at extreme nframes/duration ratios, ms_per_frame must
+    floor at 1, never 0 (0 = max-speed flashing GIF)."""
+    cmd = MagicMock()
+    mock_imageio, mock_Image = MagicMock(), MagicMock()
+    with patch("mysca.run_pymol._load_animation_deps",
+               return_value=(mock_imageio, mock_Image)):
+        _write_animation(cmd, str(tmp_path), "X", nframes=1000, duration=0.1)
+    duration_passed = mock_imageio.mimsave.call_args.kwargs["duration"]
+    assert duration_passed >= 1
+
+
 def test_write_animation_format_mp4(tmp_path):
     """--format mp4: writes exactly one .mp4 via imageio.mimsave with
     fps=nframes/duration. _require_ffmpeg is invoked first."""
