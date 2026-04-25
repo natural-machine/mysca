@@ -49,3 +49,19 @@ sca-pymol \
     --multisector \
     --animate \
     -o ${outdir}/pymol_anim_multi
+
+# MP4 pass: same combined rotation also written as MP4 alongside the
+# GIF. Requires the optional imageio-ffmpeg dep; skip gracefully if
+# the env doesn't have it.
+if python -c "import imageio_ffmpeg" >/dev/null 2>&1; then
+    sca-pymol \
+        --structure ${outdir}/structure \
+        --groups 0 1 \
+        --multisector \
+        --animate \
+        --format both \
+        -o ${outdir}/pymol_anim_mp4
+else
+    echo "[step7_pymol] imageio-ffmpeg not importable; skipping mp4 pass." >&2
+    echo "  pip install imageio-ffmpeg  (or: pip install -e '.[mp4]')" >&2
+fi

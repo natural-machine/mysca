@@ -114,6 +114,24 @@ def test_parse_args_rejects_bad_ray():
         parse_args(["--structure", "x", "-o", "y", "--ray", "maybe"])
 
 
+def test_parse_args_accepts_format_choices():
+    for fmt in ("gif", "mp4", "both"):
+        args = parse_args([
+            "--structure", "x", "-o", "y", "--format", fmt,
+        ])
+        assert args.format == fmt
+
+
+def test_parse_args_format_defaults_to_gif():
+    args = parse_args(["--structure", "x", "-o", "y"])
+    assert args.format == "gif"
+
+
+def test_parse_args_rejects_bad_format():
+    with pytest.raises(SystemExit):
+        parse_args(["--structure", "x", "-o", "y", "--format", "webm"])
+
+
 def test_split_features_names_strips_and_filters_empties():
     assert _split_features_names(None) == []
     assert _split_features_names("") == []
@@ -483,6 +501,109 @@ def test_write_animation_dpi_forwards(tmp_path):
         )
     for c in cmd.png.call_args_list:
         assert c.kwargs["dpi"] == 150
+
+
+# ---------------------------------------------------------------------- #
+# _write_animation format: gif / mp4 / both                              #
+# ---------------------------------------------------------------------- #
+
+
+def test_write_animation_format_gif_default(tmp_path):
+    """Default format writes exactly one .gif via imageio.mimsave."""
+    cmd = MagicMock()
+    mock_imageio, mock_Image = MagicMock(), MagicMock()
+    with patch("mysca.run_pymol._load_animation_deps",
+               return_value=(mock_imageio, mock_Image)):
+        _write_animation(cmd, str(tmp_path), "X", nframes=2, duration=0.2)
+    assert mock_imageio.mimsave.call_count == 1
+    outfile = mock_imageio.mimsave.call_args.args[0]
+    assert outfile.endswith("X.gif")
+    # GIF path passes `duration`, not `fps`.
+    assert "duration" in mock_imageio.mimsave.call_args.kwargs
+    assert "fps" not in mock_imageio.mimsave.call_args.kwargs
+
+
+def test_write_animation_format_mp4(tmp_path):
+    """--format mp4: writes exactly one .mp4 via imageio.mimsave with
+    fps=nframes/duration. _require_ffmpeg is invoked first."""
+    cmd = MagicMock()
+    mock_imageio, mock_Image = MagicMock(), MagicMock()
+    with patch("mysca.run_pymol._load_animation_deps",
+               return_value=(mock_imageio, mock_Image)), \
+         patch("mysca.run_pymol._require_ffmpeg") as mock_req:
+        _write_animation(
+            cmd, str(tmp_path), "X", nframes=4, duration=0.4, format="mp4",
+        )
+    mock_req.assert_called_once()
+    assert mock_imageio.mimsave.call_count == 1
+    outfile = mock_imageio.mimsave.call_args.args[0]
+    assert outfile.endswith("X.mp4")
+    assert mock_imageio.mimsave.call_args.kwargs["fps"] == 10.0
+
+
+def test_write_animation_format_both(tmp_path):
+    """--format both: writes .gif AND .mp4. ffmpeg required."""
+    cmd = MagicMock()
+    mock_imageio, mock_Image = MagicMock(), MagicMock()
+    with patch("mysca.run_pymol._load_animation_deps",
+               return_value=(mock_imageio, mock_Image)), \
+         patch("mysca.run_pymol._require_ffmpeg") as mock_req:
+        _write_animation(
+            cmd, str(tmp_path), "X", nframes=2, duration=0.2, format="both",
+        )
+    mock_req.assert_called_once()
+    assert mock_imageio.mimsave.call_count == 2
+    outfiles = [c.args[0] for c in mock_imageio.mimsave.call_args_list]
+    assert any(p.endswith("X.gif") for p in outfiles)
+    assert any(p.endswith("X.mp4") for p in outfiles)
+
+
+def test_write_animation_format_gif_skips_ffmpeg_check(tmp_path):
+    """--format gif must NOT invoke _require_ffmpeg (the whole point of
+    keeping gif the default is that imageio-ffmpeg is optional)."""
+    cmd = MagicMock()
+    mock_imageio, mock_Image = MagicMock(), MagicMock()
+    with patch("mysca.run_pymol._load_animation_deps",
+               return_value=(mock_imageio, mock_Image)), \
+         patch("mysca.run_pymol._require_ffmpeg") as mock_req:
+        _write_animation(
+            cmd, str(tmp_path), "X", nframes=2, duration=0.2, format="gif",
+        )
+    mock_req.assert_not_called()
+
+
+def test_require_ffmpeg_raises_with_hint(monkeypatch):
+    """_require_ffmpeg raises ImportError with an install hint when
+    imageio_ffmpeg is not importable."""
+    from mysca.run_pymol import _require_ffmpeg
+    import sys
+    real_mod = sys.modules.pop("imageio_ffmpeg", None)
+    # Block the import so the call is guaranteed to fail regardless of
+    # whether the package is installed on this machine.
+    import builtins
+    real_import = builtins.__import__
+
+    def blocked(name, *a, **kw):
+        if name == "imageio_ffmpeg":
+            raise ImportError("blocked for test")
+        return real_import(name, *a, **kw)
+
+    monkeypatch.setattr(builtins, "__import__", blocked)
+    try:
+        with pytest.raises(ImportError, match="imageio-ffmpeg"):
+            _require_ffmpeg()
+    finally:
+        if real_mod is not None:
+            sys.modules["imageio_ffmpeg"] = real_mod
+
+
+def test_render_frame_forwards_format_to_write_animation(tmp_path):
+    cmd = MagicMock()
+    with patch("mysca.run_pymol._write_animation") as mock_anim:
+        _render_frame(**_render_frame_kwargs(
+            cmd, tmp_path, animate=True, format="mp4",
+        ))
+    assert mock_anim.call_args.kwargs["format"] == "mp4"
 
 
 # ---------------------------------------------------------------------- #

@@ -203,6 +203,7 @@ sca-pymol --structure <structure-out-dir> \
     [--views] [--animate] [--nframes N] [--duration SEC] \
     [--spin_axis {x,y,z}] [--spin_degrees N] \
     [--ray {none,first,all}] [--dpi N] \
+    [--format {gif,mp4,both}] \
     -o <outdir> [-v N]
 ```
 
@@ -231,6 +232,7 @@ sca-pymol --structure <structure-out-dir> \
 | `--spin_degrees` | 360 | Total rotation in degrees over `--nframes`. Set to e.g. 180 for a half-spin, 90 for a quarter-turn |
 | `--ray` | `all` | Ray-tracing policy for animation frames: `all` (every frame, best quality, slowest), `first` (only frame 0), `none` (disabled, fastest) |
 | `--dpi` | 300 | DPI for all rendered PNGs (stills, views, and animation frames) |
+| `--format` | `gif` | Animation output format: `gif` (default), `mp4` (smaller / higher quality, requires the optional `imageio-ffmpeg` dependency), or `both` (writes `.gif` AND `.mp4` from the same frame series) |
 | `-v, --verbosity` | 1 | Verbosity level |
 
 ### Output
@@ -300,11 +302,22 @@ sca-pymol --structure out/structure \
     --groups 0 --animate \
     --spin_axis x --spin_degrees 180 --ray none --dpi 150 \
     -o out/pymol_preview
+
+# MP4 output (smaller + higher-quality than GIF).
+sca-pymol --structure out/structure \
+    --groups 0 1 --multisector --animate --format mp4 \
+    -o out/pymol_mp4
+
+# Emit both formats from the same frame series (cheap — frames are
+# already on disk, the second encode is just ffmpeg).
+sca-pymol --structure out/structure \
+    --groups 0 --animate --format both \
+    -o out/pymol_both
 ```
 
 `--ray all` ray-traces every frame (today's default — best quality, slowest). `--ray first` only rays frame 0 (viewport for the rest — mixed look but ~10× faster). `--ray none` disables ray-tracing entirely for previews.
 
-Requires `imageio` + `Pillow` (both ship as deps of `pymol-open-source` on conda-forge; on a minimal env install via `pip install imageio pillow`).
+`--format gif` requires only `imageio` + `Pillow` (both ship as deps of `pymol-open-source` on conda-forge; on a minimal env install via `pip install imageio pillow`). `--format mp4` / `--format both` additionally require `imageio-ffmpeg` (`pip install imageio-ffmpeg` or `pip install -e '.[mp4]'`), which bundles its own ffmpeg binary.
 
 ---
 

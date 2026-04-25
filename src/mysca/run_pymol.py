@@ -50,6 +50,9 @@ COMMAND LINE ARGUMENTS:
         'all' (default) rays every frame, 'first' rays only frame 0,
         'none' disables ray-tracing.
     --dpi N : DPI for all rendered PNGs (default 300).
+    --format {gif,mp4,both} : animation output format (default gif).
+        'mp4' / 'both' require the optional ``imageio-ffmpeg``
+        dependency.
 
 -------------------------------------------------------------------------------
 EXAMPLE USAGE:
@@ -187,6 +190,14 @@ def parse_args(args):
         "frames). Default 300.",
     )
     parser.add_argument(
+        "--format", type=str, default="gif",
+        choices=["gif", "mp4", "both"],
+        help="Animation output format. 'gif' (default), 'mp4' "
+        "(smaller / higher quality, requires the optional "
+        "imageio-ffmpeg dependency), or 'both' (writes .gif AND "
+        ".mp4 from the same frame series).",
+    )
+    parser.add_argument(
         "-v", "--verbosity", type=int, default=1,
         help="Verbosity level (0=warnings only).",
     )
@@ -269,6 +280,18 @@ def _load_animation_deps():
     return imageio, Image
 
 
+def _require_ffmpeg():
+    """Verify imageio-ffmpeg is importable for MP4 output."""
+    try:
+        import imageio_ffmpeg  # noqa: F401
+    except ImportError as exc:
+        raise ImportError(
+            "--format mp4/both requires the optional imageio-ffmpeg "
+            "dependency. Install via `pip install imageio-ffmpeg` "
+            "(ships a bundled ffmpeg binary)."
+        ) from exc
+
+
 def main(args):
     outdir = args.outdir
     os.makedirs(outdir, exist_ok=True)
@@ -346,6 +369,7 @@ def main(args):
             spin_degrees=args.spin_degrees,
             ray=args.ray,
             dpi=args.dpi,
+            format=args.format,
         )
 
     logger.info("Done!")
@@ -369,6 +393,7 @@ def _render_one_structure(
         spin_degrees: float = 360.0,
         ray: str = "all",
         dpi: int = 300,
+        format: str = "gif",
 ):
     struct_color = DEFAULT_STRUCT_COLOR
     struct_style = DEFAULT_STRUCT_STYLE
@@ -441,6 +466,7 @@ def _render_one_structure(
             spin_degrees=spin_degrees,
             ray=ray,
             dpi=dpi,
+            format=format,
         )
     else:
         logger.info("Plotting %s by sector...", scaffold)
@@ -463,6 +489,7 @@ def _render_one_structure(
             spin_degrees=spin_degrees,
             ray=ray,
             dpi=dpi,
+            format=format,
         )
 
 
@@ -562,10 +589,12 @@ def _write_animation(
         spin_degrees: float = 360.0,
         ray: str = "all",
         dpi: int = 300,
+        format: str = "gif",
 ):
     imageio, Image = _load_animation_deps()
     import tqdm as _tqdm
     seconds_per_frame = duration / nframes
+    fps = nframes / duration
     framesdir = os.path.join(outdir, "frames", f"{basename}_frames")
     os.makedirs(framesdir, exist_ok=True)
     per_turn = spin_degrees / nframes
@@ -584,10 +613,19 @@ def _write_animation(
         bg = Image.new("RGB", im.size, (255, 255, 255))
         bg.paste(im, mask=im.getchannel("A"))
         frames.append(np.array(bg))
-    outfile = os.path.join(outdir, f"{basename}.gif")
-    imageio.mimsave(
-        outfile, frames, duration=seconds_per_frame, loop=0, disposal=2,
-    )
+    if format in ("gif", "both"):
+        imageio.mimsave(
+            os.path.join(outdir, f"{basename}.gif"),
+            frames, duration=seconds_per_frame, loop=0, disposal=2,
+        )
+    if format in ("mp4", "both"):
+        _require_ffmpeg()
+        # macro_block_size=1 sidesteps ffmpeg's requirement that video
+        # dimensions be multiples of 16 (which our raw PNGs rarely are).
+        imageio.mimsave(
+            os.path.join(outdir, f"{basename}.mp4"),
+            frames, fps=fps, macro_block_size=1,
+        )
 
 
 def _render_frame(
@@ -612,6 +650,7 @@ def _render_frame(
         spin_degrees: float = 360.0,
         ray: str = "all",
         dpi: int = 300,
+        format: str = "gif",
 ):
     """Render one frame with the given set of IC groups lit up.
 
@@ -660,7 +699,7 @@ def _render_frame(
         _write_animation(
             cmd, outdir, basename, nframes, duration,
             spin_axis=spin_axis, spin_degrees=spin_degrees,
-            ray=ray, dpi=dpi,
+            ray=ray, dpi=dpi, format=format,
         )
 
     for sel_name in created:
@@ -689,6 +728,7 @@ def _plot_by_sectors(
         spin_degrees: float = 360.0,
         ray: str = "all",
         dpi: int = 300,
+        format: str = "gif",
 ):
     if nframes is None:
         nframes = 24
@@ -717,6 +757,7 @@ def _plot_by_sectors(
             spin_degrees=spin_degrees,
             ray=ray,
             dpi=dpi,
+            format=format,
         )
 
 
@@ -740,6 +781,7 @@ def _plot_with_multiple_sectors(
         spin_degrees: float = 360.0,
         ray: str = "all",
         dpi: int = 300,
+        format: str = "gif",
 ):
     if nframes is None:
         nframes = 24
@@ -768,6 +810,7 @@ def _plot_with_multiple_sectors(
         spin_degrees=spin_degrees,
         ray=ray,
         dpi=dpi,
+        format=format,
     )
 
 
