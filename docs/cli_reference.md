@@ -4,6 +4,10 @@ mysca provides command-line tools for running Statistical Coupling Analysis.
 
 ---
 
+> **Vocabulary.** The rest of this document assumes the terminology established in [Glossary](glossary.md) — concepts, coordinate spaces, and the IC/sector/component naming convention.
+
+---
+
 ## sca-prealign
 
 Optionally cluster and then align raw (unaligned) FASTA sequences, producing an aligned MSA suitable for `sca-preprocess`.
@@ -177,7 +181,7 @@ Writes to the specified output directory:
 - `scarun_results.npz` — core SCA results (`Dia`, `conservation`, `sca_matrix`, `phi_ia`, `fi0`, `fia`, `Cij_raw`; optionally `Cijab_raw`, `fijab` with `--save_all`)
 - `sca_eigendecomp.npz` — full + significant eigenvalues/eigenvectors
 - `scarun_args.json` — arguments used
-- `statsectors_msa.npz` / `statsectors_seq.npz` — per-sequence sector mappings in processed-MSA and raw-sequence coordinates; only the top-`kstar` IC groups are expanded per sequence
+- `statsectors_msa.npz` / `statsectors_seq.npz` — per-target IC residues in **raw-sequence coordinates** (despite the `_msa` suffix on the first file — see the Glossary's naming note); both files contain the same residue indices, with `_seq.npz` additionally carrying per-residue IC loadings. Only the top-`kstar` ICs are expanded per sequence; selection of which target sequences appear is controlled by `--sectors_for`
 - `sca_results/` — `v_ica_normalized.npy`, `w_ica.npy`, `t_dists_info.json`, `evals_shuff.npy`, `sca_matrix_sector_subset.npy`, scalar text files (`kstar.txt`, `n_components.txt`, etc.), `msa_sectors/sector_*_msapos.npy` + `sector_*_scores.npy`
 - `groups/` — `group_{i}_msapos.npy` (sector positions in processed-MSA coordinates), one per IC
 - `scarun.log` — run log

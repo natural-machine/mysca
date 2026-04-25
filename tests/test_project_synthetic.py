@@ -33,6 +33,10 @@ import pytest
 from tests.conftest import DATDIR
 from tests.test_structure import _write_minimal_pdb  # fixture helper
 
+from mysca.helpers import (
+    get_rawseq_indices_of_msa,
+    get_rawseq_positions_in_groups,
+)
 from mysca.project import project_sequences
 from mysca.project.projection import _gapless, _residue_indices_for_aligned
 from mysca.results import PreprocessingResults, SCAResults
@@ -507,6 +511,66 @@ def sca_dir_with_synthetic_groups(prep_and_sca_dirs, expected, tmp_path_factory)
     synth_groups = expected["synthetic_ic_groups"]["groups"]
     _inject_synthetic_groups(dest, synth_groups)
     return dest
+
+
+def test_synthetic_statsectors_construction_matches_ground_truth(
+        prep_and_sca_dirs, expected,
+):
+    """Independent ground-truth contract test for the per-target IC
+    residue projection that backs `statsectors_msa.npz`.
+
+    Replicates the exact chain `run_sca.py` uses to populate
+    `statsectors_msa` (raw-sequence index lookup → retained-positions
+    slice → `get_rawseq_positions_in_groups`) against the hand-crafted
+    synthetic groups, and asserts the output matches the
+    *independently hand-specified* `expected_ic_memberships` table in
+    `expected.json`.
+
+    The sibling tests `test_statsectors_msa_values_are_target_residue_indices`
+    and `test_statsectors_msa_values_match_raw_seq_lookup_from_groups`
+    in test_project.py are *consistency* tests: they verify that the
+    file's contents are reachable via the producer chain. This test
+    closes the loop with an independent ground truth — it would catch
+    off-by-one or gap-handling bugs in `get_rawseq_positions_in_groups`
+    or its callers that the consistency tests would silently mirror.
+    """
+    prep_dir, _ = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+
+    rawseq_idxs = get_rawseq_indices_of_msa(prep.msa_obj_orig)
+    retained_sequences = np.asarray(prep.retained_sequences, dtype=int)
+    retained_positions = np.asarray(prep.retained_positions, dtype=int)
+    rawseq_idxs = rawseq_idxs[retained_sequences, :][:, retained_positions]
+
+    synthetic_groups = expected["synthetic_ic_groups"]["groups"]
+    per_seq_per_ic = get_rawseq_positions_in_groups(
+        rawseq_idxs, synthetic_groups,
+    )
+
+    expected_map = expected["expected_ic_memberships"]
+    msa_ids_by_retained_idx = [
+        prep.msa_obj_orig[int(s)].id for s in retained_sequences
+    ]
+    asserted_at_least_one = False
+    for retained_idx, seqid in enumerate(msa_ids_by_retained_idx):
+        if seqid not in expected_map:
+            continue
+        for ic, exp_residues in enumerate(expected_map[seqid]):
+            got = sorted(per_seq_per_ic[retained_idx][ic])
+            exp = sorted(exp_residues)
+            assert got == exp, (
+                f"Synthetic statsectors construction for {seqid} IC "
+                f"{ic}: got {got}, expected {exp} (independent "
+                f"ground truth from expected.json). The producer "
+                f"chain (rawseq_idxs → retained_positions → "
+                f"get_rawseq_positions_in_groups) appears to have "
+                f"drifted."
+            )
+            asserted_at_least_one = True
+    assert asserted_at_least_one, (
+        "Test made zero assertions; expected_ic_memberships and the "
+        "retained-sequence list don't intersect (fixture broken?)."
+    )
 
 
 def test_injected_groups_roundtrip(sca_dir_with_synthetic_groups, expected):

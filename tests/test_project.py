@@ -33,6 +33,7 @@ from mysca.project import (
     ProjectionResult,
     SequenceProjection,
 )
+from mysca.helpers import get_rawseq_indices_of_msa
 from mysca.project.alignment import _hmmalign
 from mysca.project.projection import _gapless, _residue_indices_for_aligned
 from mysca.results import PreprocessingResults, SCAResults
@@ -154,6 +155,105 @@ def test_project_in_sample_matches_statsectors_msa(prep_and_sca_dirs):
                 f"Mismatch for {proj.seq_id} IC {ic}: "
                 f"project={got.tolist()} vs statsectors={expected.tolist()}"
             )
+
+
+# ---------------------------------------------------------------------- #
+# statsectors_msa coordinate-space contract tests.                       #
+#                                                                        #
+# Despite the historical `_msa` filename suffix, statsectors_msa.npz     #
+# values are in *raw-sequence target-residue* coordinates, NOT MSA-col   #
+# coordinates. These tests pin that contract so any future refactor      #
+# that confuses the two will fail loudly.                                #
+# ---------------------------------------------------------------------- #
+
+
+def test_statsectors_msa_values_are_target_residue_indices(prep_and_sca_dirs):
+    """Bounds check: every value in statsectors_msa is a valid 0-based
+    index into the target's raw (gap-free) sequence.
+
+    If values were MSA col indices they'd be bounded by L_orig (the
+    alignment length), which is generally larger than any individual
+    target's raw-sequence length. This test would have caught the
+    historical _msa-suffix misnomer for any sequence whose raw length
+    is shorter than L_orig (i.e. any sequence with at least one gap).
+    """
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    sca = SCAResults.load(sca_dir)
+    if not sca.statsectors_msa:
+        pytest.skip("statsectors_msa not populated by fixture")
+
+    raw_lengths = {
+        rec.id: len(str(rec.seq).replace("-", "").replace(".", ""))
+        for rec in prep.msa_obj_orig
+    }
+    L_orig = prep.msa_obj_orig.get_alignment_length()
+
+    for key, arr in sca.statsectors_msa.items():
+        # Key format: "group_{j}_{seqid}". seqid may contain underscores
+        # (e.g. Pfam-style "VAV_HUMAN/788-834"); split only the leading 2.
+        prefix, _j_str, seqid = key.split("_", 2)
+        assert prefix == "group", f"unexpected key format: {key}"
+        L_target = raw_lengths[seqid]
+        arr_np = np.asarray(arr, dtype=int)
+        if arr_np.size == 0:
+            continue
+        assert (arr_np >= 0).all(), (
+            f"{key}: contains negative indices "
+            f"{arr_np[arr_np < 0].tolist()}"
+        )
+        assert (arr_np < L_target).all(), (
+            f"{key}: max index {int(arr_np.max())} >= raw-seq length "
+            f"{L_target} for {seqid!r}. If values were MSA col indices "
+            f"they'd be bounded by L_orig={L_orig}; the contract is "
+            f"raw-sequence target-residue indices."
+        )
+
+
+def test_statsectors_msa_values_match_raw_seq_lookup_from_groups(
+        prep_and_sca_dirs,
+):
+    """Semantic contract: statsectors_msa[group_{j}_{seqid}] equals the
+    raw-sequence residue indices recovered by looking up groups[j]
+    (processed-MSA cols) → original-MSA cols (via retained_positions) →
+    the target sequence's raw-residue indices (via the MSA row, with
+    target-gap cols dropped).
+
+    This is the canonical reconstruction. It enforces that the file's
+    contents are in *target raw-sequence* coordinates and pins the data
+    flow against any future refactor that swaps in MSA-col indices.
+    """
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    sca = SCAResults.load(sca_dir)
+    if not sca.statsectors_msa or not sca.groups:
+        pytest.skip("statsectors_msa or groups not populated by fixture")
+
+    rawseq_idxs = get_rawseq_indices_of_msa(prep.msa_obj_orig)
+    seq_msa_idx_by_id = {
+        rec.id: i for i, rec in enumerate(prep.msa_obj_orig)
+    }
+    retained_positions = np.asarray(prep.retained_positions, dtype=int)
+
+    for key, arr in sca.statsectors_msa.items():
+        prefix, j_str, seqid = key.split("_", 2)
+        assert prefix == "group"
+        j = int(j_str)
+        seq_msa_idx = seq_msa_idx_by_id[seqid]
+        original_msa_cols = retained_positions[
+            np.asarray(sca.groups[j], dtype=int)
+        ]
+        expected = rawseq_idxs[seq_msa_idx, original_msa_cols]
+        expected = expected[expected >= 0]  # drop target gaps
+        got = np.asarray(arr, dtype=int)
+        np.testing.assert_array_equal(
+            np.sort(got), np.sort(expected),
+            err_msg=(
+                f"{key}: values do not match the raw-seq lookup of "
+                f"groups[{j}]. If you've changed how statsectors_msa "
+                f"is populated, the on-disk contract has drifted."
+            ),
+        )
 
 
 def test_project_in_sample_does_not_invoke_aligner(prep_and_sca_dirs, tmp_path):
