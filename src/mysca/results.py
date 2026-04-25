@@ -406,8 +406,17 @@ class SCAResults:
         sca_eigendecomp.npz
             evals_sca, evecs_sca, significant_evals_sca, significant_evecs_sca
         scarun_args.json              : dict of SCA parameters
-        statsectors_msa.npz           : sector positions in MSA coordinates
-        statsectors_seq.npz           : sector positions in sequence coordinates
+        statsectors_msa.npz           : per-target IC residues in raw-sequence
+                                        coordinates (despite the `_msa` suffix —
+                                        see Glossary; renaming pending Phase B)
+        statsectors_seq.npz           : same content as `_msa.npz`, plus
+                                        per-position IC loadings; both files
+                                        being migrated to ic_residues_per_seq /
+                                        ic_loadings_per_seq
+        ic_positions/
+            ic_<i>_msaproc.npy        : high-load processed-MSA cols of IC i
+            ic_<i>_msaorig.npy        : same positions in original-MSA cols
+                                        (recovered via retained_positions)
         sca_results/
             kstar.txt                 : number of significant eigenvalues used
             kstar_identified.txt      : number identified by bootstrap
@@ -418,7 +427,8 @@ class SCAResults:
             t_dists_info.json         : t-distribution fit parameters
             evals_shuff.npy           : bootstrap eigenvalues
             sca_matrix_sector_subset.npy
-            msa_sectors/sector_*      : per-sector position and score arrays
+            msa_sectors/sector_*      : per-IC position and loading arrays
+                                        (legacy load source; rename pending)
     """
 
     FIELD_DESCRIPTIONS = {
@@ -503,15 +513,15 @@ class SCAResults:
         "w_ica": (
             "ICA unmixing matrix (float array n_components x n_components)."
         ),
-        # Sectors
-        "groups": (
-            "Per-IC list of position indices (processed-MSA coordinates) "
-            "that cleared the t-distribution cutoff and were assigned to "
-            "that IC. Length n_components; each entry is a 1D int array."
+        # IC positions (high-load, per-IC)
+        "ic_positions": (
+            "Per-IC list of high-load position indices (processed-MSA "
+            "coordinates) that cleared the per-IC t-distribution cutoff. "
+            "Length n_components; each entry is a 1D int array."
         ),
         "group_scores": (
-            "Per-IC list of IC projections for the positions in `groups[i]` "
-            "(same shape structure as `groups`)."
+            "Per-IC list of IC loadings for the positions in "
+            "`ic_positions[i]` (same shape structure as `ic_positions`)."
         ),
         "t_dists_info": (
             "List of per-IC t-distribution fits (df, loc, scale, cutoff) "
@@ -577,8 +587,8 @@ class SCAResults:
         # ICA
         v_ica=None,
         w_ica=None,
-        # Sectors
-        groups=None,
+        # IC positions (high-load, per-IC)
+        ic_positions=None,
         group_scores=None,
         t_dists_info=None,
         statsectors_msa=None,
@@ -607,7 +617,7 @@ class SCAResults:
         self.evals_shuff = evals_shuff
         self.v_ica = v_ica
         self.w_ica = w_ica
-        self.groups = groups
+        self.ic_positions = ic_positions
         self.group_scores = group_scores
         self.t_dists_info = t_dists_info
         self.statsectors_msa = statsectors_msa
@@ -616,10 +626,10 @@ class SCAResults:
         self.args = args
 
     @property
-    def n_sectors(self):
-        if self.groups is None:
+    def n_ic_positions(self):
+        if self.ic_positions is None:
             return None
-        return len(self.groups)
+        return len(self.ic_positions)
 
     @property
     def n_positions(self):
@@ -647,12 +657,16 @@ class SCAResults:
             args=args,
         )
 
-    def save(self, outdir, save_all=False):
+    def save(self, outdir, save_all=False, *, retained_positions=None):
         """Save results to the given directory.
 
         Args:
             outdir: Output directory path.
             save_all: If True, include large arrays (Cijab_raw, fijab).
+            retained_positions: Optional 1D int array mapping
+                processed-MSA col -> original-MSA col. When supplied,
+                the per-IC ic_positions/ic_<i>_msaorig.npy sibling is
+                written alongside ic_<i>_msaproc.npy.
         """
         scadir = os.path.join(outdir, "sca_results")
         os.makedirs(outdir, exist_ok=True)
@@ -752,18 +766,33 @@ class SCAResults:
                 self.sca_matrix_sector_subset,
             )
 
-        # Groups (sectors) in MSA coordinates
-        if self.groups is not None:
+        # IC positions in processed-MSA coordinates (and optionally
+        # original-MSA coordinates as a sibling, if retained_positions
+        # is supplied).
+        if self.ic_positions is not None:
             sector_dir = os.path.join(scadir, "msa_sectors")
-            groups_dir = os.path.join(outdir, "groups")
+            ic_pos_dir = os.path.join(outdir, "ic_positions")
             os.makedirs(sector_dir, exist_ok=True)
-            os.makedirs(groups_dir, exist_ok=True)
-            for i, group in enumerate(self.groups):
+            os.makedirs(ic_pos_dir, exist_ok=True)
+            rp = (
+                np.asarray(retained_positions, dtype=int)
+                if retained_positions is not None else None
+            )
+            for i, positions in enumerate(self.ic_positions):
                 np.save(
-                    os.path.join(groups_dir, f"group_{i}_msapos.npy"), group
+                    os.path.join(ic_pos_dir, f"ic_{i}_msaproc.npy"),
+                    positions,
                 )
+                if rp is not None:
+                    np.save(
+                        os.path.join(ic_pos_dir, f"ic_{i}_msaorig.npy"),
+                        rp[np.asarray(positions, dtype=int)],
+                    )
+                # Internal load-source path. Pending Phase B rename to
+                # sca_results/ic_positions/.
                 np.save(
-                    os.path.join(sector_dir, f"sector_{i}_msapos.npy"), group
+                    os.path.join(sector_dir, f"sector_{i}_msapos.npy"),
+                    positions,
                 )
                 if self.group_scores is not None:
                     np.save(
@@ -771,12 +800,13 @@ class SCAResults:
                         self.group_scores[i],
                     )
             # Combined mapping. Guard against the edge case where every IC
-            # group is empty — np.concatenate of all-empty lists raises.
+            # has an empty position set — np.concatenate of all-empty lists
+            # raises.
             from mysca.run_sca import _safe_concat_int
-            group_idxs_all = _safe_concat_int(self.groups)
+            group_idxs_all = _safe_concat_int(self.ic_positions)
             group_idx_labels = _safe_concat_int(
                 [np.full(len(g), i, dtype=int)
-                 for i, g in enumerate(self.groups)]
+                 for i, g in enumerate(self.ic_positions)]
             )
             msapos_to_groupidx = np.vstack([group_idxs_all, group_idx_labels])
             np.save(
@@ -873,25 +903,26 @@ class SCAResults:
             os.path.join(scadir, "sca_matrix_sector_subset.npy")
         )
 
-        # Groups from msa_sectors directory
-        groups = None
+        # IC positions from msa_sectors directory (legacy load source;
+        # pending rename to sca_results/ic_positions/).
+        ic_positions = None
         group_scores = None
         sector_dir = os.path.join(scadir, "msa_sectors")
         if os.path.isdir(sector_dir):
-            groups = []
+            ic_positions = []
             group_scores = []
             i = 0
             while True:
                 gpath = os.path.join(sector_dir, f"sector_{i}_msapos.npy")
                 if not os.path.isfile(gpath):
                     break
-                groups.append(np.load(gpath))
+                ic_positions.append(np.load(gpath))
                 spath = os.path.join(sector_dir, f"sector_{i}_scores.npy")
                 if os.path.isfile(spath):
                     group_scores.append(np.load(spath))
                 i += 1
-            if not groups:
-                groups = None
+            if not ic_positions:
+                ic_positions = None
                 group_scores = None
             elif not group_scores:
                 group_scores = None
@@ -928,7 +959,7 @@ class SCAResults:
             evals_shuff=evals_shuff,
             v_ica=v_ica,
             w_ica=w_ica,
-            groups=groups,
+            ic_positions=ic_positions,
             group_scores=group_scores,
             t_dists_info=t_dists_info,
             statsectors_msa=statsectors_msa,

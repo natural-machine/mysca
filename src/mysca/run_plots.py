@@ -252,16 +252,18 @@ def _replay_scacore(stage_dir, imgdir_override, *, preproc_dir=None):
             "skipping t-distribution plot.", stage_dir,
         )
 
-    if sca.groups is None:
+    if sca.ic_positions is None:
         logger.warning(
-            "No sector groups on disk in %s; skipping EV/IC scatter + "
+            "No IC positions on disk in %s; skipping EV/IC scatter + "
             "sector-subset plots.",
             stage_dir,
         )
         return
 
     if sca.significant_evecs_sca is not None:
-        _replay_data_sweeps("ev", sca.significant_evecs_sca, sca.groups, imgdir)
+        _replay_data_sweeps(
+            "ev", sca.significant_evecs_sca, sca.ic_positions, imgdir,
+        )
     else:
         logger.warning(
             "No significant_evecs_sca in %s; skipping EV scatter plots.",
@@ -269,7 +271,7 @@ def _replay_scacore(stage_dir, imgdir_override, *, preproc_dir=None):
         )
 
     if sca.v_ica is not None:
-        _replay_data_sweeps("ic", sca.v_ica, sca.groups, imgdir)
+        _replay_data_sweeps("ic", sca.v_ica, sca.ic_positions, imgdir)
     else:
         logger.warning(
             "No v_ica_normalized in %s; skipping IC scatter plots.", stage_dir,
@@ -278,7 +280,8 @@ def _replay_scacore(stage_dir, imgdir_override, *, preproc_dir=None):
     if sca.sca_matrix_sector_subset is not None:
         from mysca.constants import SECTOR_COLORS
         plot_sca_matrix_sector_subset(
-            sca.sca_matrix_sector_subset, sca.groups, SECTOR_COLORS, imgdir,
+            sca.sca_matrix_sector_subset, sca.ic_positions,
+            SECTOR_COLORS, imgdir,
         )
     else:
         logger.warning(

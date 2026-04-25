@@ -206,7 +206,7 @@ def _write_per_structure_tsv(outdir, proj):
             "processed_col\tv_ica_loading\n"
         )
         for ic_idx, (members, loadings, cols, pdb_resids) in enumerate(zip(
-            seq_proj.ic_memberships,
+            seq_proj.ic_residues,
             seq_proj.ic_loadings,
             seq_proj.ic_processed_cols,
             proj.ic_pdb_residues,

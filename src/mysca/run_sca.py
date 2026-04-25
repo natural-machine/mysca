@@ -67,16 +67,20 @@ scarun_args.json
     CLI arguments used for the run.
 
 statsectors_msa.npz / statsectors_seq.npz
-    Per-sequence sector mappings in processed-MSA and raw-sequence
-    coordinates. Only top-kstar ICs are expanded per sequence.
+    Per-target IC residues in raw-sequence coordinates (despite the
+    `_msa` suffix on the first file — see Glossary). Both files contain
+    the same residue indices; `_seq.npz` additionally has per-residue
+    IC loadings. Rename to ic_residues_per_seq / ic_loadings_per_seq
+    pending Phase B.
 
 sca_results/
     v_ica_normalized.npy, w_ica.npy, t_dists_info.json, evals_shuff.npy,
-    sca_matrix_sector_subset.npy, scalar txt files, and per-IC sector
-    position / score arrays.
+    sca_matrix_sector_subset.npy, scalar txt files, and per-IC position
+    / loading arrays under msa_sectors/.
 
-groups/
-    group_{i}_msapos.npy (one per IC, in processed-MSA coordinates).
+ic_positions/
+    ic_{i}_msaproc.npy, ic_{i}_msaorig.npy (one per IC, processed-MSA
+    and original-MSA coordinates respectively).
 
 scarun.log
     Run log including the human-readable top-N IC summary.
@@ -546,7 +550,7 @@ def main(args):
     sca_mat_imp = Cij[group_idxs_all,:]
     sca_mat_imp = sca_mat_imp[:,group_idxs_all]
 
-    results.groups = groups
+    results.ic_positions = groups
     results.group_scores = group_scores
     results.sca_matrix_sector_subset = sca_mat_imp
 
@@ -673,7 +677,9 @@ def main(args):
         "assignment": assignment_method,
         "n_logged_comps": int(n_logged_comps),
     }
-    results.save(OUTDIR, save_all=SAVE_ALL)
+    results.save(
+        OUTDIR, save_all=SAVE_ALL, retained_positions=retained_positions,
+    )
 
     make_plots(
         retained_positions, 

@@ -269,7 +269,7 @@ def test_project_pdb_in_sample_matches_statsectors(prep_and_sca_dirs, tmp_path):
             continue
         expected_raw = np.sort(np.asarray(stats[key], dtype=int))
         got_raw = np.sort(
-            np.asarray(proj.sequence_projection.ic_memberships[ic], dtype=int)
+            np.asarray(proj.sequence_projection.ic_residues[ic], dtype=int)
         )
         assert np.array_equal(got_raw, expected_raw), (
             f"IC {ic} raw-residue mismatch: got={got_raw.tolist()}, "

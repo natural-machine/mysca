@@ -198,7 +198,7 @@ print(prep.sequence_weights)
 
 # Load SCA results
 sca = SCAResults.load("path/to/scacore")
-print(sca.n_sectors)
+print(sca.n_ic_positions)
 print(sca.conservation)   # positional conservation (Di)
 print(sca.sca_matrix)     # corrected covariance matrix (Cij_corr)
 print(sca.info())         # printable field-by-field summary
@@ -220,7 +220,7 @@ result = project_sequences(
     aligner="mafft_add",
 )
 for proj in result.projections:
-    print(proj.seq_id, proj.ic_memberships)
+    print(proj.seq_id, proj.ic_residues)
 
 # Load a PDB and project it
 pdb = PDBStructure.from_file("1SHF.pdb", chain="A")

@@ -77,7 +77,7 @@ E↔K at col 4).
 
 Raw indices 2, 5, 8 are residues whose original column was dropped
 by preprocessing. They are **present in `raw_sequence`** but never
-appear in `residue_by_processed_col` or any `ic_memberships[i]`.
+appear in `residue_by_processed_col` or any `ic_residues[i]`.
 
 ## Query index tables
 
@@ -190,5 +190,5 @@ Across every training and query case under both aligners:
 raw_sequence == aligned_sequence.replace("-", "")
 ```
 
-This is what makes `ic_memberships[i]` safely dereferenceable into
+This is what makes `ic_residues[i]` safely dereferenceable into
 `raw_sequence[r]` downstream.

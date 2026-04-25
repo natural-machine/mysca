@@ -183,7 +183,7 @@ Writes to the specified output directory:
 - `scarun_args.json` — arguments used
 - `statsectors_msa.npz` / `statsectors_seq.npz` — per-target IC residues in **raw-sequence coordinates** (despite the `_msa` suffix on the first file — see the Glossary's naming note); both files contain the same residue indices, with `_seq.npz` additionally carrying per-residue IC loadings. Only the top-`kstar` ICs are expanded per sequence; selection of which target sequences appear is controlled by `--sectors_for`
 - `sca_results/` — `v_ica_normalized.npy`, `w_ica.npy`, `t_dists_info.json`, `evals_shuff.npy`, `sca_matrix_sector_subset.npy`, scalar text files (`kstar.txt`, `n_components.txt`, etc.), `msa_sectors/sector_*_msapos.npy` + `sector_*_scores.npy`
-- `groups/` — `group_{i}_msapos.npy` (sector positions in processed-MSA coordinates), one per IC
+- `ic_positions/` — `ic_{i}_msaproc.npy` (high-load IC positions in processed-MSA coordinates) and `ic_{i}_msaorig.npy` (the same positions in original-MSA coordinates), one pair per IC
 - `scarun.log` — run log
 - `images/` — plots (conservation, SCA matrix, spectrum vs null, dendrogram, t-distributions, EV/IC scatter sweeps)
 
@@ -420,7 +420,7 @@ Records whose ID is already present in the reference MSA (under `--preprocessing
 
 Writes to the specified output directory:
 
-- `projection.json` — top-level result: per-sequence dicts containing `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col` (length `L_proc`), `ic_memberships` (per-IC raw residue indices), `ic_loadings`, `ic_processed_cols`, `in_sample`
+- `projection.json` — top-level result: per-sequence dicts containing `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col` (length `L_proc`), `ic_residues` (per-IC raw residue indices), `ic_loadings`, `ic_processed_cols`, `in_sample`
 - `per_sequence/<seqid>_residues.tsv` — one row per (IC, residue) for readable inspection
 - `projection_args.json` — arguments used
 - `projection.log` — run log

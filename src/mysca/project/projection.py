@@ -52,17 +52,17 @@ class SequenceProjection:
             "-1 if the sequence has a gap at the original MSA column "
             "corresponding to processed column j."
         ),
-        "ic_memberships": (
+        "ic_residues": (
             "Per-IC list of raw residue indices in this sequence that "
             "fall in that IC's group (length = n_components)."
         ),
         "ic_loadings": (
             "Per-IC list of v_ica_normalized loadings parallel to "
-            "ic_memberships (same shape)."
+            "ic_residues (same shape)."
         ),
         "ic_processed_cols": (
             "Per-IC list of processed-MSA column indices parallel to "
-            "ic_memberships. Useful for tracing a residue back to its "
+            "ic_residues. Useful for tracing a residue back to its "
             "group coordinate."
         ),
         "in_sample": (
@@ -90,7 +90,7 @@ class SequenceProjection:
         raw_sequence: str,
         aligned_sequence: str,
         residue_by_processed_col: np.ndarray,
-        ic_memberships: list[np.ndarray],
+        ic_residues: list[np.ndarray],
         ic_loadings: list[np.ndarray],
         ic_processed_cols: list[np.ndarray],
         in_sample: bool,
@@ -100,7 +100,7 @@ class SequenceProjection:
         self.raw_sequence = raw_sequence
         self.aligned_sequence = aligned_sequence
         self.residue_by_processed_col = residue_by_processed_col
-        self.ic_memberships = ic_memberships
+        self.ic_residues = ic_residues
         self.ic_loadings = ic_loadings
         self.ic_processed_cols = ic_processed_cols
         self.in_sample = in_sample
@@ -121,8 +121,8 @@ class SequenceProjection:
             "residue_by_processed_col": (
                 self.residue_by_processed_col.tolist()
             ),
-            "ic_memberships": [
-                arr.tolist() for arr in self.ic_memberships
+            "ic_residues": [
+                arr.tolist() for arr in self.ic_residues
             ],
             "ic_loadings": [
                 arr.tolist() for arr in self.ic_loadings
@@ -295,9 +295,9 @@ def project_sequences(
             f"Reference MSA not available in {preproc_result_dir}; "
             "msa_orig.fasta-aln is required for projection."
         )
-    if sca.groups is None:
+    if sca.ic_positions is None:
         raise FileNotFoundError(
-            f"No sector groups found in {sca_result_dir}; sca-core must "
+            f"No IC positions found in {sca_result_dir}; sca-core must "
             "produce sca_results/msa_sectors/sector_*_msapos.npy for "
             "projection."
         )
@@ -309,7 +309,7 @@ def project_sequences(
 
     msa_obj_orig = prep.msa_obj_orig
     retained_positions = np.asarray(prep.retained_positions, dtype=int)
-    groups = sca.groups
+    groups = sca.ic_positions
     v_ica = sca.v_ica
     n_components = len(groups)
     L_orig = msa_obj_orig.get_alignment_length()
@@ -385,9 +385,9 @@ def project_sequences(
                 # --keeplength; hmmalign --outformat afa followed by
                 # insert-column stripping) drop residues that don't fit
                 # the reference column structure. The retained indices
-                # inside ic_memberships count non-gap characters of
+                # inside ic_residues count non-gap characters of
                 # aligned_seq, so raw_sequence must do the same for
-                # `raw_sequence[ic_memberships[i]]` to dereference
+                # `raw_sequence[ic_residues[i]]` to dereference
                 # correctly downstream.
                 raw = _gapless(aligned_seq)
                 # Recover which positions in the ORIGINAL input survived
@@ -407,19 +407,19 @@ def project_sequences(
             resi_by_orig = _residue_indices_for_aligned(aligned_seq)
             resi_by_proc = resi_by_orig[retained_positions]
 
-            ic_memberships = []
+            ic_residues = []
             ic_loadings = []
             ic_processed_cols = []
             for i, g in enumerate(groups):
                 g = np.asarray(g, dtype=int)
                 if g.size == 0:
-                    ic_memberships.append(np.array([], dtype=int))
+                    ic_residues.append(np.array([], dtype=int))
                     ic_loadings.append(np.array([], dtype=float))
                     ic_processed_cols.append(np.array([], dtype=int))
                     continue
                 resi_at_group = resi_by_proc[g]
                 keep = resi_at_group >= 0
-                ic_memberships.append(resi_at_group[keep])
+                ic_residues.append(resi_at_group[keep])
                 ic_loadings.append(v_ica[g[keep], i])
                 ic_processed_cols.append(g[keep])
 
@@ -428,7 +428,7 @@ def project_sequences(
                 raw_sequence=raw,
                 aligned_sequence=aligned_seq,
                 residue_by_processed_col=resi_by_proc,
-                ic_memberships=ic_memberships,
+                ic_residues=ic_residues,
                 ic_loadings=ic_loadings,
                 ic_processed_cols=ic_processed_cols,
                 in_sample=is_in_sample,

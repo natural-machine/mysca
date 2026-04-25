@@ -108,7 +108,7 @@
         "description": "Hand-crafted IC/sector assignments in processed-MSA coordinates. Used to override the SCA pipeline's groups so tests can assert that each sequence's residues land in the intended IC (or correctly drop out where the sequence has a gap at the IC's processed column).",
         "groups": [[0, 1, 4], [2, 3, 5], [6]]
     },
-    "expected_ic_memberships": {
+    "expected_ic_residues": {
         "synth_clade_A_0":         [[0, 1, 4], [2, 3, 5], [6]],
         "synth_clade_A_1":         [[0, 1, 4], [2, 3, 5], [6]],
         "synth_clade_A_2":         [[0, 1, 4], [2, 3, 5], [6]],

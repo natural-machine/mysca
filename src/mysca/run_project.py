@@ -29,7 +29,7 @@ OUTPUTS:
 projection.json
     Top-level dict containing run args plus a list of per-sequence
     dicts: seq_id, raw_sequence, aligned_sequence,
-    residue_by_processed_col (length L_proc), ic_memberships (per IC
+    residue_by_processed_col (length L_proc), ic_residues (per IC
     raw-residue indices), ic_loadings, ic_processed_cols, in_sample.
 
 per_sequence/<seqid>_residues.tsv
@@ -165,7 +165,7 @@ def main(args):
         with open(tsv_path, "w") as f:
             f.write("ic_index\traw_residue_idx\tprocessed_col\tv_ica_loading\n")
             for ic_idx, (members, loadings, cols) in enumerate(
-                zip(proj.ic_memberships, proj.ic_loadings, proj.ic_processed_cols)
+                zip(proj.ic_residues, proj.ic_loadings, proj.ic_processed_cols)
             ):
                 for resi, loading, col in zip(members, loadings, cols):
                     f.write(

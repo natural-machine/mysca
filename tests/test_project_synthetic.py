@@ -263,10 +263,10 @@ def test_structure_projection_clade_A_offset_10(
     )
     assert proj.sequence_projection.in_sample
 
-    # Every raw index r present in any ic_memberships must map through
+    # Every raw index r present in any ic_residues must map through
     # pdb.residue_ids to the matching PDB residue number.
     for ic_idx, (raw_idxs, pdb_resids) in enumerate(zip(
-        proj.sequence_projection.ic_memberships, proj.ic_pdb_residues,
+        proj.sequence_projection.ic_residues, proj.ic_pdb_residues,
     )):
         for r, pdb_resi in zip(raw_idxs.tolist(), pdb_resids):
             assert pdb_resi == residue_numbers[r], (
@@ -280,7 +280,7 @@ def test_structure_projection_clade_B_offset_50(
 ):
     """Clade B: raw sequence is L_orig long, and raw idxs 2/5/8 are at
     columns that get dropped by preprocessing. They must not appear in
-    any ic_memberships, and therefore not in ic_pdb_residues either.
+    any ic_residues, and therefore not in ic_pdb_residues either.
     """
     prep_dir, sca_dir = prep_and_sca_dirs
     seq_id = "synth_clade_B_0"
@@ -299,15 +299,15 @@ def test_structure_projection_clade_B_offset_50(
     assert proj.sequence_projection.in_sample
 
     dropped_raw_idxs = {2, 5, 8}
-    for ic_idx, raw_idxs in enumerate(proj.sequence_projection.ic_memberships):
+    for ic_idx, raw_idxs in enumerate(proj.sequence_projection.ic_residues):
         for r in raw_idxs.tolist():
             assert r not in dropped_raw_idxs, (
                 f"IC {ic_idx} raw idx {r} is at a dropped column; "
-                f"shouldn't be in ic_memberships"
+                f"shouldn't be in ic_residues"
             )
 
     for ic_idx, (raw_idxs, pdb_resids) in enumerate(zip(
-        proj.sequence_projection.ic_memberships, proj.ic_pdb_residues,
+        proj.sequence_projection.ic_residues, proj.ic_pdb_residues,
     )):
         for r, pdb_resi in zip(raw_idxs.tolist(), pdb_resids):
             assert pdb_resi == residue_numbers[r]
@@ -334,7 +334,7 @@ def test_structure_projection_query_out_of_sample(
     assert not proj.sequence_projection.in_sample
 
     for ic_idx, (raw_idxs, pdb_resids) in enumerate(zip(
-        proj.sequence_projection.ic_memberships, proj.ic_pdb_residues,
+        proj.sequence_projection.ic_residues, proj.ic_pdb_residues,
     )):
         for r, pdb_resi in zip(raw_idxs.tolist(), pdb_resids):
             assert pdb_resi == residue_numbers[r]
@@ -368,10 +368,10 @@ def test_structure_projection_query_longer_than_orig_composes_through_input_indi
     got = proj.sequence_projection.input_residue_indices
     assert got == expected["expected_input_residue_indices"][q_id], got
 
-    # ic_pdb_residues composes ic_memberships (raw indices) with
+    # ic_pdb_residues composes ic_residues (raw indices) with
     # input_residue_indices and pdb.residue_ids. Verify element-wise.
     for ic_idx, (raw_members, pdb_resids) in enumerate(zip(
-        proj.sequence_projection.ic_memberships, proj.ic_pdb_residues,
+        proj.sequence_projection.ic_residues, proj.ic_pdb_residues,
     )):
         for r, pdb_resi in zip(raw_members.tolist(), pdb_resids):
             input_idx = got[r]
@@ -398,7 +398,7 @@ def test_project_groups_to_pdb_raises_when_pdb_too_short(tmp_path, expected):
         raw_sequence="ACDE",
         aligned_sequence="ACDE",
         residue_by_processed_col=np.array([0, 1, 2, 3], dtype=int),
-        ic_memberships=[np.array([0, 3], dtype=int)],
+        ic_residues=[np.array([0, 3], dtype=int)],
         ic_loadings=[np.array([0.1, 0.2], dtype=float)],
         ic_processed_cols=[np.array([0, 3], dtype=int)],
         in_sample=False,
@@ -478,25 +478,27 @@ def test_gap_chars_include_dot():
 
 
 def _inject_synthetic_groups(sca_dir, groups):
-    """Overwrite the group files SCAResults.load() reads with the given
-    hand-crafted groups (list of lists of processed-MSA col indices).
-    Also clears the paired scores files so group_scores loads as None
-    (projection doesn't use scores, but mismatched lengths would be
-    misleading)."""
+    """Overwrite the IC-position files SCAResults.load() reads with the
+    given hand-crafted groups (list of lists of processed-MSA col
+    indices). Also clears the paired scores files so group_scores loads
+    as None (projection doesn't use scores, but mismatched lengths
+    would be misleading)."""
     sector_dir = os.path.join(sca_dir, "sca_results", "msa_sectors")
-    groups_dir = os.path.join(sca_dir, "groups")
-    for d in (sector_dir, groups_dir):
+    ic_pos_dir = os.path.join(sca_dir, "ic_positions")
+    for d in (sector_dir, ic_pos_dir):
         if os.path.isdir(d):
             for fn in os.listdir(d):
                 fp = os.path.join(d, fn)
-                if fn.startswith(("sector_", "group_")):
+                if fn.startswith(("sector_", "ic_")):
                     os.remove(fp)
     os.makedirs(sector_dir, exist_ok=True)
-    os.makedirs(groups_dir, exist_ok=True)
+    os.makedirs(ic_pos_dir, exist_ok=True)
     for i, g in enumerate(groups):
         arr = np.asarray(g, dtype=int)
+        # Internal load source (still under msa_sectors/ in Phase A).
         np.save(os.path.join(sector_dir, f"sector_{i}_msapos.npy"), arr)
-        np.save(os.path.join(groups_dir, f"group_{i}_msapos.npy"), arr)
+        # New top-level mirror (Phase A).
+        np.save(os.path.join(ic_pos_dir, f"ic_{i}_msaproc.npy"), arr)
 
 
 @pytest.fixture(scope="module")
@@ -523,7 +525,7 @@ def test_synthetic_statsectors_construction_matches_ground_truth(
     `statsectors_msa` (raw-sequence index lookup → retained-positions
     slice → `get_rawseq_positions_in_groups`) against the hand-crafted
     synthetic groups, and asserts the output matches the
-    *independently hand-specified* `expected_ic_memberships` table in
+    *independently hand-specified* `expected_ic_residues` table in
     `expected.json`.
 
     The sibling tests `test_statsectors_msa_values_are_target_residue_indices`
@@ -547,7 +549,7 @@ def test_synthetic_statsectors_construction_matches_ground_truth(
         rawseq_idxs, synthetic_groups,
     )
 
-    expected_map = expected["expected_ic_memberships"]
+    expected_map = expected["expected_ic_residues"]
     msa_ids_by_retained_idx = [
         prep.msa_obj_orig[int(s)].id for s in retained_sequences
     ]
@@ -568,7 +570,7 @@ def test_synthetic_statsectors_construction_matches_ground_truth(
             )
             asserted_at_least_one = True
     assert asserted_at_least_one, (
-        "Test made zero assertions; expected_ic_memberships and the "
+        "Test made zero assertions; expected_ic_residues and the "
         "retained-sequence list don't intersect (fixture broken?)."
     )
 
@@ -577,19 +579,19 @@ def test_injected_groups_roundtrip(sca_dir_with_synthetic_groups, expected):
     """Sanity: SCAResults.load() picks up exactly the hand-crafted
     groups we wrote, in order."""
     sca = SCAResults.load(sca_dir_with_synthetic_groups)
-    assert sca.groups is not None
-    got = [g.tolist() for g in sca.groups]
+    assert sca.ic_positions is not None
+    got = [g.tolist() for g in sca.ic_positions]
     assert got == expected["synthetic_ic_groups"]["groups"]
 
 
-def test_training_ic_memberships_against_synthetic_groups(
+def test_training_ic_residues_against_synthetic_groups(
         prep_and_sca_dirs, sca_dir_with_synthetic_groups, expected, tmp_path,
 ):
     """Every training sequence, projected in-sample through the
     hand-crafted groups, should land each residue in the expected IC."""
     prep_dir, _ = prep_and_sca_dirs
     prep = PreprocessingResults.load(prep_dir)
-    expected_map = expected["expected_ic_memberships"]
+    expected_map = expected["expected_ic_residues"]
 
     in_fasta = tmp_path / "training_for_ic_test.fasta"
     with open(in_fasta, "w") as f:
@@ -605,9 +607,9 @@ def test_training_ic_memberships_against_synthetic_groups(
     for proj in result.projections:
         assert proj.seq_id in expected_map
         exp = expected_map[proj.seq_id]
-        got = [m.tolist() for m in proj.ic_memberships]
+        got = [m.tolist() for m in proj.ic_residues]
         assert got == exp, (
-            f"{proj.seq_id} ic_memberships mismatch:\n"
+            f"{proj.seq_id} ic_residues mismatch:\n"
             f"  expected: {exp}\n"
             f"  got:      {got}"
         )
@@ -617,14 +619,14 @@ def test_training_ic_memberships_against_synthetic_groups(
     pytest.param("mafft_add", marks=needs_mafft),
     pytest.param("hmmalign", marks=needs_hmmer),
 ])
-def test_query_ic_memberships_against_synthetic_groups(
+def test_query_ic_residues_against_synthetic_groups(
         prep_and_sca_dirs, sca_dir_with_synthetic_groups, expected, aligner,
 ):
     """Every query, projected out-of-sample, should land each residue
     in the expected IC. query_shorter_than_proc specifically produces
     an empty IC 2 because proc col 6 is a gap for that query."""
     prep_dir, _ = prep_and_sca_dirs
-    expected_map = expected["expected_ic_memberships"]
+    expected_map = expected["expected_ic_residues"]
     result = project_sequences(
         QUERIES_FPATH,
         sca_result_dir=sca_dir_with_synthetic_groups,
@@ -633,9 +635,9 @@ def test_query_ic_memberships_against_synthetic_groups(
     )
     for proj in result.projections:
         exp = expected_map[proj.seq_id]
-        got = [m.tolist() for m in proj.ic_memberships]
+        got = [m.tolist() for m in proj.ic_residues]
         assert got == exp, (
-            f"[{aligner}] {proj.seq_id} ic_memberships mismatch:\n"
+            f"[{aligner}] {proj.seq_id} ic_residues mismatch:\n"
             f"  expected: {exp}\n"
             f"  got:      {got}"
         )
@@ -643,10 +645,10 @@ def test_query_ic_memberships_against_synthetic_groups(
     short = next(
         p for p in result.projections if p.seq_id == "query_shorter_than_proc"
     )
-    assert short.ic_memberships[2].size == 0, (
+    assert short.ic_residues[2].size == 0, (
         f"[{aligner}] query_shorter_than_proc IC 2 should be empty "
         f"(proc col 6 is a gap for this query); got "
-        f"{short.ic_memberships[2].tolist()}"
+        f"{short.ic_residues[2].tolist()}"
     )
 
 
@@ -655,7 +657,7 @@ def test_structure_ic_pdb_residues_against_synthetic_groups(
 ):
     """Structure projection: for a clade B training sequence with PDB
     residues 50..59, each IC's ic_pdb_residues should be the PDB
-    residue numbers corresponding to the ic_memberships raw indices."""
+    residue numbers corresponding to the ic_residues raw indices."""
     prep_dir, _ = prep_and_sca_dirs
     seq_id = "synth_clade_B_0"
     raw = expected["training"][seq_id]["raw_sequence"]
@@ -670,7 +672,7 @@ def test_structure_ic_pdb_residues_against_synthetic_groups(
         preproc_result_dir=prep_dir,
         seq_id=seq_id,
     )
-    expected_raw = expected["expected_ic_memberships"][seq_id]
+    expected_raw = expected["expected_ic_residues"][seq_id]
     expected_pdb = [
         [residue_numbers[r] for r in ic_members] for ic_members in expected_raw
     ]
@@ -703,7 +705,7 @@ def test_structure_ic_pdb_residues_query_with_gap_at_ic_position(
         preproc_result_dir=prep_dir,
         seq_id=seq_id,
     )
-    exp_raw = expected["expected_ic_memberships"][seq_id]
+    exp_raw = expected["expected_ic_residues"][seq_id]
     exp_pdb = [
         [residue_numbers[r] for r in ic_members] for ic_members in exp_raw
     ]

@@ -150,7 +150,7 @@ def test_project_in_sample_matches_statsectors_msa(prep_and_sca_dirs):
             if key not in stats:
                 continue
             expected = np.asarray(stats[key], dtype=int)
-            got = np.asarray(proj.ic_memberships[ic], dtype=int)
+            got = np.asarray(proj.ic_residues[ic], dtype=int)
             assert np.array_equal(np.sort(got), np.sort(expected)), (
                 f"Mismatch for {proj.seq_id} IC {ic}: "
                 f"project={got.tolist()} vs statsectors={expected.tolist()}"
@@ -226,7 +226,7 @@ def test_statsectors_msa_values_match_raw_seq_lookup_from_groups(
     prep_dir, sca_dir = prep_and_sca_dirs
     prep = PreprocessingResults.load(prep_dir)
     sca = SCAResults.load(sca_dir)
-    if not sca.statsectors_msa or not sca.groups:
+    if not sca.statsectors_msa or not sca.ic_positions:
         pytest.skip("statsectors_msa or groups not populated by fixture")
 
     rawseq_idxs = get_rawseq_indices_of_msa(prep.msa_obj_orig)
@@ -241,7 +241,7 @@ def test_statsectors_msa_values_match_raw_seq_lookup_from_groups(
         j = int(j_str)
         seq_msa_idx = seq_msa_idx_by_id[seqid]
         original_msa_cols = retained_positions[
-            np.asarray(sca.groups[j], dtype=int)
+            np.asarray(sca.ic_positions[j], dtype=int)
         ]
         expected = rawseq_idxs[seq_msa_idx, original_msa_cols]
         expected = expected[expected >= 0]  # drop target gaps
@@ -319,7 +319,7 @@ def _out_of_sample_roundtrip(prep_dir, sca_dir, tmp_path, aligner):
         if key not in stats:
             continue
         expected = np.sort(np.asarray(stats[key], dtype=int))
-        got = np.sort(np.asarray(proj.ic_memberships[ic], dtype=int))
+        got = np.sort(np.asarray(proj.ic_residues[ic], dtype=int))
         assert np.array_equal(got, expected), (
             f"[{aligner}] Out-of-sample IC {ic} membership differs from "
             f"donor {donor_id}: got={got.tolist()} "
@@ -347,7 +347,7 @@ def test_field_descriptions_cover_all_init_args():
         raw_sequence="A",
         aligned_sequence="A",
         residue_by_processed_col=np.array([0]),
-        ic_memberships=[np.array([0])],
+        ic_residues=[np.array([0])],
         ic_loadings=[np.array([0.1])],
         ic_processed_cols=[np.array([0])],
         in_sample=False,
@@ -455,7 +455,7 @@ def test_sca_project_cli_sanitizes_seq_ids_with_slashes(
 # ----------------------------------------------------------------------
 # Raw-sequence / aligned-sequence consistency invariant.
 #
-# For ic_memberships[i] (raw residue indices) to dereference correctly
+# For ic_residues[i] (raw residue indices) to dereference correctly
 # into raw_sequence, raw_sequence must count the *same* residues that
 # residue_by_processed_col counts — i.e. the non-gap characters of
 # aligned_sequence, in the same order. The in-sample path derives

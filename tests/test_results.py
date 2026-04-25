@@ -295,7 +295,7 @@ class TestSCAResults:
         )
 
         if include_sectors:
-            results.groups = [
+            results.ic_positions = [
                 np.array([0, 3, 5]),
                 np.array([1, 7]),
                 np.array([2, 9, 11]),
@@ -319,7 +319,7 @@ class TestSCAResults:
 
     def test_attributes(self):
         results = self._make_sample_results()
-        assert results.n_sectors == 3
+        assert results.n_ic_positions == 3
         assert results.n_positions == 12
         assert results.kstar == 3
         assert results.conservation.shape == (12,)
@@ -353,7 +353,7 @@ class TestSCAResults:
         # Eigen/ICA/sector fields should be None
         assert results.evals_sca is None
         assert results.v_ica is None
-        assert results.groups is None
+        assert results.ic_positions is None
 
     def test_save_creates_expected_files(self):
         results = self._make_sample_results()
@@ -388,6 +388,35 @@ class TestSCAResults:
         )
         assert os.path.isfile(
             os.path.join(scadir, "msa_sectors", "sector_0_msapos.npy")
+        )
+        # New top-level ic_positions/ directory written alongside.
+        ic_pos_dir = os.path.join(OUTDIR_SCA, "ic_positions")
+        assert os.path.isfile(
+            os.path.join(ic_pos_dir, "ic_0_msaproc.npy")
+        )
+        # Without retained_positions on save(), the msaorig sibling
+        # is not written; covered separately below.
+        assert not os.path.isfile(
+            os.path.join(ic_pos_dir, "ic_0_msaorig.npy")
+        )
+
+    def test_save_writes_msaorig_when_retained_positions_supplied(self):
+        """Passing retained_positions to save() writes the original-MSA
+        coord sibling alongside the processed-MSA file."""
+        results = self._make_sample_results()
+        # 12 processed-MSA cols (matches L_proc in _make_sample_results);
+        # map them onto a hypothetical L_orig=20 by scattering.
+        retained_positions = np.array(
+            [0, 2, 3, 5, 6, 8, 10, 12, 14, 15, 17, 19], dtype=int,
+        )
+        results.save(OUTDIR_SCA, retained_positions=retained_positions)
+        ic_pos_dir = os.path.join(OUTDIR_SCA, "ic_positions")
+        proc = np.load(os.path.join(ic_pos_dir, "ic_0_msaproc.npy"))
+        orig = np.load(os.path.join(ic_pos_dir, "ic_0_msaorig.npy"))
+        # ic_0 = [0, 3, 5] (processed), maps to retained_positions[[0,3,5]].
+        np.testing.assert_array_equal(proc, np.array([0, 3, 5]))
+        np.testing.assert_array_equal(
+            orig, retained_positions[np.array([0, 3, 5])],
         )
 
     def test_round_trip_core_fields(self):
@@ -463,10 +492,10 @@ class TestSCAResults:
         original.save(OUTDIR_SCA)
         loaded = SCAResults.load(OUTDIR_SCA)
 
-        assert loaded.n_sectors == original.n_sectors
-        for i in range(original.n_sectors):
+        assert loaded.n_ic_positions == original.n_ic_positions
+        for i in range(original.n_ic_positions):
             np.testing.assert_array_equal(
-                loaded.groups[i], original.groups[i]
+                loaded.ic_positions[i], original.ic_positions[i]
             )
             np.testing.assert_allclose(
                 loaded.group_scores[i], original.group_scores[i]
@@ -553,7 +582,7 @@ class TestSCAResults:
         # Optional fields absent
         assert loaded.evals_sca is None
         assert loaded.v_ica is None
-        assert loaded.groups is None
+        assert loaded.ic_positions is None
         assert loaded.kstar is None
         assert loaded.evals_shuff is None
 

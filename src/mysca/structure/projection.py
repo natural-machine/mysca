@@ -37,7 +37,7 @@ class PdbProjection:
         "ic_pdb_residues": (
             "Per-IC list of PDB residue numbers "
             "(from PDBStructure.residue_ids) corresponding to "
-            "sequence_projection.ic_memberships."
+            "sequence_projection.ic_residues."
         ),
     }
 
@@ -71,7 +71,7 @@ def project_groups_to_pdb(
 ) -> list[list[int]]:
     """Map per-IC raw-residue indices to PDB residue numbers.
 
-    ``sequence_projection.ic_memberships[i]`` is a list of 0-based
+    ``sequence_projection.ic_residues[i]`` is a list of 0-based
     indices into ``raw_sequence`` — the post-alignment, gapless
     subset of the input that landed in match columns of the reference
     MSA. Column-preserving aligners may drop input residues that
@@ -98,7 +98,7 @@ def project_groups_to_pdb(
             "sequences."
         )
     out = []
-    for members in sequence_projection.ic_memberships:
+    for members in sequence_projection.ic_residues:
         out.append([
             int(pdb.residue_ids[input_ids[int(r)]]) for r in members
         ])
