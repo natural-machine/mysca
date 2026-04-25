@@ -65,3 +65,26 @@ else
     echo "[step7_pymol] imageio-ffmpeg not importable; skipping mp4 pass." >&2
     echo "  pip install imageio-ffmpeg  (or: pip install -e '.[mp4]')" >&2
 fi
+
+# Reveal-mode passes: still-camera narrative animations that walk the
+# top 2 ICs through stages of which groups are visible. Three sub-
+# modes exercised — cumulative (groups stack), sequential (one at a
+# time), and custom (explicit stage list).
+sca-pymol \
+    --structure ${outdir}/structure \
+    --groups 0 1 \
+    --animate --mode reveal --reveal_schedule cumulative \
+    -o ${outdir}/pymol_reveal_cum
+
+sca-pymol \
+    --structure ${outdir}/structure \
+    --groups 0 1 \
+    --animate --mode reveal --reveal_schedule sequential \
+    -o ${outdir}/pymol_reveal_seq
+
+sca-pymol \
+    --structure ${outdir}/structure \
+    --groups 0 1 \
+    --animate --mode reveal --reveal_schedule custom \
+    --reveal_custom "0" "0,1" "1" \
+    -o ${outdir}/pymol_reveal_custom

@@ -53,6 +53,13 @@ COMMAND LINE ARGUMENTS:
     --format {gif,mp4,both} : animation output format (default gif).
         'mp4' / 'both' require the optional ``imageio-ffmpeg``
         dependency.
+    --mode {spin,reveal} : animation mode. 'spin' (default) rotates;
+        'reveal' is a still-camera narrative animation.
+    --reveal_schedule {cumulative,sequential,custom} : how groups
+        appear across stages in --mode reveal. Default cumulative.
+    --reveal_custom STAGE [STAGE ...] : custom stage schedule when
+        --reveal_schedule custom. Each STAGE is a comma-separated
+        list of IC group indices visible in that stage.
 
 -------------------------------------------------------------------------------
 EXAMPLE USAGE:
@@ -198,6 +205,31 @@ def parse_args(args):
         ".mp4 from the same frame series).",
     )
     parser.add_argument(
+        "--mode", type=str, default="spin",
+        choices=["spin", "reveal"],
+        help="Animation mode. 'spin' (default) rotates the structure "
+        "with all selected groups lit. 'reveal' is a still-camera "
+        "narrative animation that walks through stages of which "
+        "groups are visible (controlled by --reveal_schedule).",
+    )
+    parser.add_argument(
+        "--reveal_schedule", type=str, default="cumulative",
+        choices=["cumulative", "sequential", "custom"],
+        help="Stage schedule for --mode reveal. 'cumulative' (default) "
+        "stacks groups one at a time on top of each other. "
+        "'sequential' shows one group at a time, swapping groups "
+        "out as the next appears. 'custom' takes an explicit "
+        "list of stages from --reveal_custom.",
+    )
+    parser.add_argument(
+        "--reveal_custom", type=str, nargs="*", default=None,
+        metavar="STAGE",
+        help="Custom reveal schedule when --reveal_schedule custom. "
+        "Each STAGE is a comma-separated list of IC group indices "
+        "visible in that stage; stages are space-separated. "
+        "Example: --reveal_custom \"1\" \"1,2\" \"1,3\" \"2,3\".",
+    )
+    parser.add_argument(
         "-v", "--verbosity", type=int, default=1,
         help="Verbosity level (0=warnings only).",
     )
@@ -205,6 +237,14 @@ def parse_args(args):
     parsed = parser.parse_args(args)
     if parsed.features and not parsed.features_py:
         parser.error("--features requires --features_py.")
+    if parsed.reveal_custom and parsed.reveal_schedule != "custom":
+        parser.error(
+            "--reveal_custom only applies with --reveal_schedule custom."
+        )
+    if parsed.reveal_schedule == "custom" and not parsed.reveal_custom:
+        parser.error(
+            "--reveal_schedule custom requires --reveal_custom STAGE [...]."
+        )
     return parsed
 
 
@@ -335,6 +375,11 @@ def main(args):
     sector_colors = [_hex2color(x) for x in DEFAULT_SECTOR_COLORS]
     cmd = _require_cmd()
 
+    custom_reveal = (
+        _parse_reveal_custom(args.reveal_custom)
+        if args.reveal_custom else None
+    )
+
     for sid in target_ids:
         projection = proj_by_id[sid]
         ic_pdb_residues = projection.get("ic_pdb_residues") or []
@@ -349,6 +394,12 @@ def main(args):
                     "Structure %s has no residues for groups %s; skipping.",
                     sid, sorted(missing),
                 )
+
+        reveal_schedule = None
+        if args.mode == "reveal":
+            reveal_schedule = _resolve_reveal_schedule(
+                args.reveal_schedule, group_idxs, custom_reveal,
+            )
 
         _render_one_structure(
             cmd=cmd,
@@ -370,6 +421,8 @@ def main(args):
             ray=args.ray,
             dpi=args.dpi,
             format=args.format,
+            mode=args.mode,
+            reveal_schedule=reveal_schedule,
         )
 
     logger.info("Done!")
@@ -394,6 +447,8 @@ def _render_one_structure(
         ray: str = "all",
         dpi: int = 300,
         format: str = "gif",
+        mode: str = "spin",
+        reveal_schedule: list[list[int]] | None = None,
 ):
     struct_color = DEFAULT_STRUCT_COLOR
     struct_style = DEFAULT_STRUCT_STYLE
@@ -445,6 +500,16 @@ def _render_one_structure(
     )
     cmd.zoom(complete=1)
 
+    if mode == "reveal" and not multisector:
+        # Reveal schedules are global across all groups; per-group
+        # iteration would feed each call a schedule referencing groups
+        # not in its own group_idxs. Force the single-render path.
+        logger.info(
+            "Plotting %s in reveal mode (forcing multisector path).",
+            scaffold,
+        )
+        multisector = True
+
     if multisector:
         logger.info("Plotting %s with all sectors...", scaffold)
         _plot_with_multiple_sectors(
@@ -467,6 +532,8 @@ def _render_one_structure(
             ray=ray,
             dpi=dpi,
             format=format,
+            mode=mode,
+            reveal_schedule=reveal_schedule,
         )
     else:
         logger.info("Plotting %s by sector...", scaffold)
@@ -490,6 +557,8 @@ def _render_one_structure(
             ray=ray,
             dpi=dpi,
             format=format,
+            mode=mode,
+            reveal_schedule=reveal_schedule,
         )
 
 
@@ -582,29 +651,74 @@ def _ray_sequence(mode: str, nframes: int) -> list[int]:
     return [1] * nframes  # "all"
 
 
-def _write_animation(
-        cmd, outdir, basename, nframes, duration,
-        *,
-        spin_axis: str = "y",
-        spin_degrees: float = 360.0,
-        ray: str = "all",
-        dpi: int = 300,
-        format: str = "gif",
-):
+def _parse_reveal_custom(tokens: list[str]) -> list[list[int]]:
+    """Parse the --reveal_custom CLI tokens into a stage schedule.
+
+    Each token is one stage; comma-separated integers within the token
+    are the IC group indices visible in that stage.
+    """
+    schedule: list[list[int]] = []
+    for tok in tokens:
+        parts = [p.strip() for p in tok.split(",")]
+        if not all(parts) or not parts:
+            raise ValueError(f"Empty reveal stage: {tok!r}")
+        try:
+            stage = [int(p) for p in parts]
+        except ValueError:
+            raise ValueError(
+                f"Non-integer group index in reveal stage {tok!r}"
+            )
+        schedule.append(stage)
+    return schedule
+
+
+def _resolve_reveal_schedule(
+        sub_mode: str,
+        group_idxs: list[int],
+        custom: list[list[int]] | None,
+) -> list[list[int]]:
+    """Build the per-stage list-of-IC-groups schedule from the user's
+    sub-mode choice + the resolved group_idxs from --groups."""
+    if sub_mode == "cumulative":
+        return [list(group_idxs[: i + 1]) for i in range(len(group_idxs))]
+    if sub_mode == "sequential":
+        return [[g] for g in group_idxs]
+    if sub_mode == "custom":
+        if not custom:
+            raise ValueError(
+                "--reveal_schedule custom requires --reveal_custom"
+            )
+        valid = set(group_idxs)
+        for stage in custom:
+            invalid = [g for g in stage if g not in valid]
+            if invalid:
+                raise ValueError(
+                    f"--reveal_custom stage {stage!r} references "
+                    f"groups {invalid!r} not in --groups "
+                    f"({sorted(valid)})"
+                )
+        return [list(stage) for stage in custom]
+    raise ValueError(f"Unknown reveal sub-mode: {sub_mode!r}")
+
+
+def _frames_per_stage(nframes: int, n_stages: int) -> list[int]:
+    """Allocate ``nframes`` evenly across ``n_stages``; remainder is
+    pinned to the last stage so the final state has a slightly longer
+    hold (and the totals always sum to nframes exactly)."""
+    base = nframes // n_stages
+    counts = [base] * n_stages
+    counts[-1] += nframes - sum(counts)
+    return counts
+
+
+def _compose_and_save(outdir, basename, nframes, duration, format):
+    """Composite the per-frame PNGs in ``frames/<basename>_frames/`` over
+    a white background and save as GIF / MP4 / both, depending on
+    ``format``. Shared by spin and reveal animation paths."""
     imageio, Image = _load_animation_deps()
-    import tqdm as _tqdm
     seconds_per_frame = duration / nframes
     fps = nframes / duration
     framesdir = os.path.join(outdir, "frames", f"{basename}_frames")
-    os.makedirs(framesdir, exist_ok=True)
-    per_turn = spin_degrees / nframes
-    ray_per_frame = _ray_sequence(ray, nframes)
-    for i in _tqdm.trange(nframes, leave=False):
-        cmd.turn(spin_axis, per_turn)
-        cmd.png(
-            os.path.join(framesdir, f"frame_{i:03d}.png"),
-            dpi=dpi, ray=ray_per_frame[i],
-        )
     frames = []
     for i in range(nframes):
         im = Image.open(
@@ -626,6 +740,106 @@ def _write_animation(
             os.path.join(outdir, f"{basename}.mp4"),
             frames, fps=fps, macro_block_size=1,
         )
+
+
+def _write_animation(
+        cmd, outdir, basename, nframes, duration,
+        *,
+        spin_axis: str = "y",
+        spin_degrees: float = 360.0,
+        ray: str = "all",
+        dpi: int = 300,
+        format: str = "gif",
+):
+    _load_animation_deps()  # fail-fast if imageio/PIL missing
+    import tqdm as _tqdm
+    framesdir = os.path.join(outdir, "frames", f"{basename}_frames")
+    os.makedirs(framesdir, exist_ok=True)
+    per_turn = spin_degrees / nframes
+    ray_per_frame = _ray_sequence(ray, nframes)
+    for i in _tqdm.trange(nframes, leave=False):
+        cmd.turn(spin_axis, per_turn)
+        cmd.png(
+            os.path.join(framesdir, f"frame_{i:03d}.png"),
+            dpi=dpi, ray=ray_per_frame[i],
+        )
+    _compose_and_save(outdir, basename, nframes, duration, format)
+
+
+def _write_reveal_animation(
+        cmd, outdir, basename,
+        *,
+        schedule: list[list[int]],
+        projection: dict,
+        sector_colors: list[str],
+        sector_style: str,
+        struct_color: str,
+        nframes: int,
+        duration: float,
+        dpi: int = 300,
+        ray: str = "all",
+        format: str = "gif",
+):
+    """Sequential-reveal animation: still camera, per-stage selection
+    mutation. Each stage in ``schedule`` is a list of IC group indices
+    visible in that stage; frames are evenly distributed across stages
+    (remainder pinned to the last stage)."""
+    _load_animation_deps()  # fail-fast if imageio/PIL missing
+    import tqdm as _tqdm
+    framesdir = os.path.join(outdir, "frames", f"{basename}_frames")
+    os.makedirs(framesdir, exist_ok=True)
+
+    ic_pdb_residues = projection["ic_pdb_residues"]
+    ic_loadings = projection["sequence_projection"]["ic_loadings"]
+    counts = _frames_per_stage(nframes, len(schedule))
+    ray_seq = _ray_sequence(ray, nframes)
+
+    # Track which selections are alive in PyMOL — never call cmd.delete
+    # on one that wasn't built (PyMOL raises CmdException). Cumulative
+    # schedules can keep groups across stages; sequential schedules
+    # rebuild every stage.
+    alive: set[int] = set()
+    frame_idx = 0
+    pbar = _tqdm.tqdm(total=nframes, leave=False)
+    try:
+        for stage_idx, stage_groups in enumerate(schedule):
+            stage_set = set(stage_groups)
+            for gidx in list(alive - stage_set):
+                sel = f"reveal_sel{gidx}"
+                cmd.hide(sector_style, sel)
+                cmd.color(struct_color, sel)
+                cmd.delete(sel)
+                alive.discard(gidx)
+            for gidx in stage_groups:
+                if gidx in alive:
+                    continue
+                sector_color = sector_colors[gidx % len(sector_colors)]
+                pdb_resids = ic_pdb_residues[gidx]
+                scores = (
+                    ic_loadings[gidx] if gidx < len(ic_loadings) else []
+                )
+                if _apply_group_coloring(
+                    cmd, f"reveal_sel{gidx}",
+                    pdb_resids, scores, sector_color, sector_style,
+                ) is not None:
+                    alive.add(gidx)
+            for _ in range(counts[stage_idx]):
+                cmd.png(
+                    os.path.join(framesdir, f"frame_{frame_idx:03d}.png"),
+                    dpi=dpi, ray=ray_seq[frame_idx],
+                )
+                frame_idx += 1
+                pbar.update(1)
+    finally:
+        pbar.close()
+        for gidx in list(alive):
+            sel = f"reveal_sel{gidx}"
+            cmd.hide(sector_style, sel)
+            cmd.color(struct_color, sel)
+            cmd.delete(sel)
+            alive.discard(gidx)
+
+    _compose_and_save(outdir, basename, nframes, duration, format)
 
 
 def _render_frame(
@@ -651,6 +865,8 @@ def _render_frame(
         ray: str = "all",
         dpi: int = 300,
         format: str = "gif",
+        mode: str = "spin",
+        reveal_schedule: list[list[int]] | None = None,
 ):
     """Render one frame with the given set of IC groups lit up.
 
@@ -660,6 +876,12 @@ def _render_frame(
     Per-group rendering loops over this once per ``gidx`` (passing the
     ``gidx`` through to feature fns); multisector rendering calls it
     once with all ``group_idxs`` and ``group_idx_for_features=None``.
+
+    When ``mode='reveal'``, the animation step uses
+    :func:`_write_reveal_animation` (still camera, per-stage selection
+    mutation) instead of :func:`_write_animation` (rotating spin), and
+    the still selections are torn down before the reveal so they don't
+    leak into the animation frames.
     """
     ic_pdb_residues = projection["ic_pdb_residues"]
     ic_loadings = projection["sequence_projection"]["ic_loadings"]
@@ -696,11 +918,35 @@ def _render_frame(
         _write_views(cmd, outdir, basename, ref_scaffold, dpi=dpi)
 
     if animate:
-        _write_animation(
-            cmd, outdir, basename, nframes, duration,
-            spin_axis=spin_axis, spin_degrees=spin_degrees,
-            ray=ray, dpi=dpi, format=format,
-        )
+        if mode == "reveal":
+            if reveal_schedule is None:
+                raise ValueError(
+                    "_render_frame mode='reveal' requires reveal_schedule"
+                )
+            # Tear down still selections so the reveal starts on an
+            # empty canvas; _write_reveal_animation manages its own
+            # reveal_sel<gidx> namespace.
+            for sel_name in created:
+                cmd.hide(sector_style, sel_name)
+                cmd.color(struct_color, sel_name)
+                cmd.delete(sel_name)
+            created.clear()
+            _write_reveal_animation(
+                cmd, outdir, basename,
+                schedule=reveal_schedule,
+                projection=projection,
+                sector_colors=sector_colors,
+                sector_style=sector_style,
+                struct_color=struct_color,
+                nframes=nframes, duration=duration,
+                dpi=dpi, ray=ray, format=format,
+            )
+        else:
+            _write_animation(
+                cmd, outdir, basename, nframes, duration,
+                spin_axis=spin_axis, spin_degrees=spin_degrees,
+                ray=ray, dpi=dpi, format=format,
+            )
 
     for sel_name in created:
         cmd.hide(sector_style, sel_name)
@@ -729,6 +975,8 @@ def _plot_by_sectors(
         ray: str = "all",
         dpi: int = 300,
         format: str = "gif",
+        mode: str = "spin",
+        reveal_schedule: list[list[int]] | None = None,
 ):
     if nframes is None:
         nframes = 24
@@ -758,6 +1006,8 @@ def _plot_by_sectors(
             ray=ray,
             dpi=dpi,
             format=format,
+            mode=mode,
+            reveal_schedule=reveal_schedule,
         )
 
 
@@ -782,6 +1032,8 @@ def _plot_with_multiple_sectors(
         ray: str = "all",
         dpi: int = 300,
         format: str = "gif",
+        mode: str = "spin",
+        reveal_schedule: list[list[int]] | None = None,
 ):
     if nframes is None:
         nframes = 24
@@ -811,6 +1063,8 @@ def _plot_with_multiple_sectors(
         ray=ray,
         dpi=dpi,
         format=format,
+        mode=mode,
+        reveal_schedule=reveal_schedule,
     )
 
 

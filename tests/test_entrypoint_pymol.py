@@ -17,11 +17,15 @@ from tests.conftest import DATDIR
 from mysca.run_pymol import (
     parse_args,
     _apply_group_coloring,
+    _frames_per_stage,
     _load_features_module,
     _load_projections,
+    _parse_reveal_custom,
     _render_frame,
+    _resolve_reveal_schedule,
     _split_features_names,
     _write_animation,
+    _write_reveal_animation,
     _write_views,
 )
 
@@ -604,6 +608,252 @@ def test_render_frame_forwards_format_to_write_animation(tmp_path):
             cmd, tmp_path, animate=True, format="mp4",
         ))
     assert mock_anim.call_args.kwargs["format"] == "mp4"
+
+
+# ---------------------------------------------------------------------- #
+# --mode reveal: argparse, schedule resolution, frame allocation         #
+# ---------------------------------------------------------------------- #
+
+
+def test_parse_args_mode_defaults_to_spin():
+    args = parse_args(["--structure", "x", "-o", "y"])
+    assert args.mode == "spin"
+
+
+def test_parse_args_mode_reveal_accepted():
+    args = parse_args([
+        "--structure", "x", "-o", "y", "--mode", "reveal",
+    ])
+    assert args.mode == "reveal"
+
+
+def test_parse_args_rejects_bad_mode():
+    with pytest.raises(SystemExit):
+        parse_args(["--structure", "x", "-o", "y", "--mode", "swirl"])
+
+
+def test_parse_args_reveal_schedule_choices():
+    for sched in ("cumulative", "sequential", "custom"):
+        args = parse_args([
+            "--structure", "x", "-o", "y", "--mode", "reveal",
+            "--reveal_schedule", sched,
+        ] + (["--reveal_custom", "0"] if sched == "custom" else []))
+        assert args.reveal_schedule == sched
+
+
+def test_parse_args_reveal_custom_requires_schedule_custom():
+    """--reveal_custom only makes sense with --reveal_schedule custom."""
+    with pytest.raises(SystemExit):
+        parse_args([
+            "--structure", "x", "-o", "y", "--mode", "reveal",
+            "--reveal_schedule", "cumulative",
+            "--reveal_custom", "0", "1",
+        ])
+
+
+def test_parse_args_reveal_schedule_custom_requires_reveal_custom():
+    """--reveal_schedule custom without --reveal_custom must fail."""
+    with pytest.raises(SystemExit):
+        parse_args([
+            "--structure", "x", "-o", "y", "--mode", "reveal",
+            "--reveal_schedule", "custom",
+        ])
+
+
+def test_parse_reveal_custom_simple():
+    assert _parse_reveal_custom(["1", "1,2", "1,3", "2,3"]) == [
+        [1], [1, 2], [1, 3], [2, 3],
+    ]
+
+
+def test_parse_reveal_custom_strips_whitespace():
+    assert _parse_reveal_custom(["1, 2", " 3 , 4 "]) == [[1, 2], [3, 4]]
+
+
+def test_parse_reveal_custom_rejects_non_integer():
+    with pytest.raises(ValueError, match="Non-integer"):
+        _parse_reveal_custom(["1,foo"])
+
+
+def test_parse_reveal_custom_rejects_empty_stage():
+    with pytest.raises(ValueError, match="Empty"):
+        _parse_reveal_custom(["1", ""])
+
+
+def test_resolve_reveal_schedule_cumulative():
+    assert _resolve_reveal_schedule("cumulative", [0, 1, 2], None) == [
+        [0], [0, 1], [0, 1, 2],
+    ]
+
+
+def test_resolve_reveal_schedule_sequential():
+    assert _resolve_reveal_schedule("sequential", [0, 1, 2], None) == [
+        [0], [1], [2],
+    ]
+
+
+def test_resolve_reveal_schedule_custom_subset_of_groups():
+    assert _resolve_reveal_schedule(
+        "custom", [0, 1, 2, 3], [[1], [1, 2], [1, 3], [2, 3]],
+    ) == [[1], [1, 2], [1, 3], [2, 3]]
+
+
+def test_resolve_reveal_schedule_custom_rejects_unknown_group():
+    with pytest.raises(ValueError, match="not in --groups"):
+        _resolve_reveal_schedule("custom", [0, 1, 2], [[5]])
+
+
+def test_frames_per_stage_evenly_divides():
+    assert _frames_per_stage(24, 4) == [6, 6, 6, 6]
+
+
+def test_frames_per_stage_remainder_to_last():
+    """nframes=10, 3 stages → 3+3+4 (remainder pinned to the tail so
+    the final state has a longer hold than the transitions)."""
+    assert _frames_per_stage(10, 3) == [3, 3, 4]
+
+
+def test_frames_per_stage_sums_to_nframes():
+    for n in (5, 7, 17, 24, 100):
+        for stages in (1, 2, 3, 4, 7):
+            assert sum(_frames_per_stage(n, stages)) == n
+
+
+# ---------------------------------------------------------------------- #
+# _write_reveal_animation: per-stage selection mutation                  #
+# ---------------------------------------------------------------------- #
+
+
+def _reveal_kwargs(cmd, tmp_path, **overrides):
+    base = dict(
+        cmd=cmd,
+        outdir=str(tmp_path),
+        basename="X_reveal",
+        schedule=[[0], [0, 1]],
+        projection=_minimal_projection(n_groups=2),
+        sector_colors=["0xff0000", "0x00ff00"],
+        sector_style="spheres",
+        struct_color="gray70",
+        nframes=4,
+        duration=0.4,
+    )
+    base.update(overrides)
+    return base
+
+
+def test_write_reveal_animation_writes_one_frame_per_nframes(tmp_path):
+    """A schedule with 2 stages over nframes=4 → 2 frames per stage,
+    4 cmd.png calls total (one per frame)."""
+    cmd = MagicMock()
+    with _mock_anim_deps():
+        _write_reveal_animation(**_reveal_kwargs(cmd, tmp_path))
+    assert cmd.png.call_count == 4
+
+
+def test_write_reveal_animation_does_not_rotate(tmp_path):
+    """Reveal mode is still-camera — no cmd.turn calls."""
+    cmd = MagicMock()
+    with _mock_anim_deps():
+        _write_reveal_animation(**_reveal_kwargs(cmd, tmp_path))
+    cmd.turn.assert_not_called()
+
+
+def test_write_reveal_animation_builds_per_stage_selections(tmp_path):
+    """Stage 0 = {0} → one selection; stage 1 = {0,1} → both built.
+    Selection names are namespaced under reveal_sel<gidx> so they
+    don't collide with the still-image group_selection<gidx> set."""
+    cmd = MagicMock()
+    with _mock_anim_deps():
+        _write_reveal_animation(**_reveal_kwargs(cmd, tmp_path))
+    select_names = [c.args[0] for c in cmd.select.call_args_list]
+    # At least one reveal_sel0 (stage 0) and one reveal_sel0/1 in stage 1.
+    assert any("reveal_sel0" == n for n in select_names)
+    assert any("reveal_sel1" == n for n in select_names)
+
+
+def test_write_reveal_animation_format_mp4(tmp_path):
+    cmd = MagicMock()
+    mock_imageio, mock_Image = MagicMock(), MagicMock()
+    with patch("mysca.run_pymol._load_animation_deps",
+               return_value=(mock_imageio, mock_Image)), \
+         patch("mysca.run_pymol._require_ffmpeg") as mock_req:
+        _write_reveal_animation(**_reveal_kwargs(
+            cmd, tmp_path, format="mp4",
+        ))
+    mock_req.assert_called_once()
+    outfile = mock_imageio.mimsave.call_args.args[0]
+    assert outfile.endswith("X_reveal.mp4")
+
+
+def test_render_frame_mode_reveal_invokes_reveal_animation(tmp_path):
+    """When mode='reveal' + animate, _write_reveal_animation is called
+    and _write_animation (spin) is NOT."""
+    cmd = MagicMock()
+    with patch("mysca.run_pymol._write_reveal_animation") as mock_reveal, \
+         patch("mysca.run_pymol._write_animation") as mock_spin:
+        _render_frame(**_render_frame_kwargs(
+            cmd, tmp_path, animate=True,
+            mode="reveal",
+            reveal_schedule=[[0], [0, 1]],
+            group_idxs=[0, 1],
+            group_idx_for_features=None,
+        ))
+    mock_reveal.assert_called_once()
+    mock_spin.assert_not_called()
+
+
+def test_write_reveal_animation_only_deletes_alive_selections(tmp_path):
+    """_write_reveal_animation must NOT call cmd.delete on a selection
+    it never created, otherwise PyMOL raises CmdException ('Invalid
+    selection name'). Use a strict mock that raises on delete-of-
+    nonexistent (mimicking PyMOL) and assert no error."""
+    alive: set[str] = set()
+
+    def _select(name, *_a, **_kw):
+        alive.add(name)
+
+    def _delete(name):
+        if name not in alive:
+            raise RuntimeError(
+                f"PyMOL would raise: Invalid selection name {name!r}"
+            )
+        alive.discard(name)
+
+    cmd = MagicMock()
+    cmd.select.side_effect = _select
+    cmd.delete.side_effect = _delete
+
+    with _mock_anim_deps():
+        _write_reveal_animation(**_reveal_kwargs(
+            cmd, tmp_path,
+            schedule=[[0], [0, 1]],   # group 1 only appears in stage 1
+            nframes=4, duration=0.4,
+        ))
+
+
+def test_render_one_structure_mode_reveal_forces_multisector():
+    """Reveal mode must route through _plot_with_multiple_sectors even
+    if --multisector is False, because the schedule is global across
+    all groups (running it per-group would trigger schedule entries
+    referencing groups that aren't in the per-group group_idxs)."""
+    from mysca.run_pymol import _render_one_structure
+    cmd = MagicMock()
+    proj = _minimal_projection(n_groups=2)
+    proj["pdb_path"] = "/tmp/fake.pdb"  # bypass real file load
+    with patch("mysca.run_pymol._plot_with_multiple_sectors") as mock_multi, \
+         patch("mysca.run_pymol._plot_by_sectors") as mock_per, \
+         patch("os.path.isfile", return_value=True):
+        _render_one_structure(
+            cmd=cmd, projection=proj, reference_projection=None,
+            group_idxs=[0, 1], multisector=False,
+            sector_colors=["0xff0000", "0x00ff00"], feature_fns=[],
+            views=False, animate=True, nframes=4, duration=0.4,
+            outdir="/tmp/x",
+            mode="reveal",
+            reveal_schedule=[[0], [0, 1]],
+        )
+    mock_multi.assert_called_once()
+    mock_per.assert_not_called()
 
 
 # ---------------------------------------------------------------------- #

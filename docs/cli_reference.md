@@ -204,6 +204,9 @@ sca-pymol --structure <structure-out-dir> \
     [--spin_axis {x,y,z}] [--spin_degrees N] \
     [--ray {none,first,all}] [--dpi N] \
     [--format {gif,mp4,both}] \
+    [--mode {spin,reveal}] \
+    [--reveal_schedule {cumulative,sequential,custom}] \
+    [--reveal_custom STAGE [STAGE ...]] \
     -o <outdir> [-v N]
 ```
 
@@ -233,6 +236,9 @@ sca-pymol --structure <structure-out-dir> \
 | `--ray` | `all` | Ray-tracing policy for animation frames: `all` (every frame, best quality, slowest), `first` (only frame 0), `none` (disabled, fastest) |
 | `--dpi` | 300 | DPI for all rendered PNGs (stills, views, and animation frames) |
 | `--format` | `gif` | Animation output format: `gif` (default), `mp4` (smaller / higher quality, requires the optional `imageio-ffmpeg` dependency), or `both` (writes `.gif` AND `.mp4` from the same frame series) |
+| `--mode` | `spin` | Animation mode: `spin` (default — rotating camera, all selected groups lit) or `reveal` (still camera, narrative walk through stages of which groups are visible — see below) |
+| `--reveal_schedule` | `cumulative` | Stage schedule for `--mode reveal`: `cumulative` (groups stack one at a time), `sequential` (one group at a time, swapped out as the next appears), or `custom` (use `--reveal_custom`) |
+| `--reveal_custom` | None | Custom reveal stages (used with `--reveal_schedule custom`). Each STAGE is a comma-separated list of IC group indices visible in that stage; stages are space-separated. Example: `--reveal_custom "1" "1,2" "1,3" "2,3"` |
 | `-v, --verbosity` | 1 | Verbosity level |
 
 ### Output
@@ -318,6 +324,32 @@ sca-pymol --structure out/structure \
 `--ray all` ray-traces every frame (today's default — best quality, slowest). `--ray first` only rays frame 0 (viewport for the rest — mixed look but ~10× faster). `--ray none` disables ray-tracing entirely for previews.
 
 `--format gif` requires only `imageio` + `Pillow` (both ship as deps of `pymol-open-source` on conda-forge; on a minimal env install via `pip install imageio pillow`). `--format mp4` / `--format both` additionally require `imageio-ffmpeg` (`pip install imageio-ffmpeg` or `pip install -e '.[mp4]'`), which bundles its own ffmpeg binary.
+
+### Reveal mode (`--mode reveal`)
+
+A still-camera narrative animation. The frames in `--nframes` are evenly distributed across N stages (any remainder pinned to the last stage so the final state holds slightly longer); within each stage the visible IC groups are determined by `--reveal_schedule`. Per-residue alpha shading by IC weight loading carries over from spin mode unchanged. `--spin_axis` and `--spin_degrees` are ignored in reveal mode.
+
+```bash
+# Cumulative: groups stack one-by-one. With --groups 0 1 2 the
+# stages are [{0}], [{0,1}], [{0,1,2}].
+sca-pymol --structure out/structure --groups 0 1 2 \
+    --animate --mode reveal \
+    -o out/pymol_reveal_cumulative
+
+# Sequential: one group at a time, previous group swapped out.
+# Stages: [{0}], [{1}], [{2}].
+sca-pymol --structure out/structure --groups 0 1 2 \
+    --animate --mode reveal --reveal_schedule sequential \
+    -o out/pymol_reveal_sequential
+
+# Custom: explicit list of stages. Each STAGE is comma-separated;
+# stages are space-separated. Useful for pairwise comparisons
+# ("show IC 1 alone, then IC 1 with IC 2, then IC 1 with IC 3...").
+sca-pymol --structure out/structure --groups 1 2 3 \
+    --animate --mode reveal --reveal_schedule custom \
+    --reveal_custom "1" "1,2" "1,3" "2,3" \
+    -o out/pymol_reveal_custom
+```
 
 ---
 
