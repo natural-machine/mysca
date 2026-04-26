@@ -1,0 +1,4 @@
+# seq_id<TAB>pdb_path<TAB>chain
+# Paths resolve relative to this file's directory.
+Fyn_1SHF	pdbs/1SHF.pdb	A
+Abl1_2ABL	pdbs/2ABL.pdb	A

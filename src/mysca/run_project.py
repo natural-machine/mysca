@@ -1,9 +1,9 @@
 """Project primary sequences onto an existing SCA result.
 
-Given an input FASTA plus the output directories of a prior
-``sca-preprocess`` + ``sca-core`` run, map each input sequence's raw
-residues onto the IC groups and write a summary + per-sequence detail
-under the output directory.
+Given an input FASTA (or a record selected from a reference MSA) plus
+the output directories of a prior ``sca-preprocess`` + ``sca-core`` run,
+map each input sequence's raw residues onto the IC groups and write a
+summary + per-sequence detail under the output directory.
 
 -------------------------------------------------------------------------------
 COMMAND LINE ARGUMENTS:
@@ -11,7 +11,14 @@ COMMAND LINE ARGUMENTS:
     -i --input_fpath : Path to an input FASTA. Each record is projected
         independently. Records whose ID matches an entry in the reference
         MSA (``msa_orig.fasta-aln`` under --preprocessing) are resolved
-        in-sample (no external alignment performed).
+        in-sample (no external alignment performed). Mutually exclusive
+        with ``--from_msa`` / ``--seq_id``.
+    --from_msa : Path to a (possibly aligned) FASTA from which to
+        extract a single record by --seq_id, ungap, and project. Useful
+        for in-sample replay without the FASTA-surgery boilerplate.
+        Requires --seq_id; mutually exclusive with -i.
+    --seq_id : First whitespace-delimited token of the target record's
+        header in --from_msa. Required with --from_msa.
     --scacore : Path to an ``sca-core`` output directory
         (contains ``ic_positions/ic_*_msaproc.npy`` and
         ``sca_results/v_ica_normalized.npy``).
@@ -56,6 +63,14 @@ EXAMPLE USAGE:
         --scacore scacore_out \\
         -o projection_out
 
+    # In-sample replay: extract one record from the training MSA and
+    # project it back, no FASTA-surgery glue required.
+    sca-project --from_msa preprocess_out/msa_orig.fasta-aln \\
+        --seq_id 'MYSEQ_HUMAN/1-100' \\
+        --preprocessing preprocess_out \\
+        --scacore scacore_out \\
+        -o projection_out
+
 """
 
 import argparse
@@ -64,6 +79,8 @@ import logging
 import os
 import re
 import sys
+
+from Bio import SeqIO
 
 from mysca.logging_config import configure_logging
 from mysca.project import project_sequences, ALIGNERS
@@ -91,8 +108,20 @@ def parse_args(args):
         ),
     )
     parser.add_argument(
-        "-i", "--input_fpath", type=str, required=True,
-        help="Path to an input FASTA of sequences to project.",
+        "-i", "--input_fpath", type=str, default=None,
+        help="Path to an input FASTA of sequences to project. Mutually "
+        "exclusive with --from_msa / --seq_id.",
+    )
+    parser.add_argument(
+        "--from_msa", type=str, default=None, metavar="FASTA",
+        help="Path to a (possibly aligned) FASTA. Combined with "
+        "--seq_id, extract that single record, ungap it, and project. "
+        "Mutually exclusive with -i.",
+    )
+    parser.add_argument(
+        "--seq_id", type=str, default=None, metavar="ID",
+        help="Header (first whitespace-delimited token) of the record "
+        "to extract from --from_msa. Required with --from_msa.",
     )
     parser.add_argument(
         "--preprocessing", type=str, required=True, metavar="DIR",
@@ -132,7 +161,46 @@ def parse_args(args):
     )
     parser.add_argument("-v", "--verbosity", type=int, default=1,
                         help="Verbosity level (0=warnings only).")
-    return parser.parse_args(args)
+    parsed = parser.parse_args(args)
+    has_input = parsed.input_fpath is not None
+    has_from_msa = parsed.from_msa is not None or parsed.seq_id is not None
+    if has_input and has_from_msa:
+        parser.error("-i/--input_fpath is mutually exclusive with "
+                     "--from_msa / --seq_id.")
+    if not has_input and not has_from_msa:
+        parser.error("must provide -i/--input_fpath OR "
+                     "--from_msa + --seq_id.")
+    if has_from_msa and (
+        parsed.from_msa is None or parsed.seq_id is None
+    ):
+        parser.error("--from_msa requires --seq_id (and vice versa).")
+    return parsed
+
+
+def _materialize_from_msa(msa_path: str, seq_id: str, outdir: str) -> str:
+    """Extract a single record by ID from a (possibly aligned) FASTA,
+    ungap it, and write a one-record FASTA inside outdir. Returns the
+    path to the new file."""
+    if not os.path.isfile(msa_path):
+        raise FileNotFoundError(f"--from_msa not found: {msa_path}")
+    target = None
+    for rec in SeqIO.parse(msa_path, "fasta"):
+        if rec.id == seq_id:
+            target = rec
+            break
+    if target is None:
+        raise KeyError(
+            f"--seq_id {seq_id!r} not found in --from_msa {msa_path!r}"
+        )
+    raw = str(target.seq).replace("-", "").replace(".", "")
+    if not raw:
+        raise ValueError(
+            f"Record {seq_id!r} in {msa_path!r} is empty after ungapping."
+        )
+    out_fpath = os.path.join(outdir, "from_msa_input.fasta")
+    with open(out_fpath, "w") as f:
+        f.write(f">{seq_id}\n{raw}\n")
+    return out_fpath
 
 
 def main(args):
@@ -143,8 +211,18 @@ def main(args):
         logfile=os.path.join(outdir, PROJECT_LOG_FNAME),
     )
 
-    if not os.path.isfile(args.input_fpath):
-        raise FileNotFoundError(f"Input FASTA not found: {args.input_fpath}")
+    if args.input_fpath is not None:
+        input_fpath = args.input_fpath
+        if not os.path.isfile(input_fpath):
+            raise FileNotFoundError(f"Input FASTA not found: {input_fpath}")
+    else:
+        input_fpath = _materialize_from_msa(
+            args.from_msa, args.seq_id, outdir,
+        )
+        logger.info(
+            "Extracted seq_id %r from %s into %s",
+            args.seq_id, args.from_msa, input_fpath,
+        )
 
     with open(os.path.join(outdir, PROJECT_ARGS_FNAME), "w") as f:
         json.dump(vars(args), f, indent=2, sort_keys=True)
@@ -155,7 +233,7 @@ def main(args):
     }
 
     result = project_sequences(
-        args.input_fpath,
+        input_fpath,
         sca_result_dir=args.scacore,
         preproc_result_dir=args.preprocessing,
         aligner=args.aligner,

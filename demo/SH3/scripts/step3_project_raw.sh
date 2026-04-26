@@ -2,37 +2,20 @@
 set -euo pipefail
 
 outdir=out/from_raw
-
-# The raw path has no named reference. Pick the first sequence from the
-# mafft-aligned output and project it back in-sample.
 aligned=${outdir}/prealign/aligned.fasta
-mkdir -p ${outdir}/project
-project_input=${outdir}/project/input.fasta
 
-# First whitespace-delimited token of the first header (Biopython's
-# rec.id convention). Annotations after the first space, if any, get
-# stripped the same way by Biopython downstream, so this matches what
-# the MSA's msa_obj_orig will carry as the sequence ID.
+# The raw path has no named reference. Pick the first record's ID
+# (Biopython rec.id convention: first whitespace-delimited token of
+# the header) and project it back in-sample via --from_msa.
 first_id=$(awk '/^>/ { print substr($1, 2); exit }' ${aligned})
 if [ -z "${first_id}" ]; then
     echo "error: could not read an ID from ${aligned}" >&2
     exit 1
 fi
 
-raw_seq=$(awk -v target=">${first_id}" '
-    /^>/ { want = ($1 == target); next }
-    want { printf "%s", $0 }
-' ${aligned} | tr -d '-')
-
-if [ -z "${raw_seq}" ]; then
-    echo "error: sequence ${first_id} not found in ${aligned}" >&2
-    exit 1
-fi
-
-printf ">%s\n%s\n" "${first_id}" "${raw_seq}" > ${project_input}
-
 sca-project \
-    -i ${project_input} \
+    --from_msa ${aligned} \
+    --seq_id "${first_id}" \
     --preprocessing ${outdir}/preprocessing \
     --scacore ${outdir}/scacore \
     -o ${outdir}/project

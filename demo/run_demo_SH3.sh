@@ -11,6 +11,7 @@ cd SH3
 ./scripts/step5_structure.sh
 ./scripts/step6_plots.sh
 ./scripts/step7_pymol.sh
+./scripts/step7b_pymol_extra_ics.sh
 ./scripts/step8_sifts.sh
 
 # Path B: start from raw (unaligned) SH3 sequences, prealign, then pipeline.

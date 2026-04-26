@@ -451,6 +451,101 @@ def test_sca_project_cli_sanitizes_seq_ids_with_slashes(
     assert any("FAKE_HUMAN_42-100" in f for f in tsvs), tsvs
 
 
+def test_sca_project_cli_from_msa_matches_input_fpath(
+        prep_and_sca_dirs, tmp_path,
+):
+    """--from_msa MSA --seq_id ID is equivalent to extracting the
+    record into a one-record FASTA and passing it via -i."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    msa_path = os.path.join(prep_dir, "msa_orig.fasta-aln")
+    assert os.path.isfile(msa_path)
+    target_id = prep.msa_obj_orig[0].id
+    raw = str(prep.msa_obj_orig[0].seq).replace("-", "")
+
+    out_fpath = str(tmp_path / "out_input_fpath")
+    in_fasta = tmp_path / "single.fasta"
+    in_fasta.write_text(f">{target_id}\n{raw}\n")
+    project_main(project_parse_args([
+        "-i", str(in_fasta),
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", out_fpath,
+        "-v", "0",
+    ]))
+
+    out_from_msa = str(tmp_path / "out_from_msa")
+    project_main(project_parse_args([
+        "--from_msa", msa_path,
+        "--seq_id", target_id,
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", out_from_msa,
+        "-v", "0",
+    ]))
+
+    with open(os.path.join(out_fpath, "projection.json")) as f:
+        a = json.load(f)
+    with open(os.path.join(out_from_msa, "projection.json")) as f:
+        b = json.load(f)
+    assert len(a["projections"]) == 1
+    assert len(b["projections"]) == 1
+    pa, pb = a["projections"][0], b["projections"][0]
+    assert pa["seq_id"] == pb["seq_id"] == target_id
+    assert pa["raw_sequence"] == pb["raw_sequence"] == raw
+    assert pa["in_sample"] is True
+    assert pb["in_sample"] is True
+    assert pa["ic_residues"] == pb["ic_residues"]
+
+
+def test_sca_project_cli_from_msa_unknown_id_errors(
+        prep_and_sca_dirs, tmp_path,
+):
+    prep_dir, sca_dir = prep_and_sca_dirs
+    msa_path = os.path.join(prep_dir, "msa_orig.fasta-aln")
+    args = project_parse_args([
+        "--from_msa", msa_path,
+        "--seq_id", "definitely_not_a_real_id_xyz",
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", str(tmp_path / "out"),
+        "-v", "0",
+    ])
+    with pytest.raises((KeyError, ValueError)):
+        project_main(args)
+
+
+def test_sca_project_cli_input_args_mutually_exclusive(
+        prep_and_sca_dirs, tmp_path,
+):
+    prep_dir, sca_dir = prep_and_sca_dirs
+    msa_path = os.path.join(prep_dir, "msa_orig.fasta-aln")
+    in_fasta = tmp_path / "x.fasta"
+    in_fasta.write_text(">x\nACDE\n")
+    with pytest.raises(SystemExit):
+        project_parse_args([
+            "-i", str(in_fasta),
+            "--from_msa", msa_path,
+            "--seq_id", "x",
+            "--preprocessing", prep_dir,
+            "--scacore", sca_dir,
+            "-o", str(tmp_path / "out"),
+        ])
+    with pytest.raises(SystemExit):
+        project_parse_args([
+            "--preprocessing", prep_dir,
+            "--scacore", sca_dir,
+            "-o", str(tmp_path / "out"),
+        ])
+    with pytest.raises(SystemExit):
+        project_parse_args([
+            "--from_msa", msa_path,
+            "--preprocessing", prep_dir,
+            "--scacore", sca_dir,
+            "-o", str(tmp_path / "out"),
+        ])
+
+
 # ----------------------------------------------------------------------
 # Raw-sequence / aligned-sequence consistency invariant.
 #

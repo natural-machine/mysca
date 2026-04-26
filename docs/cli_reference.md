@@ -407,7 +407,17 @@ Project primary amino-acid sequences (in- or out-of-sample) onto an existing SCA
 ### Usage
 
 ```bash
+# Standard form: project every record in a FASTA.
 sca-project -i <sequences.fasta> \
+    --preprocessing <preprocess-dir> \
+    --scacore <scacore-dir> \
+    -o <output-dir> [options]
+
+# In-sample replay: extract one record from the training MSA by ID,
+# ungap it, and project. Equivalent to writing a one-record FASTA by
+# hand and feeding it via -i.
+sca-project --from_msa <preprocess-dir>/msa_orig.fasta-aln \
+    --seq_id <ID> \
     --preprocessing <preprocess-dir> \
     --scacore <scacore-dir> \
     -o <output-dir> [options]
@@ -417,9 +427,13 @@ Records whose ID is already present in the reference MSA (under `--preprocessing
 
 ### Required Arguments
 
+Exactly one of `-i/--input_fpath` or (`--from_msa` + `--seq_id`) is required.
+
 | Argument | Description |
 |----------|-------------|
-| `-i, --input_fpath` | Path to an input FASTA of sequences to project |
+| `-i, --input_fpath` | Path to an input FASTA of sequences to project. Mutually exclusive with `--from_msa` / `--seq_id` |
+| `--from_msa` | Path to a (possibly aligned) FASTA from which to extract a single record by `--seq_id`. The record is ungapped and projected. Requires `--seq_id` |
+| `--seq_id` | First whitespace-delimited token of the target record's header in `--from_msa`. Required with `--from_msa` |
 | `--preprocessing` | `sca-preprocess` output directory (must include `msa_orig.fasta-aln`) |
 | `--scacore` | `sca-core` output directory (must include `ic_positions/ic_*_msaproc.npy` and `sca_results/v_ica_normalized.npy`) |
 | `-o, --outdir` | Output directory |
@@ -441,6 +455,7 @@ Writes to the specified output directory:
 - `per_sequence/<seqid>_residues.tsv` — one row per (IC, residue) for readable inspection
 - `projection_args.json` — arguments used
 - `projection.log` — run log
+- `from_msa_input.fasta` — only when `--from_msa` is used: the materialized one-record FASTA actually fed to the projector
 
 ### External Binaries
 

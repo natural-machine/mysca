@@ -13,7 +13,7 @@ if ! python -c "import pymol" >/dev/null 2>&1; then
     exit 0
 fi
 
-# Render the top 2 ICs from the 2ABL structure projection produced by
+# Render the top 2 ICs from the structure projection produced by
 # step5_structure. sca-pymol loads the PDB via the pdb_path recorded
 # in structure_projection.json and uses authoritative PDB residue
 # numbers from ic_pdb_residues — no --pdb_dir / --modes / 1+idx

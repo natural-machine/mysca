@@ -2,33 +2,14 @@
 set -euo pipefail
 
 outdir=out/from_msa
-
-infile=data/msas/SH3_demo_MSA_1.afa
 reference='4837_jgi||3708||Equilibrative'
 
-# Extract the reference sequence's gapless primary sequence from the MSA
-# and write it as a one-record FASTA for sca-project to consume. Since
-# the reference ID is in msa_obj_orig, sca-project will take the
-# in-sample short-circuit (no mafft call at runtime).
-mkdir -p ${outdir}/project
-project_input=${outdir}/project/input.fasta
-
-# Match the reference ID against the header's first whitespace-delimited
-# token only; Pfam/JGI headers typically append annotations after the ID.
-raw_seq=$(awk -v target=">${reference}" '
-    /^>/ { want = ($1 == target); next }
-    want { printf "%s", $0 }
-' ${infile} | tr -d '-')
-
-if [ -z "${raw_seq}" ]; then
-    echo "error: reference sequence ${reference} not found in ${infile}" >&2
-    exit 1
-fi
-
-printf ">%s\n%s\n" "${reference}" "${raw_seq}" > ${project_input}
-
+# Project the named reference sequence back onto its own SCA result.
+# --from_msa pulls the record out of the training MSA, ungaps it, and
+# feeds it to the in-sample short-circuit (no alignment at runtime).
 sca-project \
-    -i ${project_input} \
+    --from_msa ${outdir}/preprocessing/msa_orig.fasta-aln \
+    --seq_id "${reference}" \
     --preprocessing ${outdir}/preprocessing \
     --scacore ${outdir}/scacore \
     -o ${outdir}/project
