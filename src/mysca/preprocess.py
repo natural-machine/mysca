@@ -12,8 +12,6 @@ import scipy.sparse as sp
 import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-import torch
-torch.set_float32_matmul_precision("high")
 
 from mysca.mappings import SymMap, DEFAULT_MAP
 from mysca.helpers import iterblocks
@@ -542,6 +540,7 @@ def _compute_weights_v6(**kwargs):
     return ws
 
 def _detect_device():
+    import torch
     if torch.cuda.is_available():
         return torch.device("cuda")
     if torch.backends.mps.is_available():
@@ -557,6 +556,9 @@ def _compute_weights_gpu(**kwargs):
     Uses the first available torch device (CUDA / MPS / XPU). Falls back
     to the CPU sparse implementation when no accelerator is detected.
     """
+    import torch
+    torch.set_float32_matmul_precision("high")
+
     msa = kwargs["msa"]
     block_size = kwargs.get("block_size", 512)
     use_pbar = kwargs["use_pbar"]
