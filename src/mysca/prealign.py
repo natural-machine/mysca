@@ -170,7 +170,13 @@ def _align_mafft(
     bin_path: str | None,
     extra_args: Iterable[str],
     output_format: str,
+    aligner_kwargs: dict | None = None,
 ) -> dict:
+    if aligner_kwargs:
+        raise ValueError(
+            f"Unknown --align_args keys for mafft: "
+            f"{sorted(aligner_kwargs)}"
+        )
     mafft = _resolve_bin("mafft", override=bin_path)
     n_in = _count_fasta(in_fasta)
     logger.info(
@@ -234,6 +240,17 @@ _CLUSTALO_OUTFMT = {
 }
 
 
+_CLUSTALO_OUTPUT_ORDER_CHOICES = ("tree-order", "input-order")
+
+
+def _coerce_bool(val) -> bool:
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, str):
+        return val.lower() in ("1", "true", "yes", "on")
+    raise ValueError(f"Cannot coerce {val!r} to bool")
+
+
 def _align_clustalo(
     in_fasta: str,
     out_path: str,
@@ -242,12 +259,29 @@ def _align_clustalo(
     bin_path: str | None,
     extra_args: Iterable[str],
     output_format: str,
-    guidetree_out: str | None = None,
-    output_order: str | None = None,
-    seqtype: str = "protein",
+    aligner_kwargs: dict | None = None,
 ) -> dict:
+    kwargs = dict(aligner_kwargs or {})
+    seqtype = kwargs.pop("seqtype", "protein")
+    output_order = kwargs.pop("output_order", None)
+    guidetree_out_flag = _coerce_bool(kwargs.pop("guidetree_out", False))
+    if kwargs:
+        raise ValueError(
+            f"Unknown --align_args keys for clustalo: {sorted(kwargs)}. "
+            f"Known: seqtype, output_order, guidetree_out."
+        )
+    if output_order is not None and output_order not in _CLUSTALO_OUTPUT_ORDER_CHOICES:
+        raise ValueError(
+            f"output_order must be one of "
+            f"{list(_CLUSTALO_OUTPUT_ORDER_CHOICES)}; got {output_order!r}"
+        )
+
     clustalo = _resolve_bin("clustalo", override=bin_path)
     n_in = _count_fasta(in_fasta)
+    out_dir = os.path.dirname(os.path.abspath(out_path))
+    guidetree_path = (
+        os.path.join(out_dir, "guidetree.dnd") if guidetree_out_flag else None
+    )
     logger.info(
         "Aligning %d sequences with Clustal Omega "
         "(threads=%d, output_format=%s, seqtype=%s)",
@@ -265,15 +299,11 @@ def _align_clustalo(
     ]
     if output_order is not None:
         argv.extend(["--output-order", output_order])
-    if guidetree_out is not None:
-        argv.extend(["--guidetree-out", guidetree_out])
+    if guidetree_path is not None:
+        argv.extend(["--guidetree-out", guidetree_path])
     argv.extend(extra_args)
 
-    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-    if guidetree_out is not None:
-        os.makedirs(
-            os.path.dirname(os.path.abspath(guidetree_out)), exist_ok=True,
-        )
+    os.makedirs(out_dir, exist_ok=True)
 
     t0 = time.perf_counter()
     _run_cmd(argv)
@@ -307,14 +337,14 @@ def run_align(
     bin_path: str | None = None,
     extra_args: Iterable[str] = (),
     output_format: str = "fasta",
-    guidetree_out: str | None = None,
-    output_order: str | None = None,
+    aligner_kwargs: dict | None = None,
 ) -> dict:
     """Align FASTA sequences, writing an aligned MSA to `out_path`.
 
     `output_format` controls the written alignment format: "fasta" (default)
-    or "stockholm". `guidetree_out` and `output_order` are only meaningful
-    for the `clustalo` aligner and are silently ignored by other aligners.
+    or "stockholm". `aligner_kwargs` is a dict of structured options that
+    only the chosen aligner's wrapper interprets; unknown keys raise. See
+    each ``_align_<method>`` for the supported keys.
     """
     if method not in ALIGNERS:
         raise ValueError(
@@ -326,13 +356,11 @@ def run_align(
             f"Unknown output_format {output_format!r}. "
             f"Supported: {list(SUPPORTED_ALIGNMENT_FORMATS)}"
         )
-    kwargs = {
-        "threads": threads,
-        "bin_path": bin_path,
-        "extra_args": tuple(extra_args),
-        "output_format": output_format,
-    }
-    if method == "clustalo":
-        kwargs["guidetree_out"] = guidetree_out
-        kwargs["output_order"] = output_order
-    return ALIGNERS[method](in_fasta, out_path, **kwargs)
+    return ALIGNERS[method](
+        in_fasta, out_path,
+        threads=threads,
+        bin_path=bin_path,
+        extra_args=tuple(extra_args),
+        output_format=output_format,
+        aligner_kwargs=dict(aligner_kwargs or {}),
+    )

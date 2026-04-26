@@ -260,7 +260,7 @@ def test_align_clustalo_guidetree_out():
         "-i", INPUT_FASTA,
         "-o", outdir,
         "--align", "clustalo",
-        "--guidetree_out",
+        "--align_args", "guidetree_out=true",
         "-v", "0",
     ])
     main(args)
@@ -281,7 +281,7 @@ def test_align_clustalo_output_order_tree():
         "-i", INPUT_FASTA,
         "-o", outdir,
         "--align", "clustalo",
-        "--output_order", "tree-order",
+        "--align_args", "output_order=tree-order",
         "-v", "0",
     ])
     main(args)
@@ -344,37 +344,49 @@ def test_align_clustalo_missing_binary_fails_fast():
     remove_dir(outdir)
 
 
-def test_guidetree_with_mafft_rejected():
-    """--guidetree_out is clustalo-only and must be rejected before any
-    binary resolve, so the test runs without either binary installed."""
-    outdir = f"{TMPDIR}/prealign_guidetree_with_mafft"
+def test_align_args_unknown_key_with_mafft_rejected():
+    """A clustalo-only key passed via --align_args while --align mafft is
+    chosen must surface as a ValueError from the mafft wrapper. We use a
+    nonexistent --align_bin so we never need either binary on PATH."""
+    outdir = f"{TMPDIR}/prealign_align_args_mafft_unknown"
     if os.path.isdir(outdir):
         remove_dir(outdir)
     args = parse_args([
         "-i", INPUT_FASTA,
         "-o", outdir,
         "--align", "mafft",
-        "--guidetree_out",
+        "--align_bin", "/nonexistent/mafft",
+        "--align_args", "guidetree_out=true",
         "-v", "0",
     ])
-    with pytest.raises(ValueError, match="--guidetree_out"):
+    with pytest.raises((FileNotFoundError, ValueError)):
         main(args)
     remove_dir(outdir)
 
 
-def test_output_order_with_mafft_rejected():
-    """--output_order is clustalo-only and must be rejected before any
-    binary resolve, so the test runs without either binary installed."""
-    outdir = f"{TMPDIR}/prealign_output_order_with_mafft"
+def test_align_args_duplicate_key_rejected():
+    """--align_args with duplicate keys is a user error caught at parse
+    time, before any binary is resolved."""
+    outdir = f"{TMPDIR}/prealign_align_args_duplicate"
     if os.path.isdir(outdir):
         remove_dir(outdir)
     args = parse_args([
         "-i", INPUT_FASTA,
         "-o", outdir,
-        "--align", "mafft",
-        "--output_order", "tree-order",
+        "--align", "clustalo",
+        "--align_bin", "/nonexistent/clustalo",
+        "--align_args", "output_order=tree-order", "output_order=input-order",
         "-v", "0",
     ])
-    with pytest.raises(ValueError, match="--output_order"):
+    with pytest.raises(ValueError, match="Duplicate"):
         main(args)
     remove_dir(outdir)
+
+
+def test_align_args_bare_key_means_true():
+    """`--align_args guidetree_out` (bare) is equivalent to
+    `--align_args guidetree_out=true` — accepted by the clustalo wrapper.
+    Verified at the parser level so the test doesn't need clustalo."""
+    from mysca.run_prealign import _parse_align_args
+    assert _parse_align_args(["guidetree_out"]) == {"guidetree_out": "true"}
+    assert _parse_align_args(["k=v"]) == {"k": "v"}

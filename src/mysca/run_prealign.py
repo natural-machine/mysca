@@ -14,10 +14,9 @@ EXAMPLE USAGE:
     sca-prealign -i raw.fasta -o prealign_out --cluster mmseqs2 \
         --cluster_min_seq_id 0.9
 
-    # Use Clustal Omega instead of MAFFT, write a guide tree, and order the
-    # aligned output by the guide tree.
+    # Use Clustal Omega instead of MAFFT, with aligner-specific kwargs.
     sca-prealign -i raw.fasta -o prealign_out --align clustalo \
-        --guidetree_out --output_order tree-order
+        --align_args guidetree_out=true output_order=tree-order
 
 Then chain into sca-preprocess:
 
@@ -30,18 +29,28 @@ COMMAND LINE ARGUMENTS:
         --align {mafft, clustalo}     alignment method (default mafft)
         --align_threads INT           threads for the aligner (default 1)
         --align_bin PATH              explicit path to the alignment binary
-        --align_extra ...             extra args passed through to the aligner
+        --align_extra ...             raw passthrough args appended to the
+                                      aligner CLI verbatim
+        --align_args KEY[=VAL] ...    aligner-specific structured kwargs.
+                                      The wrapper for --align consumes the
+                                      keys it knows; unknown keys raise.
+                                      Bare KEY is treated as KEY=true.
         --output_format {fasta, stockholm}  format for the aligned output
-        --guidetree_out               (clustalo only) write guide tree to
+
+    Per-aligner --align_args keys:
+        clustalo:
+            guidetree_out=true        write guide tree to
                                       <outdir>/guidetree.dnd
-        --output_order {tree-order, input-order}
-                                      (clustalo only) order of aligned output
+            output_order={tree-order, input-order}
+                                      order of aligned output
+        mafft: (none currently)
 
 OUTPUTS (under outdir):
 
     aligned.fasta or aligned.sto      aligned MSA
     clustered.fasta                   only when --cluster is not 'none'
-    guidetree.dnd                     only when --align clustalo --guidetree_out
+    guidetree.dnd                     only with --align clustalo
+                                      --align_args guidetree_out=true
     filter_history.json               per-stage sequence counts
     prealign_args.json                resolved arguments
     prealign.log                      run log
@@ -70,7 +79,6 @@ PREALIGN_ARGS_FNAME = "prealign_args.json"
 PREALIGN_FILTER_HISTORY_FNAME = "filter_history.json"
 CLUSTERED_FASTA_FNAME = "clustered.fasta"
 ALIGNED_BASENAME = "aligned"
-GUIDETREE_FNAME = "guidetree.dnd"
 
 _ALIGNED_EXT = {
     "fasta": ".fasta",
@@ -78,6 +86,27 @@ _ALIGNED_EXT = {
 }
 
 logger = logging.getLogger("mysca.run_prealign")
+
+
+def _parse_align_args(items):
+    """Parse `--align_args` items into a dict of aligner-specific kwargs.
+
+    Each item is `KEY` (treated as `KEY=true`) or `KEY=VAL`. Values stay
+    as strings; the chosen aligner's wrapper handles type coercion and
+    validation, and raises on keys it doesn't recognize.
+    """
+    out = {}
+    for raw in items:
+        if "=" in raw:
+            key, _, val = raw.partition("=")
+        else:
+            key, val = raw, "true"
+        if not key:
+            raise ValueError(f"Empty key in --align_args item: {raw!r}")
+        if key in out:
+            raise ValueError(f"Duplicate --align_args key: {key!r}")
+        out[key] = val
+    return out
 
 
 def parse_args(args):
@@ -125,15 +154,16 @@ def parse_args(args):
         help="Format for the aligned output. Default 'fasta'.",
     )
     align.add_argument(
-        "--guidetree_out", action="store_true",
-        help=("(clustalo only) Write the guide tree to "
-              "<outdir>/guidetree.dnd."),
-    )
-    align.add_argument(
-        "--output_order", type=str, default=None,
-        choices=["tree-order", "input-order"],
-        help=("(clustalo only) Order of sequences in the aligned output. "
-              "Default leaves clustalo's own default in place."),
+        "--align_args", nargs="*", default=[], metavar="KEY[=VAL]",
+        help=("Aligner-specific structured kwargs. Each item is either "
+              "a bare KEY (treated as KEY=true) or KEY=VAL. The wrapper "
+              "for the chosen --align consumes the keys it knows and "
+              "raises on unknown keys. Use this for options that need "
+              "post-processing (e.g. clustalo guidetree_out=true writes "
+              "a guide tree under outdir). For raw passthrough to the "
+              "aligner CLI, use --align_extra instead. Examples: "
+              "`--align_args guidetree_out=true output_order=tree-order` "
+              "(clustalo)."),
     )
 
     return parser.parse_args(args)
@@ -147,19 +177,7 @@ def main(args):
         logfile=os.path.join(outdir, PREALIGN_LOG_FNAME),
     )
 
-    # Reject clustalo-only flags when paired with another aligner, before any
-    # subprocess work so the test doesn't need either binary on PATH.
-    if args.align != "clustalo":
-        offending = []
-        if args.guidetree_out:
-            offending.append("--guidetree_out")
-        if args.output_order is not None:
-            offending.append("--output_order")
-        if offending:
-            raise ValueError(
-                f"Flag(s) {', '.join(offending)} are only valid with "
-                f"--align clustalo (got --align {args.align})."
-            )
+    aligner_kwargs = _parse_align_args(args.align_args)
 
     input_fpath = args.input_fpath
     if not os.path.isfile(input_fpath):
@@ -211,10 +229,6 @@ def main(args):
     # Stage 2: alignment.
     aligned_fname = ALIGNED_BASENAME + _ALIGNED_EXT[args.output_format]
     aligned_fpath = os.path.join(outdir, aligned_fname)
-    if args.align == "clustalo" and args.guidetree_out:
-        guidetree_path = os.path.join(outdir, GUIDETREE_FNAME)
-    else:
-        guidetree_path = None
     align_info = run_align(
         aligner_input, aligned_fpath,
         method=args.align,
@@ -222,8 +236,7 @@ def main(args):
         bin_path=args.align_bin,
         extra_args=args.align_extra,
         output_format=args.output_format,
-        guidetree_out=guidetree_path,
-        output_order=args.output_order,
+        aligner_kwargs=aligner_kwargs,
     )
     filter_history.append({
         "stage": "align",

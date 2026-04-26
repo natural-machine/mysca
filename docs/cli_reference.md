@@ -45,10 +45,21 @@ The aligned output is written to `<output-dir>/aligned.fasta`.
 | `--align` | `mafft` | Alignment method. Choices: `mafft`, `clustalo` |
 | `--align_threads` | 1 | Threads for the alignment tool |
 | `--align_bin` | (from PATH) | Explicit path to the alignment binary |
-| `--align_extra` | [] | Extra arguments passed through to the aligner |
+| `--align_extra` | [] | Raw passthrough args appended to the aligner CLI verbatim |
+| `--align_args` | [] | Aligner-specific structured kwargs as `KEY[=VAL]` pairs (bare `KEY` is treated as `KEY=true`). The wrapper for the chosen `--align` consumes the keys it knows; unknown keys raise. See per-aligner keys below |
 | `--output_format` | `fasta` | Format of the aligned output. Choices: `fasta`, `stockholm`. The output filename is `aligned.fasta` or `aligned.sto` accordingly |
-| `--guidetree_out` | off | (clustalo only) Write the guide tree to `<outdir>/guidetree.dnd` |
-| `--output_order` | None (aligner default) | (clustalo only) Order of sequences in the aligned output. Choices: `tree-order`, `input-order` |
+
+### Per-aligner `--align_args` keys
+
+Each aligner's wrapper consumes a known set of keys; unknown keys raise. Bare `KEY` means `KEY=true`.
+
+- **`clustalo`**:
+  - `guidetree_out=true` — write the guide tree to `<outdir>/guidetree.dnd`
+  - `output_order=tree-order` or `output_order=input-order`
+  - `seqtype=protein` (default) — overridable for nucleic acid input
+- **`mafft`**: no keys currently. Pass any raw CLI flags via `--align_extra` instead.
+
+Example: `--align clustalo --align_args guidetree_out=true output_order=tree-order`.
 
 ### Optional Arguments
 
@@ -63,7 +74,7 @@ The aligned output is written to `<output-dir>/aligned.fasta`.
 Writes to the specified output directory:
 - `aligned.fasta` or `aligned.sto` — aligned MSA (depending on `--output_format`)
 - `clustered.fasta` — clustered FASTA (only when `--cluster mmseqs2`)
-- `guidetree.dnd` — guide tree (only when `--align clustalo --guidetree_out`)
+- `guidetree.dnd` — guide tree (only with `--align clustalo --align_args guidetree_out=true`)
 - `filter_history.json` — per-stage sequence counts (initial / cluster / align); always persisted so `sca-plots` can replay the diagnostic plot later
 - `prealign_args.json` — arguments used
 - `prealign.log` — run log
