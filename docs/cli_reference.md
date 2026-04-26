@@ -219,6 +219,7 @@ sca-pymol --structure <structure-out-dir> \
     [--multisector] \
     [-r REF_STRUCTURE_ID] \
     [--features_py PATH] [--features NAME[,NAME...]] \
+    [--struct_style {sticks,cartoon,ribbon,lines,surface}] \
     [--views] [--animate] [--nframes N] [--duration SEC] \
     [--spin_axis {x,y,z}] [--spin_degrees N] \
     [--ray {none,first,all}] [--dpi N] \
@@ -246,6 +247,7 @@ sca-pymol --structure <structure-out-dir> \
 | `--multisector` | off | Render all selected groups on a single frame per structure instead of one frame per group |
 | `--features_py` | None | Path to a user Python file supplying protein-specific annotation functions |
 | `--features` | None | Comma-separated names of callables in `--features_py` to invoke per render pass. Requires `--features_py` |
+| `--struct_style` | `sticks` | PyMOL representation for the scaffold structure (choices: `sticks`, `cartoon`, `ribbon`, `lines`, `surface`). `cartoon` shows secondary structure; `sticks` shows every atom |
 | `--views` | off | Save four rotated side views per frame under `outdir/views/` |
 | `--animate` | off | Save a rotating GIF per rendered frame under `outdir/` — one per IC group in the default mode; one covering all selected groups under `--multisector` |
 | `--nframes` | 24 | Animation frame count (only used with `--animate`) |

@@ -3,9 +3,9 @@ set -euo pipefail
 
 outdir=out/from_msa
 
-# Resolve human Fyn (UniProt P06241) → 1SHF via SIFTS's best_structures
+# Resolve human Abl1 (UniProt P00519) → 2ABL via SIFTS's best_structures
 # endpoint, then project. A pre-populated cache under
-# data/sifts_cache/P06241.json lets this step run offline: the SIFTS
+# data/sifts_cache/P00519.json lets this step run offline: the SIFTS
 # lookup hits the cache file and never touches the network. Passing
 # --cache_dir data/sifts_cache steers mysca at that shipped cache
 # instead of the default ./.sifts_cache.
@@ -16,7 +16,7 @@ outdir=out/from_msa
 # may have changed by then; the shipped cache pins the demo to a
 # known-good mapping.
 sca-structure \
-    --uniprot_ids P06241 \
+    --uniprot_ids P00519 \
     --pdb_dir data/pdbs \
     --cache_dir data/sifts_cache \
     --preprocessing ${outdir}/preprocessing \

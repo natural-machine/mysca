@@ -13,7 +13,7 @@ if ! python -c "import pymol" >/dev/null 2>&1; then
     exit 0
 fi
 
-# Render the top 2 ICs from the 1SHF structure projection produced by
+# Render the top 2 ICs from the 2ABL structure projection produced by
 # step5_structure. sca-pymol loads the PDB via the pdb_path recorded
 # in structure_projection.json and uses authoritative PDB residue
 # numbers from ic_pdb_residues — no --pdb_dir / --modes / 1+idx
@@ -40,6 +40,7 @@ fi
 sca-pymol \
     --structure ${outdir}/structure \
     --groups 0 1 \
+    --struct_style cartoon \
     --animate --nframes 36 --duration 3.6 \
     -o ${outdir}/pymol_anim
 
@@ -59,6 +60,7 @@ if python -c "import imageio_ffmpeg" >/dev/null 2>&1; then
         --structure ${outdir}/structure \
         --groups 0 1 \
         --multisector \
+        --struct_style cartoon \
         --animate --nframes 36 --duration 3.6 \
         --format both \
         -o ${outdir}/pymol_anim_mp4
@@ -76,6 +78,7 @@ fi
 sca-pymol \
     --structure ${outdir}/structure \
     --groups 0 1 \
+    --struct_style cartoon \
     --animate --mode reveal --reveal_schedule cumulative \
     --nframes 20 --duration 4.0 \
     -o ${outdir}/pymol_reveal_cum
@@ -83,6 +86,7 @@ sca-pymol \
 sca-pymol \
     --structure ${outdir}/structure \
     --groups 0 1 \
+    --struct_style cartoon \
     --animate --mode reveal --reveal_schedule sequential \
     --nframes 20 --duration 4.0 \
     -o ${outdir}/pymol_reveal_seq
@@ -90,6 +94,7 @@ sca-pymol \
 sca-pymol \
     --structure ${outdir}/structure \
     --groups 0 1 \
+    --struct_style cartoon \
     --animate --mode reveal --reveal_schedule custom \
     --reveal_custom "0" "0,1" "1" \
     --nframes 30 --duration 6.0 \

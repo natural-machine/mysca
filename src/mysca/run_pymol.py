@@ -37,6 +37,8 @@ COMMAND LINE ARGUMENTS:
         feature functions.
     --features NAME[,NAME,...] : names in --features_py to invoke per
         render pass. Requires --features_py.
+    --struct_style {sticks,cartoon,ribbon,lines,surface} : PyMOL
+        representation for the scaffold structure. Default 'sticks'.
     --views : save four rotated side views per frame.
     --animate : save a rotating GIF per rendered frame (one per IC
         group in the default mode; one covering all groups under
@@ -107,6 +109,16 @@ DEFAULT_SECTOR_COLORS = SECTOR_COLORS
 DEFAULT_SECTOR_STYLE = "spheres"
 DEFAULT_BG_COLOR = "white"
 
+STRUCT_STYLE_CHOICES = ("sticks", "cartoon", "ribbon", "lines", "surface")
+# PyMOL transparency settings keyed by representation name.
+STRUCT_TRANSPARENCY_PROP = {
+    "sticks": "stick_transparency",
+    "cartoon": "cartoon_transparency",
+    "ribbon": "ribbon_transparency",
+    "lines": "line_transparency",
+    "surface": "transparency",
+}
+
 
 def parse_args(args):
     parser = argparse.ArgumentParser(
@@ -154,6 +166,13 @@ def parse_args(args):
         "--features", type=str, default=None, metavar="NAMES",
         help="Comma-separated names in --features_py to invoke per "
         "render pass. Requires --features_py.",
+    )
+    parser.add_argument(
+        "--struct_style", type=str, default=DEFAULT_STRUCT_STYLE,
+        choices=list(STRUCT_STYLE_CHOICES),
+        help="PyMOL representation for the scaffold structure. Default "
+        f"{DEFAULT_STRUCT_STYLE!r}. Use 'cartoon' to see secondary "
+        "structure; 'sticks' shows every atom.",
     )
     parser.add_argument(
         "--views", action="store_true",
@@ -423,6 +442,7 @@ def main(args):
             format=args.format,
             mode=args.mode,
             reveal_schedule=reveal_schedule,
+            struct_style=args.struct_style,
         )
 
     logger.info("Done!")
@@ -449,9 +469,9 @@ def _render_one_structure(
         format: str = "gif",
         mode: str = "spin",
         reveal_schedule: list[list[int]] | None = None,
+        struct_style: str = DEFAULT_STRUCT_STYLE,
 ):
     struct_color = DEFAULT_STRUCT_COLOR
-    struct_style = DEFAULT_STRUCT_STYLE
     struct_alpha = DEFAULT_STRUCT_ALPHA
     sector_style = DEFAULT_SECTOR_STYLE
 
@@ -494,7 +514,7 @@ def _render_one_structure(
     cmd.show(struct_style, "struct")
     cmd.color(struct_color, "struct")
     cmd.set(
-        {"sticks": "stick_transparency"}.get(struct_style, DEFAULT_STRUCT_STYLE),
+        STRUCT_TRANSPARENCY_PROP[struct_style],
         1 - struct_alpha,
         "struct",
     )

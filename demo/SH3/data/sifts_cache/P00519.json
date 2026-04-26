@@ -1,0 +1,12 @@
+[
+    {
+        "pdb_id": "2abl",
+        "chain_id": "A",
+        "coverage": 0.14,
+        "resolution": 2.5,
+        "unp_start": 57,
+        "unp_end": 218,
+        "experimental_method": "X-ray diffraction",
+        "_note": "Shipped pre-populated SIFTS cache for the SH3 demo. Represents the top-ranked best_structures entry for UniProt P00519 (human Abl1) at the time of ship — 2ABL chain A (Abl1 SH3-SH2 fragment). Lets step8_sifts.sh run offline; a real SIFTS query may rank different entries."
+    }
+]
