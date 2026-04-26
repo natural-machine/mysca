@@ -1,9 +1,9 @@
 """Pre-alignment stage: cluster and align raw (unaligned) FASTA.
 
-Provides thin wrappers around external tools (mmseqs2, MAFFT) that shell out
-via subprocess. The public surface is `run_cluster` and `run_align`, dispatched
-through the `CLUSTERERS` and `ALIGNERS` registries so additional tools can be
-added without changing the CLI.
+Provides thin wrappers around external tools (mmseqs2, MAFFT, Clustal Omega)
+that shell out via subprocess. The public surface is `run_cluster` and
+`run_align`, dispatched through the `CLUSTERERS` and `ALIGNERS` registries so
+additional tools can be added without changing the CLI.
 
 Binaries must be resolvable via `shutil.which` (i.e. present on PATH) or via
 an explicit `bin_path` override. `_resolve_bin` raises FileNotFoundError
@@ -228,8 +228,73 @@ def _count_aligned(fpath: str, fmt: str) -> int:
         return sum(1 for _ in AlignIO.read(f, fmt))
 
 
+_CLUSTALO_OUTFMT = {
+    "fasta": "fa",
+    "stockholm": "st",
+}
+
+
+def _align_clustalo(
+    in_fasta: str,
+    out_path: str,
+    *,
+    threads: int,
+    bin_path: str | None,
+    extra_args: Iterable[str],
+    output_format: str,
+    guidetree_out: str | None = None,
+    output_order: str | None = None,
+    seqtype: str = "protein",
+) -> dict:
+    clustalo = _resolve_bin("clustalo", override=bin_path)
+    n_in = _count_fasta(in_fasta)
+    logger.info(
+        "Aligning %d sequences with Clustal Omega "
+        "(threads=%d, output_format=%s, seqtype=%s)",
+        n_in, threads, output_format, seqtype,
+    )
+
+    argv = [
+        clustalo,
+        "--infile", in_fasta,
+        "--outfile", out_path,
+        "--threads", str(threads),
+        "--seqtype", seqtype,
+        "--outfmt", _CLUSTALO_OUTFMT[output_format],
+        "--force",
+    ]
+    if output_order is not None:
+        argv.extend(["--output-order", output_order])
+    if guidetree_out is not None:
+        argv.extend(["--guidetree-out", guidetree_out])
+    argv.extend(extra_args)
+
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    if guidetree_out is not None:
+        os.makedirs(
+            os.path.dirname(os.path.abspath(guidetree_out)), exist_ok=True,
+        )
+
+    t0 = time.perf_counter()
+    _run_cmd(argv)
+    elapsed = time.perf_counter() - t0
+
+    n_out = _count_aligned(out_path, output_format)
+    logger.info(
+        "Alignment done: %d sequences written to %s in %.2fs",
+        n_out, out_path, elapsed,
+    )
+    return {"n_in": n_in, "n_out": n_out, "elapsed_s": elapsed}
+
+
 ALIGNERS = {
     "mafft": _align_mafft,
+    "clustalo": _align_clustalo,
+}
+
+ALIGNER_BINARIES = {
+    "mafft": "mafft",
+    "clustalo": "clustalo",
 }
 
 
@@ -242,11 +307,14 @@ def run_align(
     bin_path: str | None = None,
     extra_args: Iterable[str] = (),
     output_format: str = "fasta",
+    guidetree_out: str | None = None,
+    output_order: str | None = None,
 ) -> dict:
     """Align FASTA sequences, writing an aligned MSA to `out_path`.
 
     `output_format` controls the written alignment format: "fasta" (default)
-    or "stockholm".
+    or "stockholm". `guidetree_out` and `output_order` are only meaningful
+    for the `clustalo` aligner and are silently ignored by other aligners.
     """
     if method not in ALIGNERS:
         raise ValueError(
@@ -258,10 +326,13 @@ def run_align(
             f"Unknown output_format {output_format!r}. "
             f"Supported: {list(SUPPORTED_ALIGNMENT_FORMATS)}"
         )
-    return ALIGNERS[method](
-        in_fasta, out_path,
-        threads=threads,
-        bin_path=bin_path,
-        extra_args=tuple(extra_args),
-        output_format=output_format,
-    )
+    kwargs = {
+        "threads": threads,
+        "bin_path": bin_path,
+        "extra_args": tuple(extra_args),
+        "output_format": output_format,
+    }
+    if method == "clustalo":
+        kwargs["guidetree_out"] = guidetree_out
+        kwargs["output_order"] = output_order
+    return ALIGNERS[method](in_fasta, out_path, **kwargs)

@@ -3,8 +3,9 @@
 Produces an aligned FASTA (`aligned.fasta`) ready to feed into `sca-preprocess`.
 Optionally runs a clustering step first to reduce redundancy before alignment.
 
-External binaries (`mafft`, and `mmseqs` if `--cluster mmseqs2`) must be
-available on PATH; otherwise the program raises FileNotFoundError and stops.
+External binaries (`mafft` or `clustalo` for the alignment step, and `mmseqs`
+if `--cluster mmseqs2`) must be available on PATH; otherwise the program
+raises FileNotFoundError and stops.
 
 -------------------------------------------------------------------------------
 EXAMPLE USAGE:
@@ -13,9 +14,38 @@ EXAMPLE USAGE:
     sca-prealign -i raw.fasta -o prealign_out --cluster mmseqs2 \
         --cluster_min_seq_id 0.9
 
+    # Use Clustal Omega instead of MAFFT, write a guide tree, and order the
+    # aligned output by the guide tree.
+    sca-prealign -i raw.fasta -o prealign_out --align clustalo \
+        --guidetree_out --output_order tree-order
+
 Then chain into sca-preprocess:
 
     sca-preprocess -i prealign_out/aligned.fasta -o preprocess_out
+
+-------------------------------------------------------------------------------
+COMMAND LINE ARGUMENTS:
+
+    Alignment group:
+        --align {mafft, clustalo}     alignment method (default mafft)
+        --align_threads INT           threads for the aligner (default 1)
+        --align_bin PATH              explicit path to the alignment binary
+        --align_extra ...             extra args passed through to the aligner
+        --output_format {fasta, stockholm}  format for the aligned output
+        --guidetree_out               (clustalo only) write guide tree to
+                                      <outdir>/guidetree.dnd
+        --output_order {tree-order, input-order}
+                                      (clustalo only) order of aligned output
+
+OUTPUTS (under outdir):
+
+    aligned.fasta or aligned.sto      aligned MSA
+    clustered.fasta                   only when --cluster is not 'none'
+    guidetree.dnd                     only when --align clustalo --guidetree_out
+    filter_history.json               per-stage sequence counts
+    prealign_args.json                resolved arguments
+    prealign.log                      run log
+    images/prealign_filter_history.png  only when --plot is passed
 """
 
 import argparse
@@ -26,6 +56,7 @@ import sys
 
 from mysca.logging_config import configure_logging
 from mysca.prealign import (
+    ALIGNER_BINARIES,
     ALIGNERS,
     CLUSTERERS,
     SUPPORTED_ALIGNMENT_FORMATS,
@@ -39,6 +70,7 @@ PREALIGN_ARGS_FNAME = "prealign_args.json"
 PREALIGN_FILTER_HISTORY_FNAME = "filter_history.json"
 CLUSTERED_FASTA_FNAME = "clustered.fasta"
 ALIGNED_BASENAME = "aligned"
+GUIDETREE_FNAME = "guidetree.dnd"
 
 _ALIGNED_EXT = {
     "fasta": ".fasta",
@@ -80,7 +112,7 @@ def parse_args(args):
     align.add_argument(
         "--align", type=str, default="mafft",
         choices=sorted(ALIGNERS),
-        help="Alignment method. Default 'mafft'.",
+        help="Alignment method. Choices: 'mafft' (default), 'clustalo'.",
     )
     align.add_argument("--align_threads", type=int, default=1)
     align.add_argument("--align_bin", type=str, default=None,
@@ -91,6 +123,17 @@ def parse_args(args):
         "--output_format", type=str, default="fasta",
         choices=list(SUPPORTED_ALIGNMENT_FORMATS),
         help="Format for the aligned output. Default 'fasta'.",
+    )
+    align.add_argument(
+        "--guidetree_out", action="store_true",
+        help=("(clustalo only) Write the guide tree to "
+              "<outdir>/guidetree.dnd."),
+    )
+    align.add_argument(
+        "--output_order", type=str, default=None,
+        choices=["tree-order", "input-order"],
+        help=("(clustalo only) Order of sequences in the aligned output. "
+              "Default leaves clustalo's own default in place."),
     )
 
     return parser.parse_args(args)
@@ -104,6 +147,20 @@ def main(args):
         logfile=os.path.join(outdir, PREALIGN_LOG_FNAME),
     )
 
+    # Reject clustalo-only flags when paired with another aligner, before any
+    # subprocess work so the test doesn't need either binary on PATH.
+    if args.align != "clustalo":
+        offending = []
+        if args.guidetree_out:
+            offending.append("--guidetree_out")
+        if args.output_order is not None:
+            offending.append("--output_order")
+        if offending:
+            raise ValueError(
+                f"Flag(s) {', '.join(offending)} are only valid with "
+                f"--align clustalo (got --align {args.align})."
+            )
+
     input_fpath = args.input_fpath
     if not os.path.isfile(input_fpath):
         raise FileNotFoundError(f"Input FASTA not found: {input_fpath}")
@@ -111,7 +168,7 @@ def main(args):
     # Resolve all needed binaries up front so a missing tool fails fast.
     if args.cluster != "none":
         _resolve_bin("mmseqs", override=args.cluster_bin)
-    _resolve_bin("mafft", override=args.align_bin)
+    _resolve_bin(ALIGNER_BINARIES[args.align], override=args.align_bin)
 
     # Persist resolved args for reproducibility.
     args_fpath = os.path.join(outdir, PREALIGN_ARGS_FNAME)
@@ -154,6 +211,10 @@ def main(args):
     # Stage 2: alignment.
     aligned_fname = ALIGNED_BASENAME + _ALIGNED_EXT[args.output_format]
     aligned_fpath = os.path.join(outdir, aligned_fname)
+    if args.align == "clustalo" and args.guidetree_out:
+        guidetree_path = os.path.join(outdir, GUIDETREE_FNAME)
+    else:
+        guidetree_path = None
     align_info = run_align(
         aligner_input, aligned_fpath,
         method=args.align,
@@ -161,6 +222,8 @@ def main(args):
         bin_path=args.align_bin,
         extra_args=args.align_extra,
         output_format=args.output_format,
+        guidetree_out=guidetree_path,
+        output_order=args.output_order,
     )
     filter_history.append({
         "stage": "align",

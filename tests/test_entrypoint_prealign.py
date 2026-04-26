@@ -20,8 +20,10 @@ INPUT_FASTA = f"{DATDIR}/seqs/seqs07.fasta"
 
 _MAFFT = shutil.which("mafft") is not None
 _MMSEQS = shutil.which("mmseqs") is not None
+_CLUSTALO = shutil.which("clustalo") is not None
 needs_mafft = pytest.mark.skipif(not _MAFFT, reason="mafft not on PATH")
 needs_mmseqs = pytest.mark.skipif(not _MMSEQS, reason="mmseqs not on PATH")
+needs_clustalo = pytest.mark.skipif(not _CLUSTALO, reason="clustalo not on PATH")
 
 
 def _aligned_lengths(fpath):
@@ -190,5 +192,189 @@ def test_missing_binary_fails_fast():
         "-v", "0",
     ])
     with pytest.raises(FileNotFoundError):
+        main(args)
+    remove_dir(outdir)
+
+
+@needs_clustalo
+def test_align_only_clustalo():
+    outdir = f"{TMPDIR}/prealign_align_only_clustalo"
+    if os.path.isdir(outdir):
+        remove_dir(outdir)
+    args = parse_args([
+        "-i", INPUT_FASTA,
+        "-o", outdir,
+        "--align", "clustalo",
+        "-v", "0",
+    ])
+    main(args)
+
+    aligned = os.path.join(outdir, "aligned.fasta")
+    assert os.path.isfile(aligned)
+    lengths = _aligned_lengths(aligned)
+    assert len(lengths) == 1, f"Non-uniform aligned lengths: {lengths}"
+    assert _record_count(aligned) == _record_count(INPUT_FASTA)
+
+    args_path = os.path.join(outdir, "prealign_args.json")
+    assert os.path.isfile(args_path)
+    import json
+    with open(args_path) as f:
+        persisted = json.load(f)
+    assert persisted["align"] == "clustalo"
+
+    remove_dir(outdir)
+
+
+@needs_clustalo
+def test_align_clustalo_stockholm_output():
+    outdir = f"{TMPDIR}/prealign_clustalo_sto_out"
+    if os.path.isdir(outdir):
+        remove_dir(outdir)
+    args = parse_args([
+        "-i", INPUT_FASTA,
+        "-o", outdir,
+        "--align", "clustalo",
+        "--output_format", "stockholm",
+        "-v", "0",
+    ])
+    main(args)
+
+    aligned = os.path.join(outdir, "aligned.sto")
+    assert os.path.isfile(aligned)
+    assert not os.path.isfile(os.path.join(outdir, "aligned.fasta"))
+
+    with open(aligned) as f:
+        aln = AlignIO.read(f, "stockholm")
+    assert len(aln) == _record_count(INPUT_FASTA)
+    assert len({len(rec.seq) for rec in aln}) == 1
+
+    remove_dir(outdir)
+
+
+@needs_clustalo
+def test_align_clustalo_guidetree_out():
+    outdir = f"{TMPDIR}/prealign_clustalo_guidetree"
+    if os.path.isdir(outdir):
+        remove_dir(outdir)
+    args = parse_args([
+        "-i", INPUT_FASTA,
+        "-o", outdir,
+        "--align", "clustalo",
+        "--guidetree_out",
+        "-v", "0",
+    ])
+    main(args)
+
+    guidetree = os.path.join(outdir, "guidetree.dnd")
+    assert os.path.isfile(guidetree)
+    assert os.path.getsize(guidetree) > 0
+
+    remove_dir(outdir)
+
+
+@needs_clustalo
+def test_align_clustalo_output_order_tree():
+    outdir = f"{TMPDIR}/prealign_clustalo_output_order"
+    if os.path.isdir(outdir):
+        remove_dir(outdir)
+    args = parse_args([
+        "-i", INPUT_FASTA,
+        "-o", outdir,
+        "--align", "clustalo",
+        "--output_order", "tree-order",
+        "-v", "0",
+    ])
+    main(args)
+
+    aligned = os.path.join(outdir, "aligned.fasta")
+    assert os.path.isfile(aligned)
+    lengths = _aligned_lengths(aligned)
+    assert len(lengths) == 1, f"Non-uniform aligned lengths: {lengths}"
+    assert _record_count(aligned) == _record_count(INPUT_FASTA)
+
+    remove_dir(outdir)
+
+
+@needs_clustalo
+def test_clustalo_chain_to_preprocess():
+    prealign_outdir = f"{TMPDIR}/prealign_clustalo_chain"
+    preprocess_outdir = f"{TMPDIR}/prealign_clustalo_chain_preprocess"
+    for d in (prealign_outdir, preprocess_outdir):
+        if os.path.isdir(d):
+            remove_dir(d)
+
+    main(parse_args([
+        "-i", INPUT_FASTA,
+        "-o", prealign_outdir,
+        "--align", "clustalo",
+        "-v", "0",
+    ]))
+    aligned = os.path.join(prealign_outdir, "aligned.fasta")
+    assert os.path.isfile(aligned)
+
+    pp_args = run_preprocessing_mod.parse_args([
+        "-i", aligned,
+        "-o", preprocess_outdir,
+        "-v", "0",
+    ])
+    run_preprocessing_mod.main(pp_args)
+
+    assert os.path.isfile(
+        os.path.join(preprocess_outdir, "preprocessing_results.npz")
+    )
+
+    remove_dir(prealign_outdir)
+    remove_dir(preprocess_outdir)
+
+
+def test_align_clustalo_missing_binary_fails_fast():
+    """Aligner-aware _resolve_bin must look up clustalo, not mafft."""
+    outdir = f"{TMPDIR}/prealign_clustalo_missing_bin"
+    if os.path.isdir(outdir):
+        remove_dir(outdir)
+    args = parse_args([
+        "-i", INPUT_FASTA,
+        "-o", outdir,
+        "--align", "clustalo",
+        "--align_bin", "/nonexistent/clustalo",
+        "-v", "0",
+    ])
+    with pytest.raises(FileNotFoundError):
+        main(args)
+    remove_dir(outdir)
+
+
+def test_guidetree_with_mafft_rejected():
+    """--guidetree_out is clustalo-only and must be rejected before any
+    binary resolve, so the test runs without either binary installed."""
+    outdir = f"{TMPDIR}/prealign_guidetree_with_mafft"
+    if os.path.isdir(outdir):
+        remove_dir(outdir)
+    args = parse_args([
+        "-i", INPUT_FASTA,
+        "-o", outdir,
+        "--align", "mafft",
+        "--guidetree_out",
+        "-v", "0",
+    ])
+    with pytest.raises(ValueError, match="--guidetree_out"):
+        main(args)
+    remove_dir(outdir)
+
+
+def test_output_order_with_mafft_rejected():
+    """--output_order is clustalo-only and must be rejected before any
+    binary resolve, so the test runs without either binary installed."""
+    outdir = f"{TMPDIR}/prealign_output_order_with_mafft"
+    if os.path.isdir(outdir):
+        remove_dir(outdir)
+    args = parse_args([
+        "-i", INPUT_FASTA,
+        "-o", outdir,
+        "--align", "mafft",
+        "--output_order", "tree-order",
+        "-v", "0",
+    ])
+    with pytest.raises(ValueError, match="--output_order"):
         main(args)
     remove_dir(outdir)

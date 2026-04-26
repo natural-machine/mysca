@@ -26,6 +26,7 @@ dependencies:
   #   - mafft    # sca-prealign; sca-project --aligner mafft_add (default)
   #   - hmmer    # sca-project --aligner hmmalign (provides hmmbuild + hmmalign)
   #   - mmseqs2  # sca-prealign --cluster mmseqs2
+  #   - clustalo # sca-prealign --align clustalo
   # In-sample projection and PDB loading require no external binary.
   #
   # Optional pip-only extra for sca-pymol --format mp4 / --format both:

@@ -42,11 +42,13 @@ The aligned output is written to `<output-dir>/aligned.fasta`.
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--align` | `mafft` | Alignment method. Choices: `mafft` |
+| `--align` | `mafft` | Alignment method. Choices: `mafft`, `clustalo` |
 | `--align_threads` | 1 | Threads for the alignment tool |
 | `--align_bin` | (from PATH) | Explicit path to the alignment binary |
 | `--align_extra` | [] | Extra arguments passed through to the aligner |
 | `--output_format` | `fasta` | Format of the aligned output. Choices: `fasta`, `stockholm`. The output filename is `aligned.fasta` or `aligned.sto` accordingly |
+| `--guidetree_out` | off | (clustalo only) Write the guide tree to `<outdir>/guidetree.dnd` |
+| `--output_order` | None (aligner default) | (clustalo only) Order of sequences in the aligned output. Choices: `tree-order`, `input-order` |
 
 ### Optional Arguments
 
@@ -61,6 +63,7 @@ The aligned output is written to `<output-dir>/aligned.fasta`.
 Writes to the specified output directory:
 - `aligned.fasta` or `aligned.sto` — aligned MSA (depending on `--output_format`)
 - `clustered.fasta` — clustered FASTA (only when `--cluster mmseqs2`)
+- `guidetree.dnd` — guide tree (only when `--align clustalo --guidetree_out`)
 - `filter_history.json` — per-stage sequence counts (initial / cluster / align); always persisted so `sca-plots` can replay the diagnostic plot later
 - `prealign_args.json` — arguments used
 - `prealign.log` — run log
@@ -68,7 +71,7 @@ Writes to the specified output directory:
 
 ### External Binaries
 
-`mafft` (always) and `mmseqs` (when `--cluster mmseqs2`) must be resolvable on `PATH` — the CLI checks up front and raises `FileNotFoundError` immediately if a required tool is missing. Install e.g. via `conda install -c bioconda mafft mmseqs2`, or pass explicit paths with `--align_bin` / `--cluster_bin`.
+The aligner binary (`mafft` or `clustalo`, depending on `--align`) and `mmseqs` (when `--cluster mmseqs2`) must be resolvable on `PATH` — the CLI checks up front and raises `FileNotFoundError` immediately if a required tool is missing. Install e.g. via `conda install -c bioconda mafft mmseqs2 clustalo`, or pass explicit paths with `--align_bin` / `--cluster_bin`.
 
 ---
 
