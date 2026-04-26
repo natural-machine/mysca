@@ -13,11 +13,15 @@ signature::
 
     def feature_fn(struct, cmd, *, color=None, context=None) -> None
 
-``struct`` is the PyMOL object name; ``cmd`` is PyMOL's ``cmd`` module
-(injected so users don't need ``from pymol import cmd``); ``context``
-carries a dict with keys ``projection``, ``scaffold``, ``group_idx``,
-``outdir`` so feature functions can read ``chain_id`` /
-``ic_pdb_residues`` / ``pdb_path`` off the projection.
+``struct`` is the PyMOL object name of the loaded scaffold and is
+always the literal string ``"struct"`` (see ``SCAFFOLD_OBJECT_NAME``);
+the structure_id (e.g. ``"1Q16"``) is in ``context["scaffold"]``.
+``cmd`` is PyMOL's ``cmd`` module (injected so users don't need
+``from pymol import cmd``); ``context`` carries a dict with keys
+``projection``, ``scaffold``, ``group_idx``, ``outdir``, and
+``select`` (a noisy ``cmd.select`` wrapper that logs a WARNING on
+zero-match selections — preferred over calling ``cmd.select``
+directly).
 
 -------------------------------------------------------------------------------
 COMMAND LINE ARGUMENTS:
@@ -99,6 +103,12 @@ from mysca.logging_config import configure_logging
 
 PYMOL_LOG_FNAME = "pymol.log"
 STRUCTURE_JSON_FNAME = "structure_projection.json"
+
+# PyMOL object names. Hoisted from previously-scattered string literals
+# so the features-plugin contract ("struct" is always literally the
+# loaded object name") is enforced at one place.
+SCAFFOLD_OBJECT_NAME = "struct"
+REF_SCAFFOLD_OBJECT_NAME = "ref_struct"
 
 logger = logging.getLogger("mysca.run_pymol")
 
@@ -492,14 +502,14 @@ def _render_one_structure(
     # Fresh PyMOL session per structure so selections / objects don't
     # leak between structures in seq_map batches.
     cmd.delete("all")
-    cmd.load(pdb_path, "struct")
+    cmd.load(pdb_path, SCAFFOLD_OBJECT_NAME)
 
     ref_scaffold = None
     if reference_projection is not None:
         ref_scaffold = reference_projection["structure_id"]
         ref_pdb = reference_projection.get("pdb_path")
         if ref_pdb and os.path.isfile(ref_pdb):
-            cmd.load(ref_pdb, "ref_struct")
+            cmd.load(ref_pdb, REF_SCAFFOLD_OBJECT_NAME)
         else:
             logger.warning(
                 "Reference %s has no valid pdb_path; skipping alignment.",
@@ -507,16 +517,16 @@ def _render_one_structure(
             )
             ref_scaffold = None
 
-    cmd.hide("everything", "struct")
+    cmd.hide("everything", SCAFFOLD_OBJECT_NAME)
     if ref_scaffold:
-        cmd.hide("everything", "ref_struct")
+        cmd.hide("everything", REF_SCAFFOLD_OBJECT_NAME)
     cmd.bg_color(DEFAULT_BG_COLOR)
-    cmd.show(struct_style, "struct")
-    cmd.color(struct_color, "struct")
+    cmd.show(struct_style, SCAFFOLD_OBJECT_NAME)
+    cmd.color(struct_color, SCAFFOLD_OBJECT_NAME)
     cmd.set(
         STRUCT_TRANSPARENCY_PROP[struct_style],
         1 - struct_alpha,
-        "struct",
+        SCAFFOLD_OBJECT_NAME,
     )
     cmd.zoom(complete=1)
 
@@ -589,6 +599,28 @@ def _selection_from_residues(residues):
     return "resi " + "+".join(str(r) for r in residues)
 
 
+def _make_safe_select(cmd, scaffold):
+    """Return a wrapper around ``cmd.select`` that logs a WARNING when a
+    selection matches zero atoms.
+
+    Plumbed into the features context as ``context["select"]`` so user
+    feature functions can opt into noisy failure for the most common
+    brittle pattern (PDB form mismatch — segi-path selectors that match
+    the biological-assembly form but not the asymmetric-unit form, or
+    vice versa).
+    """
+    def select(name, selection, *args, **kwargs):
+        n = cmd.select(name, selection, *args, **kwargs)
+        if n == 0:
+            logger.warning(
+                "Feature selection %r matched 0 atoms on %s "
+                "(selection=%r). PDB form mismatch?",
+                name, scaffold, selection,
+            )
+        return n
+    return select
+
+
 def _run_feature_fns(cmd, feature_fns, scaffold, projection, group_idx, outdir):
     if not feature_fns:
         return
@@ -597,9 +629,10 @@ def _run_feature_fns(cmd, feature_fns, scaffold, projection, group_idx, outdir):
         "scaffold": scaffold,
         "group_idx": group_idx,
         "outdir": outdir,
+        "select": _make_safe_select(cmd, scaffold),
     }
     for fn in feature_fns:
-        fn(scaffold, cmd, color=None, context=context)
+        fn(SCAFFOLD_OBJECT_NAME, cmd, color=None, context=context)
 
 
 def _apply_group_coloring(
@@ -646,7 +679,7 @@ def _apply_group_coloring(
 
 def _align_and_focus(cmd, ref_scaffold):
     if ref_scaffold:
-        cmd.align("struct", "ref_struct")
+        cmd.align(SCAFFOLD_OBJECT_NAME, REF_SCAFFOLD_OBJECT_NAME)
     cmd.center()
     cmd.zoom(complete=1)
 
@@ -658,9 +691,9 @@ def _write_views(cmd, outdir, basename, ref_scaffold, *, dpi: int = 300):
     os.makedirs(viewsdir, exist_ok=True)
     for ri in range(4):
         cmd.png(os.path.join(viewsdir, f"{basename}_view{ri}.png"), dpi=dpi)
-        cmd.rotate("y", 90, "struct")
+        cmd.rotate("y", 90, SCAFFOLD_OBJECT_NAME)
         if ref_scaffold:
-            cmd.rotate("y", 90, "ref_struct")
+            cmd.rotate("y", 90, REF_SCAFFOLD_OBJECT_NAME)
 
 
 def _ray_sequence(mode: str, nframes: int) -> list[int]:

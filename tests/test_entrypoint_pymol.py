@@ -7,6 +7,7 @@ loader — both paths a user can hit without any rendering.
 """
 
 import json
+import logging
 import os
 from unittest.mock import MagicMock, patch
 
@@ -15,19 +16,44 @@ import pytest
 from tests.conftest import DATDIR
 
 from mysca.run_pymol import (
+    SCAFFOLD_OBJECT_NAME,
     parse_args,
     _apply_group_coloring,
     _frames_per_stage,
     _load_features_module,
     _load_projections,
+    _make_safe_select,
     _parse_reveal_custom,
     _render_frame,
     _resolve_reveal_schedule,
+    _run_feature_fns,
     _split_features_names,
     _write_animation,
     _write_reveal_animation,
     _write_views,
 )
+
+
+@pytest.fixture
+def mysca_caplog_propagate():
+    """Force propagation on the ``mysca`` package logger for the duration
+    of the test so ``caplog`` (attached to root) sees records emitted by
+    ``mysca.*`` loggers.
+
+    Why: ``mysca.logging_config.configure_logging`` sets
+    ``logger.propagate = False`` on the package logger so mysca's own
+    handlers don't double-emit when an embedding app also configures
+    logging. Any prior test in the suite that exercises a CLI entrypoint
+    triggers that, which silently breaks ``caplog`` capture for any
+    later test asserting on a ``mysca.*`` logger record.
+    """
+    mysca_logger = logging.getLogger("mysca")
+    prev_propagate = mysca_logger.propagate
+    mysca_logger.propagate = True
+    try:
+        yield
+    finally:
+        mysca_logger.propagate = prev_propagate
 
 
 try:
@@ -170,16 +196,147 @@ def test_load_features_module_non_callable():
 
 def test_load_features_module_runs_with_mock_cmd():
     """Invoke a resolved feature fn with a MagicMock stand-in for
-    PyMOL's cmd; confirm it exercises cmd.select / cmd.show."""
+    PyMOL's cmd; confirm it exercises cmd.select / cmd.show.
+
+    The first positional is the literal PyMOL object name
+    (``SCAFFOLD_OBJECT_NAME == "struct"``); the structure_id lives in
+    ``context["scaffold"]``.
+    """
     [fn] = _load_features_module(FEATURES_FIXTURE, ["feature_a"])
     mock_cmd = MagicMock()
-    fn("my_struct", mock_cmd, color=None, context={"scaffold": "my_struct"})
+    fn(SCAFFOLD_OBJECT_NAME, mock_cmd, color=None,
+       context={"scaffold": "my_struct"})
     mock_cmd.select.assert_called_once()
     mock_cmd.show.assert_called_once()
     # First positional arg of select should be the selection name.
     (name, selection), _kwargs = mock_cmd.select.call_args
     assert name == "feature_a_sel"
-    assert "my_struct" in selection
+    assert SCAFFOLD_OBJECT_NAME in selection
+
+
+def test_feature_fns_first_positional_is_struct_literal():
+    """Contract: ``_run_feature_fns`` must pass the literal PyMOL
+    object name (``SCAFFOLD_OBJECT_NAME``) as the first positional —
+    NOT the structure_id. This guards against the historical drift
+    where ``scaffold`` (e.g. ``"1Q16"``) leaked through and broke
+    selectors documented as ``f"{struct}/..."``.
+    """
+    cmd = MagicMock()
+    received = []
+
+    def feature_fn(struct, _cmd, *, color=None, context=None):
+        received.append(struct)
+
+    _run_feature_fns(
+        cmd,
+        feature_fns=[feature_fn],
+        scaffold="1Q16",
+        projection={},
+        group_idx=0,
+        outdir="/tmp/whatever",
+    )
+    assert received == [SCAFFOLD_OBJECT_NAME]
+    assert received[0] == "struct"
+
+
+def test_safe_select_warns_on_empty_match(caplog, mysca_caplog_propagate):
+    """``context["select"]`` must log a WARNING on
+    ``mysca.run_pymol`` when the wrapped ``cmd.select`` returns 0."""
+    cmd = MagicMock()
+    cmd.select.return_value = 0
+
+    captured = {}
+
+    def feature_fn(struct, _cmd, *, color=None, context=None):
+        captured["n"] = context["select"](
+            "bogus", "resi 999999 and name FAKE",
+        )
+
+    with caplog.at_level("WARNING", logger="mysca.run_pymol"):
+        _run_feature_fns(
+            cmd,
+            feature_fns=[feature_fn],
+            scaffold="1Q16",
+            projection={},
+            group_idx=0,
+            outdir="/tmp/whatever",
+        )
+
+    assert captured["n"] == 0
+    matching = [
+        rec for rec in caplog.records
+        if rec.name == "mysca.run_pymol"
+        and rec.levelname == "WARNING"
+        and "matched 0 atoms" in rec.getMessage()
+    ]
+    assert len(matching) == 1, (
+        f"expected one zero-match WARNING from mysca.run_pymol; "
+        f"got {[(r.name, r.levelname, r.getMessage()) for r in caplog.records]}"
+    )
+
+
+def test_make_safe_select_silent_on_nonzero_match(caplog, mysca_caplog_propagate):
+    """Smoke: a non-zero return from ``cmd.select`` does not warn."""
+    cmd = MagicMock()
+    cmd.select.return_value = 3
+    select = _make_safe_select(cmd, "1Q16")
+
+    with caplog.at_level("WARNING", logger="mysca.run_pymol"):
+        n = select("ok", "resi 1+2+3")
+
+    assert n == 3
+    assert not [
+        r for r in caplog.records if r.name == "mysca.run_pymol"
+    ]
+
+
+def test_bundled_narg_demo_loads_and_runs_under_mock():
+    """The shipped ``demo/pymol_features/narg_1q16.py`` must (a) load
+    via the existing features loader and (b) issue attribute-based
+    selections — not segi-path selections that only match one PDB form.
+    """
+    here = os.path.dirname(os.path.abspath(__file__))
+    demo_path = os.path.normpath(
+        os.path.join(here, "..", "demo", "pymol_features", "narg_1q16.py")
+    )
+    fns = _load_features_module(
+        demo_path,
+        ["show_molybdenum", "show_sf4_cluster", "show_mgd"],
+    )
+
+    select_calls = []
+    cmd = MagicMock()
+
+    def recording_select(name, selection, *args, **kwargs):
+        select_calls.append((name, selection))
+        return 1
+
+    context = {
+        "projection": {},
+        "scaffold": "1Q16",
+        "group_idx": None,
+        "outdir": "/tmp/whatever",
+        "select": recording_select,
+    }
+
+    for fn in fns:
+        fn(SCAFFOLD_OBJECT_NAME, cmd, color=None, context=context)
+
+    assert select_calls == [
+        ("mo", "resn 6MO and resi 1302 and name MO"),
+        ("sf4", "resn SF4 and resi 1401"),
+        ("cofactor", "resn MD1 and resi 1300+1301"),
+    ]
+    for _name, selection in select_calls:
+        assert "/" not in selection, (
+            f"selection {selection!r} looks like a segi-path selector; "
+            "the demo must use attribute-based selectors so it stays "
+            "portable across asym-unit / biological-assembly forms."
+        )
+        assert "`" not in selection, (
+            f"selection {selection!r} contains a backtick — that's the "
+            "segi-path resi separator. Use 'resi N' or 'resi N+M' instead."
+        )
 
 
 # ---------------------------------------------------------------------- #
@@ -355,18 +512,26 @@ def test_render_frame_multigroup_creates_distinct_selections(tmp_path):
     assert "group_selection0" in deleted and "group_selection1" in deleted
 
 
-def test_render_frame_forwards_group_idx_to_feature_fns(tmp_path):
+def test_render_frame_passes_struct_object_name_and_context_scaffold(tmp_path):
+    """Feature fns receive the literal PyMOL object name as the first
+    positional; the structure_id is exposed via ``context["scaffold"]``.
+    Also confirms ``group_idx`` is forwarded through context."""
     cmd = MagicMock()
     seen = {}
 
-    def feature_fn(scaffold, _cmd, *, color=None, context=None):
-        seen["scaffold"] = scaffold
+    def feature_fn(struct, _cmd, *, color=None, context=None):
+        seen["struct"] = struct
+        seen["context_scaffold"] = context["scaffold"]
         seen["group_idx"] = context["group_idx"]
 
     _render_frame(**_render_frame_kwargs(
         cmd, tmp_path, feature_fns=[feature_fn], group_idx_for_features=7,
     ))
-    assert seen == {"scaffold": "X", "group_idx": 7}
+    assert seen == {
+        "struct": SCAFFOLD_OBJECT_NAME,
+        "context_scaffold": "X",
+        "group_idx": 7,
+    }
 
 
 def test_render_frame_empty_group_still_renders(tmp_path):

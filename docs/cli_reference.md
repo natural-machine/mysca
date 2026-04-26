@@ -283,16 +283,22 @@ def feature_fn(struct, cmd, *, color=None, context=None) -> None:
     ...
 ```
 
-- `struct` — PyMOL object name (always `"struct"` in the current implementation).
+- `struct` — PyMOL object name of the loaded scaffold. Always the literal string `"struct"` (matches `mysca.run_pymol.SCAFFOLD_OBJECT_NAME`); the structure_id (e.g. `"1Q16"`) is in `context["scaffold"]`.
 - `cmd` — PyMOL's `cmd` module, injected so the file does not need `from pymol import cmd`.
 - `color` — optional per-feature color (currently always `None`; plumbed for a future flag).
-- `context` — dict with `projection`, `scaffold`, `group_idx`, `outdir`. Read `projection["chain_id"]`, `projection["ic_pdb_residues"]`, `projection["pdb_path"]`, etc. as needed.
+- `context` — dict with `projection`, `scaffold`, `group_idx`, `outdir`, and `select`. Read `projection["chain_id"]`, `projection["ic_pdb_residues"]`, `projection["pdb_path"]`, etc. as needed.
+
+Prefer `context["select"]` over `cmd.select` directly — it logs a WARNING when a selection matches zero atoms, which catches the most common silent failure (PDB form mismatch). Example:
+
+```python
+context["select"]("mo", "resn 6MO and resi 1302 and name MO")
+```
 
 Ship-ready example: [`demo/pymol_features/narg_1q16.py`](../demo/pymol_features/narg_1q16.py) ports the previously-hardcoded molybdenum / [4Fe-4S] / MGD cofactor selections for 1Q16 NarG:
 
 ```python
 def show_molybdenum(struct, cmd, *, color=None, context=None):
-    cmd.select("mo", f"{struct}/F/A/6MO`1302/MO")
+    context["select"]("mo", "resn 6MO and resi 1302 and name MO")
     cmd.show("everything", "mo")
     if isinstance(color, str):
         cmd.color(color, "mo")
@@ -308,6 +314,24 @@ sca-pymol --structure out/structure --structure_id NarG_1Q16 \
 ```
 
 Loader errors surface at CLI startup (before any rendering): missing file → `FileNotFoundError`, missing attribute → `ValueError`, non-callable attribute → `TypeError`.
+
+#### Authoring guidance: prefer attribute selectors
+
+The same PDB ID can be served in multiple legitimate "forms" with different chain / segi layouts:
+
+- **RCSB asymmetric-unit** (`https://files.rcsb.org/download/<id>.pdb`) — what most users get by default. Often packs all hetero atoms onto chain A.
+- **RCSB biological-assembly** (`<id>.pdb1`, `<id>.pdb2`, ...) — splits cofactors across chains / segis to reflect the functional oligomer.
+- **PDBe-updated mmCIF** — adds remediation that can rename chains relative to either RCSB form.
+
+Selectors like `` f"{struct}/F/A/6MO`1302/MO" `` (chain/segi-path) only match one specific form and silently match zero atoms on the others. Attribute-based selectors (`resn`, `resi`, `name`) read directly off the residue dictionary and stay portable across forms:
+
+| Brittle (segi-path)                                         | Portable (attribute-based)                   |
+|-------------------------------------------------------------|----------------------------------------------|
+| `` f"{struct}/F/A/6MO`1302/MO" ``                           | `resn 6MO and resi 1302 and name MO`         |
+| `` f"{struct}/G/A/SF4`1401/*" ``                            | `resn SF4 and resi 1401`                     |
+| `` f"{struct}/D/A/MD1`1300/* {struct}/E/A/MD1`1301/*" ``    | `resn MD1 and resi 1300+1301`                |
+
+When you must use a chain/segi-path selector (e.g. the same residue number appears on multiple chains and you need to disambiguate), pair it with `context["select"]` so a form mismatch surfaces as a WARNING instead of a silently empty render.
 
 ### Animation
 
