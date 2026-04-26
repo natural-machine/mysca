@@ -40,20 +40,26 @@ pytest tests
 Several CLIs shell out to external tools. Install what you need via bioconda:
 
 ```bash
-conda install -c bioconda mafft    # sca-prealign; sca-project --aligner mafft_add (default)
-conda install -c bioconda hmmer    # sca-project --aligner hmmalign
-conda install -c bioconda mmseqs2  # sca-prealign --cluster mmseqs2
+conda install -c bioconda mafft     # sca-prealign --align mafft (default);
+                                    # sca-project --aligner mafft_add (default)
+conda install -c bioconda clustalo  # sca-prealign --align clustalo
+conda install -c bioconda hmmer     # sca-project --aligner hmmalign
+                                    #   (provides hmmbuild + hmmalign)
+conda install -c bioconda mmseqs2   # sca-prealign --cluster mmseqs2
 ```
 
-`environment.yml` lists these as commented-out entries — uncomment whichever you use. Every CLI checks for its binaries up-front and raises `FileNotFoundError` with a clear message if a required tool is missing.
+`environment.yml` lists these as commented-out entries — uncomment whichever you use. Every CLI checks for its binaries up-front and raises `FileNotFoundError` with a clear message if a required tool is missing. In-sample projection and PDB loading require no external binary.
 
-### PyMOL
+### Optional Python extras
 
-To visualize sectors on 3D protein structures, install PyMOL separately:
+Two pip extras are declared in `pyproject.toml`:
 
 ```bash
-conda install conda-forge::pymol-open-source
+pip install -e '.[pymol]'   # pymol-open-source — sca-pymol rendering
+pip install -e '.[mp4]'     # imageio-ffmpeg — sca-pymol --format mp4 / both
 ```
+
+For PyMOL the conda-forge build is generally preferable (`conda install -c conda-forge pymol-open-source`). The `[mp4]` extra ships a bundled ffmpeg via `imageio-ffmpeg` and is only needed if you want MP4 (rather than GIF) animations out of `sca-pymol --animate`.
 
 ## Usage
 
@@ -67,7 +73,7 @@ mysca ships seven CLI tools. The core pipeline chains the first three; the other
 6. **`sca-pymol`** — render sectors on a structure via PyMOL, with user-supplied protein-specific annotations loaded from a Python file.
 7. **`sca-plots`** — regenerate diagnostic figures from any of the persisted output directories without rerunning the pipeline.
 
-Full per-flag documentation: [docs/cli_reference.md](docs/cli_reference.md).
+Full per-flag documentation (including outputs of every CLI): [docs/cli_reference.md](docs/cli_reference.md).
 
 ### Preparing raw sequences (optional)
 
@@ -78,9 +84,15 @@ sca-prealign -i <raw.fasta> -o <prealign-outdir>
 # or with pre-clustering:
 sca-prealign -i <raw.fasta> -o <prealign-outdir> \
     --cluster mmseqs2 --cluster_min_seq_id 0.9
+# or with Clustal Omega instead of MAFFT:
+sca-prealign -i <raw.fasta> -o <prealign-outdir> \
+    --align clustalo --align_args guidetree_out=true output_order=tree-order
 ```
 
-Aligned output lives at `<prealign-outdir>/aligned.fasta` (or `aligned.sto` if `--output_format stockholm`) and feeds directly into `sca-preprocess -i` (with matching `--input_format` when Stockholm).
+**Inputs:** raw (unaligned) FASTA file.
+**Outputs (under `<prealign-outdir>`):** `aligned.fasta` (or `aligned.sto` when `--output_format stockholm`), `clustered.fasta` if `--cluster` is used, `filter_history.json` (per-stage sequence counts, replayable via `sca-plots --prealign`), `prealign_args.json`, `prealign.log`.
+
+Aligned output feeds directly into `sca-preprocess -i` (with matching `--input_format` when Stockholm).
 
 ### Preprocessing
 
@@ -95,6 +107,9 @@ sca-preprocess \
     --sequence_similarity_thresh 0.8 \
     --position_gap_thresh 0.2
 ```
+
+**Inputs:** an aligned MSA (FASTA or Stockholm; pass `--input_format stockholm` for the latter — never inferred from filename).
+**Outputs (under `<preprocessing-outdir>`):** `preprocessing_results.npz` (filtered MSA + retained indices + sequence weights + pre-truncation gap frequencies), `msa_binary2d_sp.npz` (sparse one-hot MSA), `sym2int.json`, `msa_orig.fasta-aln` (the unfiltered original MSA), `filter_history.json`, `preprocessing_args.json`, `preprocessing.log`. With `--plot`, also `images/filter_history.png` + `images/filter_distributions.png`.
 
 Key options:
 
@@ -111,14 +126,17 @@ sca-core \
     --seed 42
 ```
 
+**Inputs:** an `sca-preprocess` output directory.
+**Outputs (under `<core-outdir>`):** `scarun_results.npz` (`Dia`, `conservation`, `sca_matrix`, `phi_ia`, `fi0`, `fia`, `Cij_raw`; plus `Cijab_raw`/`fijab` with `--save_all`), `sca_eigendecomp.npz`, `ic_positions/ic_<i>_msaproc.npy` + `ic_<i>_msaorig.npy` + `ic_<i>_loadings.npy` (per-IC high-load positions in both MSA coord spaces, plus loadings), `ic_residues_per_seq.npz` and `ic_loadings_per_seq.npz` (per-target raw-residue indices and loadings, keyed `ic_<i>_<seqid>`), `sca_results/` (ICA + bootstrap byproducts, scalar text files), `scarun_args.json`, `scarun.log`, and `images/` (conservation, SCA matrix, spectrum, dendrogram, t-distributions, EV/IC scatter sweeps, sector subset).
+
 Key options:
 
-- `--n_boot` — number of bootstrap iterations (default 10)
+- `--n_boot` — number of bootstrap iterations (default 10; `0` reuses an existing bootstrap; `-1` skips bootstrapping entirely)
 - `--kstar` — override the bootstrap-derived number of significant components
 - `--n_components` — number of ICs to compute (integer or `all`; default `kstar`)
 - `--pstar` — percentile threshold for sector assignment (default 95)
 - `--assignment overlap|exclusive` — how a residue that clears multiple ICs' cutoffs is placed
-- `--sectors_for` — which sequences get per-sequence sector mappings (default reference only; `all` or a text file of IDs)
+- `--sectors_for` — which target sequences expand into the per-seq output files (default reference only; `all` or a text file of IDs)
 - `--save_all` — include large intermediate matrices in the output
 - `--use_jax` — use JAX for accelerated computation
 
@@ -135,7 +153,10 @@ sca-project \
     [--aligner mafft_add|hmmalign]
 ```
 
-Records whose IDs are already in the reference MSA short-circuit the alignment step; the rest are aligned onto the reference MSA columns via mafft (default) or HMMER.
+Records whose IDs are already in the reference MSA short-circuit the alignment step; the rest are aligned onto the reference MSA columns via MAFFT (default) or HMMER.
+
+**Inputs:** a FASTA of sequences to project, plus the upstream `sca-preprocess` and `sca-core` output directories.
+**Outputs (under `<project-outdir>`):** `projection.json` (per-sequence: `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col`, `ic_residues`, `ic_loadings`, `ic_processed_cols`, `in_sample`), `per_sequence/<seqid>_residues.tsv` (one row per IC residue), `projection_args.json`, `projection.log`.
 
 ### Project a PDB structure
 
@@ -153,7 +174,19 @@ sca-structure --seq_map <seq_to_pdb.tsv> \
     --preprocessing <preprocessing-outdir> \
     --scacore <core-outdir> \
     -o <structure-outdir>
+
+# Batch via UniProt → PDB resolution (SIFTS best_structures)
+sca-structure --uniprot_ids P06241 P12931 \
+    --pdb_dir <dir-of-pre-downloaded-pdbs> \
+    --preprocessing <preprocessing-outdir> \
+    --scacore <core-outdir> \
+    -o <structure-outdir>
 ```
+
+Exactly one of `-s/--structure`, `--seq_map`, or `--uniprot_ids` is required. `--uniprot_ids` resolves accessions via EBI's SIFTS service (responses cached under `--cache_dir`, default `./.sifts_cache`); the resolved PDBs must already exist in `--pdb_dir` (SIFTS does not download structures).
+
+**Inputs:** one of (single PDB, seq_id → pdb_path TSV, UniProt ID list + `--pdb_dir`); plus the upstream `sca-preprocess` and `sca-core` directories.
+**Outputs (under `<structure-outdir>`):** `structure_projection.json` (per-structure: `structure_id`, `chain_id`, full `sequence_projection` from `sca-project`, `ic_pdb_residues` keyed by IC index, `pdb_path`), `per_structure/<structure_id>_ic_residues.tsv` (one row per IC residue, including raw + PDB residue numbers), `structure_args.json`, `structure.log`.
 
 The library-level `mysca.structure.SequencePdbMap.from_sifts_for_uniprot_ids([...], pdb_dir="./pdbs")` resolves UniProt IDs to best-available PDBs via EBI's SIFTS service (cached locally) for users who don't want to hand-maintain the TSV.
 
@@ -165,10 +198,15 @@ sca-pymol \
     [--structure_id <id>] \
     --groups 0 1 2 \
     [--multisector] \
-    [--animate] \
+    [--animate] [--mode {spin,reveal}] [--format {gif,mp4,both}] \
     [--features_py <my_features.py> --features show_cofactor,show_ligand] \
     -o <pymol-outdir>
 ```
+
+**Inputs:** an `sca-structure` output directory (reads `structure_projection.json`).
+**Outputs (under `<pymol-outdir>`):** `<structure_id>_group<N>.png` (one per IC group; or `<structure_id>_groups_<idxs>.png` under `--multisector`), `views/` (with `--views`), per-frame PNGs in `frames/<basename>_frames/` and a `<basename>.gif` (or `.mp4`) per render under `--animate`, `pymol.log`. See the [CLI reference](docs/cli_reference.md#sca-pymol) for animation modes (`spin` / `reveal`) and ray-tracing knobs.
+
+Requires the optional `pymol-open-source` dependency (`conda install -c conda-forge pymol-open-source`); MP4 output additionally requires `imageio-ffmpeg` (`pip install -e '.[mp4]'`).
 
 Protein-specific annotations (cofactors, ligands, iron-sulfur clusters, etc.) are user-supplied as a Python file with callables of signature `fn(struct, cmd, *, color=None, context=None)`. A worked example lives at [`demo/pymol_features/narg_1q16.py`](demo/pymol_features/narg_1q16.py).
 
@@ -181,6 +219,9 @@ sca-plots --prealign <prealign-outdir>
 sca-plots --preprocessing <preprocessing-outdir>
 sca-plots --scacore <core-outdir> --preprocessing <preprocessing-outdir>
 ```
+
+**Inputs:** any combination of `--prealign`, `--preprocessing`, `--scacore` directories from prior runs. At least one must be passed.
+**Outputs:** plots written into each stage's own `images/` subdirectory by default, or all into `--imgdir DIR` when given.
 
 Each flag is opt-in. When `--scacore` and `--preprocessing` are both given, all plot variants (including the positional conservation plot) are produced.
 

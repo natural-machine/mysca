@@ -8,8 +8,10 @@ Public surface:
     )
 
 Aligners are registered in ``mysca.project.alignment.ALIGNERS``. The
-default is ``"mafft_add"`` (``mafft --add --keeplength``); ``hmmalign``
-is reserved as a name but not yet implemented.
+default is ``"mafft_add"`` (``mafft --add --keeplength``); ``"hmmalign"``
+builds a profile HMM with every reference column as a match state
+(``hmmbuild --hand --amino``) and aligns new sequences via
+``hmmalign --outformat afa``, keeping only match columns.
 """
 
 from mysca.project.alignment import (

@@ -18,10 +18,17 @@ COMMAND LINE ARGUMENTS:
     --preprocessing : Path to an ``sca-preprocess`` output directory
         (contains ``preprocessing_results.npz`` and ``msa_orig.fasta-aln``).
     -o --outdir : Output directory.
-    --aligner : Registered entry in ``mysca.project.alignment.ALIGNERS``.
-        Default ``mafft_add``.
-    --align_bin : Explicit path to the alignment binary.
-    --align_threads : Threads for the alignment tool. Default 1.
+    --aligner : Out-of-sample alignment method. Default ``mafft_add``
+        (uses ``mafft --add --keeplength``). ``hmmalign`` builds a
+        profile HMM (``hmmbuild --hand --amino``) treating every
+        reference column as a match state, aligns new sequences with
+        ``hmmalign --outformat afa``, and keeps only match columns.
+        In-sample records bypass alignment entirely.
+    --align_bin : Explicit path to the alignment binary. For
+        ``--aligner hmmalign`` this overrides the ``hmmalign`` binary;
+        ``hmmbuild`` is resolved from PATH.
+    --align_threads : Threads for the alignment tool. Default 1
+        (unused by ``hmmalign``).
 
 -------------------------------------------------------------------------------
 OUTPUTS:
@@ -105,19 +112,23 @@ def parse_args(args):
     parser.add_argument(
         "--aligner", type=str, default="mafft_add",
         choices=sorted(ALIGNERS),
-        help="Out-of-sample alignment method. 'mafft_add' "
-        "(default) uses `mafft --add --keeplength`. 'hmmalign' is "
-        "registered as a name but not yet implemented. In-sample "
-        "records bypass alignment entirely.",
+        help="Out-of-sample alignment method. 'mafft_add' (default) "
+        "uses `mafft --add --keeplength`. 'hmmalign' builds a profile "
+        "HMM (`hmmbuild --hand --amino`) with every reference column "
+        "as a match state, aligns new sequences (`hmmalign --outformat "
+        "afa`) and keeps only match columns. In-sample records bypass "
+        "alignment entirely.",
     )
     parser.add_argument(
         "--align_bin", type=str, default=None,
         help="Explicit path to the alignment binary (default: resolve "
-        "from PATH).",
+        "from PATH). For --aligner hmmalign this is the `hmmalign` "
+        "binary; `hmmbuild` is always resolved from PATH.",
     )
     parser.add_argument(
         "--align_threads", type=int, default=1,
-        help="Threads for the alignment tool. Default 1.",
+        help="Threads for the alignment tool. Default 1 "
+        "(unused by hmmalign).",
     )
     parser.add_argument("-v", "--verbosity", type=int, default=1,
                         help="Verbosity level (0=warnings only).")
