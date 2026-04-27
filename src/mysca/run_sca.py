@@ -51,6 +51,9 @@ Optional:
     --save_all            : also write the large Cijab_raw / fijab arrays.
     --use_jax             : use JAX in the core computations.
     --nodendro            : skip the sequence-similarity / dendrogram plots.
+    --plot / --no-plot    : write diagnostic plots to outdir/images/.
+                            Default: on. Pass --no-plot to skip plot
+                            generation entirely (no images/ dir created).
     --sector_cmap         : {"default", "none"} sector palette for the
                             sector-subset plot.
     --pbar                : tqdm progress bars for bootstrap iterations.
@@ -92,7 +95,8 @@ scarun.log
 
 images/
     Conservation, SCA-matrix, spectrum, dendrogram, t-distribution,
-    EV/IC 2D/3D scatter, and sector-subset figures.
+    EV/IC 2D/3D scatter, and sector-subset figures. Only written when
+    --plot is set (the default); --no-plot skips the directory entirely.
 
 -------------------------------------------------------------------------------
 EXAMPLE USAGE:
@@ -191,8 +195,14 @@ def parse_args(args):
     parser.add_argument("--use_jax", action="store_true", 
                         help="Use JAX in computations.")
     
-    parser.add_argument("--nodendro", action="store_true", 
+    parser.add_argument("--nodendro", action="store_true",
                         help="Skip dendrogram plots")
+    parser.add_argument(
+        "--plot", default=True, action=argparse.BooleanOptionalAction,
+        help="Write diagnostic plots to outdir/images/. Default: on. "
+             "Pass --no-plot to skip plot generation entirely (no "
+             "images/ directory is created).",
+    )
     parser.add_argument("--save_all", action="store_true", 
                         help="Save all SCA results (includes large files).")
     parser.add_argument("--load_data", type=str, default="", 
@@ -258,6 +268,7 @@ def main(args):
     PBAR = args.pbar
     SEED = args.seed
     DENDRO = not args.nodendro
+    DO_PLOT = args.plot
     LOAD_DATA = args.load_data
     USE_JAX = args.use_jax
     SAVE_ALL = args.save_all
@@ -285,7 +296,8 @@ def main(args):
     IMGDIR = os.path.join(OUTDIR, "images")
     os.makedirs(OUTDIR, exist_ok=True)
     os.makedirs(SCADIR, exist_ok=True)
-    os.makedirs(IMGDIR, exist_ok=True)
+    if DO_PLOT:
+        os.makedirs(IMGDIR, exist_ok=True)
 
     configure_logging(
         verbosity=verbosity,
@@ -681,32 +693,34 @@ def main(args):
         "pstar": int(pstar),
         "assignment": assignment_method,
         "n_logged_comps": int(n_logged_comps),
+        "plot": bool(DO_PLOT),
     }
     results.save(
         OUTDIR, save_all=SAVE_ALL, retained_positions=retained_positions,
     )
 
-    make_plots(
-        retained_positions, 
-        Di, 
-        NUM_POS_ORIG,
-        IMGDIR, 
-        DENDRO,
-        msa_binary3d,
-        Cij_raw,
-        Cij,
-        evals_shuff,
-        evals_sca,
-        cutoff,
-        N_BOOT,
-        kstar,
-        v_ica_normalized,
-        t_dists_info,
-        groups,
-        sig_evecs_sca,
-        sca_mat_imp,
-        sector_color_set,
-    )
+    if DO_PLOT:
+        make_plots(
+            retained_positions,
+            Di,
+            NUM_POS_ORIG,
+            IMGDIR,
+            DENDRO,
+            msa_binary3d,
+            Cij_raw,
+            Cij,
+            evals_shuff,
+            evals_sca,
+            cutoff,
+            N_BOOT,
+            kstar,
+            v_ica_normalized,
+            t_dists_info,
+            groups,
+            sig_evecs_sca,
+            sca_mat_imp,
+            sector_color_set,
+        )
 
     logger.info("Done!")
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mysca"
 dynamic = ["version"]
-requires-python = ">= 3.8"
+requires-python = ">= 3.12"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -33,7 +33,10 @@ dev = [
   "pytest",
 ]
 pymol = [
-  "pymol-open-source",
+  # pymol-open-source has no PyPI wheel for linux-aarch64, and the
+  # conda-forge build registers in site-packages as `pymol` (not
+  # `pymol-open-source`), so pip's resolver can never satisfy this extra.
+  # Install via: `conda install -c conda-forge pymol-open-source`.
 ]
 mp4 = [
   "imageio-ffmpeg",

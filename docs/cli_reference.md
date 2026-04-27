@@ -183,6 +183,7 @@ sca-core -i <preprocessing-dir> -o <output-dir> [options]
 | `--save_all` | off | Save large intermediate matrices (`Cijab_raw`, `fijab`) into `scarun_results.npz` |
 | `--use_jax` | off | Use JAX in the core SCA computations |
 | `--nodendro` | off | Skip dendrogram and sequence-similarity plots |
+| `--plot / --no-plot` | on | Write diagnostic plots to `outdir/images/`. Default: on. Pass `--no-plot` to skip plot generation entirely (no `images/` directory is created) |
 | `--load_data` | "" | Path to a previous SCA output directory to load precomputed data (skips recomputation) |
 | `--sector_cmap` | `default` | Sector colormap for the SCA-matrix sector-subset plot. Choices: `none`, `default` |
 | `-v, --verbosity` | 1 | Verbosity level |
@@ -200,7 +201,7 @@ Writes to the specified output directory:
 - `sca_results/` — `v_ica_normalized.npy`, `w_ica.npy`, `t_dists_info.json`, `evals_shuff.npy`, `sca_matrix_sector_subset.npy`, scalar text files (`kstar.txt`, `n_components.txt`, etc.)
 - `ic_positions/` — per-IC bundle: `ic_{i}_msaproc.npy` (high-load positions in processed-MSA coordinates), `ic_{i}_msaorig.npy` (the same positions in original-MSA coordinates), `ic_{i}_loadings.npy` (IC loadings at those positions)
 - `scarun.log` — run log
-- `images/` — plots (conservation, SCA matrix, spectrum vs null, dendrogram, t-distributions, EV/IC scatter sweeps)
+- `images/` — plots (conservation, SCA matrix, spectrum vs null, dendrogram, t-distributions, EV/IC scatter sweeps). Only written when `--plot` is set (the default); `--no-plot` skips the directory entirely.
 
 ---
 

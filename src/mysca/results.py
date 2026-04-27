@@ -542,7 +542,7 @@ class SCAResults:
         "args": (
             "Dict of CLI arguments used for this run (regularization, "
             "kstar, n_components, pstar, assignment, seed, n_boot, "
-            "n_logged_comps)."
+            "n_logged_comps, plot)."
         ),
     }
 

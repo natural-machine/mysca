@@ -52,14 +52,13 @@ conda install -c bioconda mmseqs2   # sca-prealign --cluster mmseqs2
 
 ### Optional Python extras
 
-Two pip extras are declared in `pyproject.toml`:
+Three pip extras are declared in `pyproject.toml`. `[pymol]` and `[prealign]` are documented placeholders — they install nothing but validate the spelling. The actual binaries must be installed via conda (see "Optional external binaries" above for `prealign`; for PyMOL, `conda install -c conda-forge pymol-open-source`). Only `[mp4]` ships a real pip dependency.
 
 ```bash
-pip install -e '.[pymol]'   # pymol-open-source — sca-pymol rendering
 pip install -e '.[mp4]'     # imageio-ffmpeg — sca-pymol --format mp4 / both
 ```
 
-For PyMOL the conda-forge build is generally preferable (`conda install -c conda-forge pymol-open-source`). The `[mp4]` extra ships a bundled ffmpeg via `imageio-ffmpeg` and is only needed if you want MP4 (rather than GIF) animations out of `sca-pymol --animate`.
+The `[mp4]` extra ships a bundled ffmpeg via `imageio-ffmpeg` and is only needed if you want MP4 (rather than GIF) animations out of `sca-pymol --animate`.
 
 ## Usage
 
