@@ -11,7 +11,12 @@ import numpy as np
 from mysca.io import load_msa
 from mysca.mappings import SymMap
 from mysca.preprocess import preprocess_msa
-from mysca.core import run_sca
+from mysca.core import (
+    run_sca,
+    _compute_fijab_v1,
+    _compute_fijab_v2,
+    _compute_fijab_v3,
+)
 # from mysca.helpers import map_msa_positions_to_sequence
 
 
@@ -253,3 +258,44 @@ def test_run_sca(
             # msg += f"     Got:\n{sca_res[key]}\n"
             errors.append(msg)
     assert not errors, "Errors occurred:\n{}".format("\n".join(errors))
+
+
+@pytest.mark.parametrize("nseq, npos, naas", [
+    (50, 12, 8),
+    (200, 25, 6),
+])
+def test_compute_fijab_kernels_agree(nseq, npos, naas):
+    """v1 (numpy double-loop), v2 (JAX), and v3 (tensordot, the
+    default) must produce identical fijab tensors up to fp64
+    rounding on synthetic input. Locks in the contract that the
+    fast tensordot path doesn't drift from the reference v1 kernel.
+    """
+    rng = np.random.default_rng(seed=12345)
+    xmsa = rng.integers(0, 2, size=(nseq, npos, naas)).astype(bool)
+    # Ensure no all-zero rows (each "sequence" should have at least
+    # one symbol per position so the contraction isn't degenerate).
+    for i in range(nseq):
+        for j in range(npos):
+            if not xmsa[i, j].any():
+                xmsa[i, j, rng.integers(0, naas)] = True
+    ws_norm = rng.random(nseq)
+    ws_norm = ws_norm / ws_norm.sum()
+    lam = 0.03
+    nsyms = naas + 1
+
+    f1 = _compute_fijab_v1(xmsa, ws_norm, lam, nsyms)
+    f2 = _compute_fijab_v2(xmsa, ws_norm, lam, nsyms)
+    f3 = _compute_fijab_v3(xmsa, ws_norm, lam, nsyms)
+
+    assert np.allclose(f1, f3, atol=1e-12), (
+        f"v3 disagrees with v1; max abs diff = {np.max(np.abs(f1 - f3)):.3e}"
+    )
+    assert np.allclose(f1, f2, atol=1e-12), (
+        f"v2 disagrees with v1; max abs diff = {np.max(np.abs(f1 - f2)):.3e}"
+    )
+    # v3 must preserve the (j, i) symmetry of v1 — fijab[j, i, b, a] is
+    # the transpose of fijab[i, j, a, b]. v1 enforces this explicitly;
+    # tensordot does it implicitly. Verify.
+    assert np.allclose(f3, f3.transpose(1, 0, 3, 2)), (
+        "v3 fijab is not symmetric under (i,a)<->(j,b) swap"
+    )

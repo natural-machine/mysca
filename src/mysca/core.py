@@ -64,12 +64,14 @@ def run_sca(
         logger.debug("0 value encountered in SCA calculation of fi0!")
     fia = (1 - lam) * np.sum(ws_norm[:,None,None] * xmsa, axis=0) + lam / nsyms
 
-    # Compute correlated conservation
+    # Compute correlated conservation. v3 (tensordot) is ~9x faster than
+    # v1 (numpy double-loop) on SH3-scale input with bit-stable fp64
+    # numerics; see docs/.claude_sessions/session_2026-04-27_scacore_perf_phase1.md.
     fijab = compute_fijab(
-        xmsa, ws_norm, lam, nsyms, 
-        pbar=pbar, 
+        xmsa, ws_norm, lam, nsyms,
+        pbar=pbar,
         leave_pbar=leave_pbar,
-        version="v2" if use_jax else "v1"
+        version="v2" if use_jax else "v3"
     )
 
     if qa is None:
@@ -165,8 +167,8 @@ def run_ica(
 
 
 def compute_fijab(
-        xmsa, ws_norm, lam, nsyms, pbar=False, leave_pbar=False, 
-        version="v1",
+        xmsa, ws_norm, lam, nsyms, pbar=False, leave_pbar=False,
+        version="v3",
 ):
     if version == "v1":
         return _compute_fijab_v1(
@@ -176,6 +178,8 @@ def compute_fijab(
         return _compute_fijab_v2(
             xmsa, ws_norm, lam, nsyms, pbar=pbar, leave_pbar=leave_pbar
         )
+    elif version == "v3":
+        return _compute_fijab_v3(xmsa, ws_norm, lam, nsyms)
     else:
         raise RuntimeError(f"Unknown version to compute fijab: {version}")
 
@@ -203,7 +207,7 @@ def _compute_fijab_v2(xmsa, ws_norm, lam, nsyms, pbar=False, leave_pbar=False):
     @jax.jit
     def compute_f(ci, cj, ws_norm, lam, nsyms, regterm):
         return (1 - lam) * (ci.T @ (ws_norm[:, None] * cj)) + regterm
-    
+
     for i in tqdm.trange(npos, disable=not pbar, leave=leave_pbar):
         ci = xmsa[:,i,:]
         for j in range(i, npos):
@@ -215,4 +219,32 @@ def _compute_fijab_v2(xmsa, ws_norm, lam, nsyms, pbar=False, leave_pbar=False):
             f = compute_f(ci, cj, ws_norm, lam, nsyms, regterm)
             fijab[i,j,:,:] = f
             fijab[j,i,:,:] = f.T
+    return fijab
+
+
+def _compute_fijab_v3(xmsa, ws_norm, lam, nsyms):
+    """Vectorized tensordot equivalent of v1.
+
+    Roughly 9x faster than v1 on SH3-scale input (npos=62) with
+    bit-stable fp64 numerics (max abs diff vs v1 ~1e-16). Replaces
+    v1's `O(npos^2)` Python-driven inner loops with a single
+    `np.tensordot` over the sequence axis. Memory footprint is the
+    two operands plus the result — no large intermediate.
+
+    Naive `np.einsum('s,sia,sjb->ijab', ...)` (without `optimize=`)
+    materializes a `(nseq, npos, naas, npos, naas)` intermediate and
+    is materially slower than v1 on small npos; that path was tried
+    and rejected. tensordot avoids the issue because numpy contracts
+    the sequence axis directly.
+    """
+    npos = xmsa.shape[1]
+    xf = xmsa.astype(np.float64, copy=False)
+    weighted = ws_norm[:, None, None] * xf
+    # tensordot returns shape (i, a, j, b); transpose to (i, j, a, b)
+    # to match v1's layout.
+    fijab = np.tensordot(weighted, xf, axes=([0], [0])).transpose(0, 2, 1, 3)
+    fijab *= (1.0 - lam)
+    diag = np.eye(npos, dtype=bool)
+    fijab[~diag] += lam / (nsyms * nsyms)
+    fijab[diag] += lam / nsyms
     return fijab
