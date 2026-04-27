@@ -3,6 +3,7 @@
 """
 
 import logging
+import warnings
 
 import numpy as np
 from numpy.typing import NDArray
@@ -10,6 +11,7 @@ import tqdm
 
 import jax
 jax.config.update("jax_enable_x64", True)
+import jax.numpy as jnp
 
 from mysca.mappings import SymMap, DEFAULT_MAP
 
@@ -28,6 +30,7 @@ def run_sca(
         leave_pbar: bool = True,
         verbosity: int = 1,
         use_jax: bool = False,
+        freq_method: str | None = None,
 ):
     """Run SCA algorithm on given MSA matrix
 
@@ -64,14 +67,20 @@ def run_sca(
         logger.debug("0 value encountered in SCA calculation of fi0!")
     fia = (1 - lam) * np.sum(ws_norm[:,None,None] * xmsa, axis=0) + lam / nsyms
 
-    # Compute correlated conservation. v3 (tensordot) is ~9x faster than
-    # v1 (numpy double-loop) on SH3-scale input with bit-stable fp64
-    # numerics; see docs/.claude_sessions/session_2026-04-27_scacore_perf_phase1.md.
+    # Resolve fijab kernel. freq_method is the user-facing surface
+    # ("numpy" | "jax" | "gpu"); use_jax is the deprecated legacy flag.
+    freq_method = _resolve_freq_method(freq_method=freq_method, use_jax=use_jax)
+    fijab_version = _FREQ_METHOD_TO_VERSION[freq_method]
+
+    # Compute correlated conservation. The default (numpy -> v3,
+    # tensordot) is ~9x faster than v1 (numpy double-loop) on
+    # SH3-scale input with bit-stable fp64 numerics; see
+    # docs/.claude_sessions/session_2026-04-27_scacore_perf_phase1.md.
     fijab = compute_fijab(
         xmsa, ws_norm, lam, nsyms,
         pbar=pbar,
         leave_pbar=leave_pbar,
-        version="v2" if use_jax else "v3"
+        version=fijab_version,
     )
 
     if qa is None:
@@ -166,6 +175,42 @@ def run_ica(
     return None, np.max(np.abs(dw))
 
 
+# Mapping from user-facing --freq_method values to internal compute_fijab
+# version codes. Centralized so run_sca and compute_fijab agree.
+FREQ_METHOD_CHOICES = ("numpy", "jax")
+_FREQ_METHOD_TO_VERSION = {
+    "numpy": "v3",
+    "jax":   "v4",
+}
+
+
+def _resolve_freq_method(*, freq_method, use_jax):
+    """Resolve the final freq_method given both `freq_method` (new) and
+    `use_jax` (deprecated). Emits a DeprecationWarning if `use_jax`
+    is set; freq_method wins on conflict."""
+    if freq_method is None:
+        if use_jax:
+            warnings.warn(
+                "`use_jax=True` is deprecated; pass `freq_method='jax'` "
+                "instead. Routing to freq_method='jax' for now.",
+                DeprecationWarning, stacklevel=3,
+            )
+            return "jax"
+        return "numpy"
+    if freq_method not in _FREQ_METHOD_TO_VERSION:
+        raise ValueError(
+            f"Unknown freq_method: {freq_method!r}. Choices: "
+            f"{FREQ_METHOD_CHOICES}"
+        )
+    if use_jax:
+        warnings.warn(
+            "Both `freq_method` and `use_jax` were set; `use_jax` is "
+            "deprecated and is being ignored.",
+            DeprecationWarning, stacklevel=3,
+        )
+    return freq_method
+
+
 def compute_fijab(
         xmsa, ws_norm, lam, nsyms, pbar=False, leave_pbar=False,
         version="v3",
@@ -180,6 +225,8 @@ def compute_fijab(
         )
     elif version == "v3":
         return _compute_fijab_v3(xmsa, ws_norm, lam, nsyms)
+    elif version == "v4":
+        return _compute_fijab_v4_jax(xmsa, ws_norm, lam, nsyms)
     else:
         raise RuntimeError(f"Unknown version to compute fijab: {version}")
 
@@ -248,3 +295,40 @@ def _compute_fijab_v3(xmsa, ws_norm, lam, nsyms):
     fijab[~diag] += lam / (nsyms * nsyms)
     fijab[diag] += lam / nsyms
     return fijab
+
+
+@jax.jit
+def _fijab_jax_kernel(xf, ws_norm, lam, reg_diag, reg_offdiag):
+    weighted = ws_norm[:, None, None] * xf
+    fijab = jnp.tensordot(weighted, xf, axes=([0], [0])).transpose(0, 2, 1, 3)
+    fijab = fijab * (1.0 - lam)
+    npos = xf.shape[1]
+    diag = jnp.eye(npos, dtype=bool)
+    return jnp.where(
+        diag[:, :, None, None],
+        fijab + reg_diag,
+        fijab + reg_offdiag,
+    )
+
+
+def _compute_fijab_v4_jax(xmsa, ws_norm, lam, nsyms):
+    """JAX-jitted equivalent of v3.
+
+    The whole tensordot + regularization is lifted under `jax.jit` so
+    JAX can compile and (on accelerator-equipped backends) execute it
+    on-device. Comparable speed to v3 on CPU; the GPU path lives in
+    `_compute_fijab_gpu` (E3) so this stays a CPU-flavored alternative
+    for users on JAX-only setups.
+
+    Numerics match v1/v3 within fp64 tolerance; verified by
+    tests/test_core.py::test_compute_fijab_kernels_agree.
+    """
+    xf = jnp.asarray(xmsa, dtype=jnp.float64)
+    ws_jnp = jnp.asarray(ws_norm, dtype=jnp.float64)
+    fijab = _fijab_jax_kernel(
+        xf, ws_jnp,
+        float(lam),
+        float(lam / nsyms),
+        float(lam / (nsyms * nsyms)),
+    )
+    return np.asarray(fijab)

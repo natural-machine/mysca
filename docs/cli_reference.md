@@ -181,7 +181,8 @@ sca-core -i <preprocessing-dir> -o <output-dir> [options]
 |----------|---------|-------------|
 | `--seed` | None | Random seed for reproducibility. `None` or non-positive auto-generates one |
 | `--save_all` | off | Save large intermediate matrices (`Cijab_raw`, `fijab`) into `scarun_results.npz` |
-| `--use_jax` | off | Use JAX in the core SCA computations |
+| `--freq_method` | `numpy` | Backend for the `compute_fijab` kernel. Choices: `numpy` (CPU `np.tensordot`; ~9x faster than the legacy v1 double-loop on SH3-scale input), `jax` (whole-tensordot under `jax.jit`). The `gpu` backend will be added by a follow-up workstream stage |
+| `--use_jax` | off | **DEPRECATED**: alias for `--freq_method=jax`. Emits a `DeprecationWarning` when used; will be removed in a future release |
 | `--nodendro` | off | Skip dendrogram and sequence-similarity plots |
 | `--plot / --no-plot` | on | Write diagnostic plots to `outdir/images/`. Default: on. Pass `--no-plot` to skip plot generation entirely (no `images/` directory is created) |
 | `--load_data` | "" | Path to a previous SCA output directory to load precomputed data (skips recomputation) |

@@ -49,7 +49,14 @@ Optional:
     --seed                : random seed (None or non-positive auto-picks).
     --load_data           : previous sca-core output directory to reload.
     --save_all            : also write the large Cijab_raw / fijab arrays.
-    --use_jax             : use JAX in the core computations.
+    --freq_method          : backend for the fijab kernel. Choices:
+                            'numpy' (default; CPU tensordot, ~9x faster
+                            than the legacy v1 numpy double-loop) and
+                            'jax' (whole-tensordot under jax.jit; useful
+                            on JAX-enabled hardware). 'gpu' will be
+                            added by a follow-up workstream stage.
+    --use_jax             : DEPRECATED alias for --freq_method=jax.
+                            Emits a DeprecationWarning when used.
     --nodendro            : skip the sequence-similarity / dendrogram plots.
     --plot / --no-plot    : write diagnostic plots to outdir/images/.
                             Default: on. Pass --no-plot to skip plot
@@ -139,6 +146,7 @@ from mysca.helpers import get_group_rawseq_positions_by_entry
 from mysca.helpers import get_group_rawseq_scores_by_entry
 from mysca.helpers import get_rawseq_indices_of_msa
 from mysca.constants import SECTOR_COLORS, DEFAULT_BACKGROUND_FREQ
+from mysca.core import FREQ_METHOD_CHOICES, _resolve_freq_method
 
 from mysca.pl import (
     plot_conservation,
@@ -192,9 +200,22 @@ def parse_args(args):
                         help="Random seed for reproducibility. None or a "
                         "non-positive value auto-generates one.")
     
-    parser.add_argument("--use_jax", action="store_true", 
-                        help="Use JAX in computations.")
-    
+    parser.add_argument(
+        "--freq_method", type=str, default=None,
+        choices=list(FREQ_METHOD_CHOICES),
+        help="Backend for the compute_fijab kernel. Default 'numpy' "
+             "uses np.tensordot (~9x faster than the legacy v1 numpy "
+             "double-loop on SH3-scale input). 'jax' lifts the same "
+             "tensordot under jax.jit. See docs/cli_reference.md.",
+    )
+    parser.add_argument(
+        "--use_jax", action="store_true",
+        help="DEPRECATED: alias for --freq_method=jax. Emits a "
+             "DeprecationWarning when used. Will be removed in a "
+             "future release.",
+    )
+
+
     parser.add_argument("--nodendro", action="store_true",
                         help="Skip dendrogram plots")
     parser.add_argument(
@@ -271,6 +292,13 @@ def main(args):
     DO_PLOT = args.plot
     LOAD_DATA = args.load_data
     USE_JAX = args.use_jax
+    # Resolve --freq_method / --use_jax once up front. argparse leaves
+    # freq_method=None when the user didn't pass it; _resolve_freq_method
+    # routes that through use_jax (with DeprecationWarning) or to the
+    # default "numpy".
+    FREQ_METHOD = _resolve_freq_method(
+        freq_method=args.freq_method, use_jax=USE_JAX,
+    )
     SAVE_ALL = args.save_all
     sector_cmap = args.sector_cmap
     assignment_method = args.assignment
@@ -371,7 +399,7 @@ def main(args):
             return_keys="all",
             pbar=PBAR,
             leave_pbar=True,
-            use_jax=USE_JAX,
+            freq_method=FREQ_METHOD,
         )
         results = SCAResults.from_core_output(sca_results)
         Dia = results.Dia
@@ -419,6 +447,7 @@ def main(args):
                 return_keys=["Cij_corr"],
                 pbar=PBAR,
                 leave_pbar=False,
+                freq_method=FREQ_METHOD,
             )
             cij_shuff = res["Cij_corr"]
             evals = np.linalg.eigvalsh(cij_shuff)
@@ -694,6 +723,7 @@ def main(args):
         "assignment": assignment_method,
         "n_logged_comps": int(n_logged_comps),
         "plot": bool(DO_PLOT),
+        "freq_method": FREQ_METHOD,
     }
     results.save(
         OUTDIR, save_all=SAVE_ALL, retained_positions=retained_positions,
