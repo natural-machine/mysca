@@ -10,8 +10,9 @@ Three input modes (mutually exclusive; pick exactly one):
 - ``--uniprot_ids <UID> [<UID> ...]``: one or more UniProt accessions.
   Each is resolved to its top-ranked PDB via EBI's SIFTS
   ``best_structures`` endpoint (cached under ``--cache_dir``); the
-  resolved file must already exist in ``--pdb_dir``. SIFTS only
-  resolves IDs, it doesn't download structures.
+  resolved file must already exist in ``--pdb_dir`` UNLESS ``--fetch``
+  is set, in which case missing PDBs are downloaded into ``--pdb_dir``
+  on demand. ``--pdb_dir`` defaults to ``./.pdb_cache/`` when fetching.
 
 -------------------------------------------------------------------------------
 COMMAND LINE ARGUMENTS:
@@ -22,9 +23,19 @@ COMMAND LINE ARGUMENTS:
     --seq_map : Path to a TSV mapping MSA seq IDs to PDB paths.
     --uniprot_ids : one or more UniProt accessions (space-separated).
     --pdb_dir : directory of pre-downloaded PDB files (required with
-        --uniprot_ids).
+        --uniprot_ids unless --fetch is set, in which case it defaults
+        to ``./.pdb_cache/``).
     --cache_dir : SIFTS JSON cache directory (default
         ``./.sifts_cache``; only consulted with --uniprot_ids).
+    --fetch : opt-in download of missing PDB files from --pdb_source
+        into --pdb_dir on demand. Off by default. Only valid with
+        --uniprot_ids.
+    --pdb_source : {"rcsb","pdbe"} source for --fetch. Default rcsb.
+    --pdb_form : {"asym","assembly1","assembly2"} structure form for
+        --fetch. Default asym (asymmetric unit; what most users get
+        when hand-downloading from RCSB).
+    --force_refetch : bypass the on-disk PDB cache and re-download.
+        Off by default.
     --seq_id : Header to use when projecting --structure's sequence
         (triggers in-sample short-circuit if this ID is already in the
         reference MSA). Ignored in --seq_map and --uniprot_ids modes
@@ -75,6 +86,13 @@ EXAMPLE USAGE:
         --scacore scacore_out \\
         -o structure_out
 
+    # Auto-fetch missing PDBs into the default cache dir:
+    sca-structure --uniprot_ids P06241 P12931 \\
+        --fetch \\
+        --preprocessing preprocess_out \\
+        --scacore scacore_out \\
+        -o structure_out
+
 """
 
 import argparse
@@ -91,6 +109,7 @@ from mysca.structure import (
     SequencePdbMap,
     project_pdb,
 )
+from mysca.structure.fetcher import DEFAULT_PDB_CACHE_DIR
 
 
 STRUCTURE_LOG_FNAME = "structure.log"
@@ -129,14 +148,39 @@ def parse_args(args):
     parser.add_argument(
         "--pdb_dir", type=str, default=None, metavar="DIR",
         help="Directory containing pre-downloaded PDB files. Required "
-        "when --uniprot_ids is used; SIFTS resolves IDs but does not "
-        "fetch structures.",
+        "when --uniprot_ids is used unless --fetch is also set, in "
+        "which case it defaults to ./.pdb_cache/ and missing PDBs "
+        "are downloaded into it.",
     )
     parser.add_argument(
         "--cache_dir", type=str, default=None, metavar="DIR",
         help="Local directory to cache SIFTS JSON responses. Default: "
         "./.sifts_cache under the current working directory. Only "
         "consulted when --uniprot_ids is used.",
+    )
+    parser.add_argument(
+        "--fetch", action="store_true",
+        help="Opt-in: download missing PDB files from --pdb_source "
+        "into --pdb_dir on demand. Off by default. Only valid with "
+        "--uniprot_ids.",
+    )
+    parser.add_argument(
+        "--pdb_source", type=str, default="rcsb",
+        choices=["rcsb", "pdbe"],
+        help="Source for --fetch. Default: rcsb. Only valid with "
+        "--uniprot_ids.",
+    )
+    parser.add_argument(
+        "--pdb_form", type=str, default="asym",
+        choices=["asym", "assembly1", "assembly2"],
+        help="Which form to fetch. Default: asym (asymmetric unit, "
+        "single .pdb). assembly1/assembly2 fetch the .pdb1/.pdb2 "
+        "biological assembly. Only valid with --uniprot_ids.",
+    )
+    parser.add_argument(
+        "--force_refetch", action="store_true",
+        help="Bypass the on-disk PDB cache and re-download. Off by "
+        "default. Only valid with --uniprot_ids + --fetch.",
     )
     parser.add_argument(
         "--seq_id", type=str, default=None,
@@ -183,11 +227,27 @@ def parse_args(args):
             "Exactly one of --structure, --seq_map, or --uniprot_ids "
             "is required."
         )
-    if parsed.uniprot_ids is not None and parsed.pdb_dir is None:
+    if parsed.uniprot_ids is not None:
+        if parsed.pdb_dir is None and not parsed.fetch:
+            parser.error(
+                "--uniprot_ids requires --pdb_dir (the directory of "
+                "pre-downloaded PDB files). SIFTS resolves UniProt IDs "
+                "to PDB entries but does not fetch the structure files. "
+                "Pass --fetch to download missing PDBs into --pdb_dir "
+                f"(defaults to ./{DEFAULT_PDB_CACHE_DIR}/)."
+            )
+        if parsed.pdb_dir is None:  # implies --fetch
+            parsed.pdb_dir = DEFAULT_PDB_CACHE_DIR
+    fetch_flags_used = (
+        parsed.fetch
+        or parsed.pdb_source != "rcsb"
+        or parsed.pdb_form != "asym"
+        or parsed.force_refetch
+    )
+    if fetch_flags_used and parsed.uniprot_ids is None:
         parser.error(
-            "--uniprot_ids requires --pdb_dir (the directory of "
-            "pre-downloaded PDB files). SIFTS resolves UniProt IDs to "
-            "PDB entries but does not fetch the structure files."
+            "--fetch / --pdb_source / --pdb_form / --force_refetch "
+            "only apply with --uniprot_ids."
         )
     return parsed
 
@@ -264,13 +324,20 @@ def main(args):
 
     if args.uniprot_ids is not None:
         logger.info(
-            "Resolving %d UniProt accession(s) via SIFTS (cache_dir=%s).",
-            len(args.uniprot_ids), args.cache_dir or ".sifts_cache",
+            "Resolving %d UniProt accession(s) via SIFTS (cache_dir=%s, "
+            "fetch=%s).",
+            len(args.uniprot_ids),
+            args.cache_dir or ".sifts_cache",
+            args.fetch,
         )
         seq_map = SequencePdbMap.from_sifts_for_uniprot_ids(
             args.uniprot_ids,
             pdb_dir=args.pdb_dir,
             cache_dir=args.cache_dir,
+            fetch=args.fetch,
+            pdb_source=args.pdb_source,
+            pdb_form=args.pdb_form,
+            force_refetch=args.force_refetch,
         )
         logger.info(
             "SIFTS resolved %d/%d UniProt IDs into usable PDB entries.",

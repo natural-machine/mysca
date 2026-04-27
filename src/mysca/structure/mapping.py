@@ -17,9 +17,11 @@ Two lookup sources:
 
 import logging
 import os
+import urllib.error
 from dataclasses import dataclass
 from typing import Iterable, Optional
 
+from mysca.structure.fetcher import download_pdb_file
 from mysca.structure.sifts import best_structure_entry
 
 logger = logging.getLogger("mysca.structure.mapping")
@@ -104,20 +106,27 @@ class SequencePdbMap:
         strict: bool = True,
         timeout: float = 10.0,
         force_refresh: bool = False,
+        fetch: bool = False,
+        pdb_source: str = "rcsb",
+        pdb_form: str = "asym",
+        force_refetch: bool = False,
     ) -> "SequencePdbMap":
         """Resolve UniProt IDs to ``PdbEntry`` via EBI SIFTS.
 
         For each UniProt accession, queries EBI's
         ``mappings/best_structures/{id}`` endpoint and takes the
         top-ranked PDB entry. The resulting ``pdb_path`` is
-        ``{pdb_dir}/{pdb_id}{pdb_suffix}``; callers are responsible
+        ``{pdb_dir}/{pdb_id}{pdb_suffix}``. Callers are responsible
         for pre-downloading the structure files into ``pdb_dir``
-        (SIFTS does not ship PDB files).
+        (SIFTS does not ship PDB files) — unless ``fetch=True``, in
+        which case missing PDBs are downloaded on demand into
+        ``pdb_dir``.
 
         Args:
             uniprot_ids: iterable of UniProt accessions. The accession
                 itself becomes the key of the returned map.
             pdb_dir: directory containing the downloaded PDB files.
+                Created when ``fetch=True`` and missing.
             cache_dir: local cache for SIFTS JSON responses
                 (default ``./.sifts_cache/``).
             pdb_suffix: filename suffix for the on-disk PDBs (e.g.
@@ -125,22 +134,38 @@ class SequencePdbMap:
             strict: when True (default), raise ``FileNotFoundError``
                 if a resolved PDB file is missing from ``pdb_dir``.
                 When False, log a warning and skip the entry.
-            timeout: HTTP timeout (seconds) per UniProt query.
-            force_refresh: bypass the local cache and re-query SIFTS.
+            timeout: HTTP timeout (seconds) per UniProt query and per
+                PDB fetch.
+            force_refresh: bypass the local SIFTS cache and re-query
+                SIFTS.
+            fetch: when True, download missing PDB files into
+                ``pdb_dir`` via ``mysca.structure.fetcher.download_pdb_file``
+                before falling through to the strict / non-strict
+                missing-file path. Off by default.
+            pdb_source: ``"rcsb"`` (default) or ``"pdbe"``. Only used
+                when ``fetch=True``.
+            pdb_form: ``"asym"`` (default), ``"assembly1"``, or
+                ``"assembly2"``. Only used when ``fetch=True``.
+            force_refetch: bypass the on-disk PDB cache and re-download.
+                Only used when ``fetch=True``.
 
         Returns:
             A ``SequencePdbMap`` keyed by UniProt accession.
 
         Raises:
             FileNotFoundError: when ``strict=True`` and a resolved
-                PDB is missing from ``pdb_dir``.
+                PDB is missing from ``pdb_dir`` (and ``fetch`` is off
+                or the fetch attempt failed).
         """
         if not os.path.isdir(pdb_dir):
-            raise FileNotFoundError(
-                f"pdb_dir not found: {pdb_dir}. Pre-download PDB files "
-                "(e.g. from RCSB) into this directory before calling "
-                "from_sifts_for_uniprot_ids."
-            )
+            if fetch:
+                os.makedirs(pdb_dir, exist_ok=True)
+            else:
+                raise FileNotFoundError(
+                    f"pdb_dir not found: {pdb_dir}. Pre-download PDB files "
+                    "(e.g. from RCSB) into this directory before calling "
+                    "from_sifts_for_uniprot_ids, or pass fetch=True."
+                )
 
         mapping: dict[str, PdbEntry] = {}
         for uniprot_id in uniprot_ids:
@@ -176,8 +201,40 @@ class SequencePdbMap:
                 pdb_path = lower_path
             elif os.path.isfile(upper_path):
                 pdb_path = upper_path
+            elif fetch:
+                fetch_error: Optional[Exception] = None
+                try:
+                    pdb_path = download_pdb_file(
+                        pdb_id,
+                        dest_dir=pdb_dir,
+                        source=pdb_source,
+                        form=pdb_form,
+                        force_refresh=force_refetch,
+                        timeout=timeout,
+                    )
+                    logger.info(
+                        "Fetched %s from %s/%s -> %s",
+                        pdb_id, pdb_source, pdb_form, pdb_path,
+                    )
+                except (urllib.error.URLError, urllib.error.HTTPError) as exc:
+                    fetch_error = exc
+                    logger.warning(
+                        "Fetch failed for %s (%s/%s): %s",
+                        pdb_id, pdb_source, pdb_form, exc,
+                    )
+                if fetch_error is not None:
+                    msg = (
+                        f"SIFTS resolved {uniprot_id} to PDB {pdb_id} "
+                        f"(chain {chain}), and the on-demand fetch from "
+                        f"{pdb_source}/{pdb_form} failed ({fetch_error}). "
+                        f"Download it manually into {pdb_dir} or adjust "
+                        "--pdb_source / --pdb_form."
+                    )
+                    if strict:
+                        raise FileNotFoundError(msg)
+                    logger.warning("%s (skipping)", msg)
+                    continue
             else:
-                pdb_path = lower_path  # keep for error message below
                 msg = (
                     f"SIFTS resolved {uniprot_id} to PDB {pdb_id} "
                     f"(chain {chain}), but neither "

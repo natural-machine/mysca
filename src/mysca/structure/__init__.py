@@ -9,9 +9,11 @@ Public surface:
         PDBStructure, struct2seq,
         SequencePdbMap, PdbEntry,
         PdbProjection, project_pdb, project_groups_to_pdb,
+        download_pdb_file,
     )
 """
 
+from mysca.structure.fetcher import download_pdb_file
 from mysca.structure.pdb import PDBStructure, struct2seq
 from mysca.structure.mapping import SequencePdbMap, PdbEntry
 from mysca.structure.projection import (
@@ -28,4 +30,5 @@ __all__ = [
     "PdbProjection",
     "project_pdb",
     "project_groups_to_pdb",
+    "download_pdb_file",
 ]

@@ -319,3 +319,130 @@ def test_from_sifts_strict_error_names_both_case_variants(tmp_path):
     msg = str(excinfo.value)
     assert "1abc.pdb" in msg
     assert "1ABC.pdb" in msg
+
+
+# ---------------------------------------------------------------------- #
+# SequencePdbMap.from_sifts_for_uniprot_ids — fetch=True paths           #
+# ---------------------------------------------------------------------- #
+#
+# `mysca.structure.sifts.urllib.request.urlopen` and
+# `mysca.structure.fetcher.urllib.request.urlopen` resolve to the same
+# global `urllib.request.urlopen`; stacking two `patch()` calls would
+# overwrite each other. Use a single URL-dispatching `side_effect`
+# instead — SIFTS hits `ebi.ac.uk/pdbe/api/...` and the RCSB fetcher
+# hits `files.rcsb.org/...`.
+
+
+_PDB_BODY_BYTES = b"HEADER    SYNTHETIC\nEND\n"
+
+
+def _make_dispatch(sifts_payload):
+    """Single side_effect that responds to both SIFTS JSON queries
+    and RCSB PDB fetches based on URL."""
+    def _dispatch(req_or_url, timeout=None):
+        url = req_or_url if isinstance(req_or_url, str) else req_or_url.full_url
+        if "files.rcsb.org" in url or "ebi.ac.uk/pdbe/entry-files" in url:
+            class _Resp:
+                def read(self_inner):
+                    return _PDB_BODY_BYTES
+                def __enter__(self_inner):
+                    return self_inner
+                def __exit__(self_inner, *exc):
+                    return False
+            return _Resp()
+        return _fake_urlopen(sifts_payload)
+    return _dispatch
+
+
+def test_from_sifts_fetch_true_downloads_missing_pdb(tmp_path):
+    pdb_dir = tmp_path / "pdbs"
+    pdb_dir.mkdir()  # exists but empty
+    cache_dir = tmp_path / "cache"
+
+    sifts_payload = {"P0": [{"pdb_id": "1abc", "chain_id": "A"}]}
+    with patch(
+        "mysca.structure.sifts.urllib.request.urlopen",
+        side_effect=_make_dispatch(sifts_payload),
+    ):
+        m = SequencePdbMap.from_sifts_for_uniprot_ids(
+            ["P0"],
+            pdb_dir=str(pdb_dir),
+            cache_dir=str(cache_dir),
+            fetch=True,
+        )
+    assert "P0" in m
+    assert os.path.basename(m["P0"].pdb_path) == "1abc.pdb"
+    assert os.path.isfile(m["P0"].pdb_path)
+
+
+def test_from_sifts_fetch_true_creates_pdb_dir_if_missing(tmp_path):
+    pdb_dir = tmp_path / "pdbs_does_not_exist_yet"
+    cache_dir = tmp_path / "cache"
+    sifts_payload = {"P0": [{"pdb_id": "2xyz", "chain_id": "B"}]}
+
+    with patch(
+        "mysca.structure.sifts.urllib.request.urlopen",
+        side_effect=_make_dispatch(sifts_payload),
+    ):
+        m = SequencePdbMap.from_sifts_for_uniprot_ids(
+            ["P0"],
+            pdb_dir=str(pdb_dir),
+            cache_dir=str(cache_dir),
+            fetch=True,
+        )
+    assert pdb_dir.is_dir()
+    assert os.path.isfile(m["P0"].pdb_path)
+
+
+def test_from_sifts_fetch_false_preserves_strict_error(tmp_path):
+    """The existing strict / non-strict missing-file path must still
+    fire when fetch=False, even if SIFTS resolved cleanly."""
+    pdb_dir = tmp_path / "pdbs"
+    pdb_dir.mkdir()  # empty
+    cache_dir = tmp_path / "cache"
+    payload = {"P0": [{"pdb_id": "1abc", "chain_id": "A"}]}
+
+    with patch(
+        "mysca.structure.sifts.urllib.request.urlopen",
+        return_value=_fake_urlopen(payload),
+    ):
+        with pytest.raises(FileNotFoundError, match="1abc"):
+            SequencePdbMap.from_sifts_for_uniprot_ids(
+                ["P0"],
+                pdb_dir=str(pdb_dir),
+                cache_dir=str(cache_dir),
+                fetch=False,
+                strict=True,
+            )
+
+
+def test_from_sifts_fetch_failure_falls_through_to_strict_branch(tmp_path):
+    """When the fetch attempt itself fails (e.g. RCSB 404), the
+    strict-mode FileNotFoundError still fires with a message that names
+    the failure."""
+    pdb_dir = tmp_path / "pdbs"
+    pdb_dir.mkdir()
+    cache_dir = tmp_path / "cache"
+    sifts_payload = {"P0": [{"pdb_id": "9zzz", "chain_id": "X"}]}
+
+    def _dispatch(req_or_url, timeout=None):
+        url = req_or_url if isinstance(req_or_url, str) else req_or_url.full_url
+        if "files.rcsb.org" in url:
+            raise _http_error(404)
+        return _fake_urlopen(sifts_payload)
+
+    with patch(
+        "mysca.structure.sifts.urllib.request.urlopen",
+        side_effect=_dispatch,
+    ):
+        with pytest.raises(FileNotFoundError) as excinfo:
+            SequencePdbMap.from_sifts_for_uniprot_ids(
+                ["P0"],
+                pdb_dir=str(pdb_dir),
+                cache_dir=str(cache_dir),
+                fetch=True,
+                strict=True,
+            )
+    msg = str(excinfo.value)
+    assert "9zzz" in msg
+    assert "fetch" in msg.lower()

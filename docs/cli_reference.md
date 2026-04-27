@@ -514,6 +514,13 @@ sca-structure --uniprot_ids P06241 P12931 \
     --preprocessing <preprocess-dir> \
     --scacore <scacore-dir> \
     -o <output-dir> [options]
+
+# Auto-fetch missing PDBs into the default cache dir (./.pdb_cache/):
+sca-structure --uniprot_ids P06241 P12931 \
+    --fetch \
+    --preprocessing <preprocess-dir> \
+    --scacore <scacore-dir> \
+    -o <output-dir> [options]
 ```
 
 Exactly one of `-s/--structure`, `--seq_map`, or `--uniprot_ids` is required.
@@ -532,8 +539,12 @@ Exactly one of `-s/--structure`, `--seq_map`, or `--uniprot_ids` is required.
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `--chain` | first chain | Chain ID within `-s/--structure` |
-| `--pdb_dir` | None | Directory of pre-downloaded PDB files. Required with `--uniprot_ids`; SIFTS resolves accessions but does not fetch structures |
+| `--pdb_dir` | None | Directory of pre-downloaded PDB files. Required with `--uniprot_ids` unless `--fetch` is also set, in which case it defaults to `./.pdb_cache/` and missing PDBs are downloaded into it |
 | `--cache_dir` | `./.sifts_cache` | Local directory to cache SIFTS JSON responses. Only consulted in `--uniprot_ids` mode |
+| `--fetch` | off | Opt-in: download missing PDB files from `--pdb_source` into `--pdb_dir` on demand. Off by default; without this flag, PDB files must already exist in `--pdb_dir`. Only valid with `--uniprot_ids` |
+| `--pdb_source` | `rcsb` | Source for `--fetch`. Choices: `rcsb`, `pdbe`. Only valid with `--uniprot_ids` |
+| `--pdb_form` | `asym` | Which form to fetch. Choices: `asym` (asymmetric unit `.pdb` — what most users get when hand-downloading), `assembly1` / `assembly2` (biological assembly `.pdb1` / `.pdb2`). Only valid with `--uniprot_ids` |
+| `--force_refetch` | off | Bypass the on-disk PDB cache and re-download. Distinct from any SIFTS-cache flag (the SIFTS cache stays warm). Only valid with `--uniprot_ids` + `--fetch` |
 | `--seq_id` | None | Header used when projecting `-s/--structure`'s sequence. When it matches an ID in the reference MSA, the project step takes the in-sample short-circuit. Ignored in `--seq_map` / `--uniprot_ids` modes (seq IDs come from the map / UniProt list itself) |
 | `--aligner` | `mafft_add` | Out-of-sample alignment method (inherits from `sca-project`) |
 | `--align_bin` | None | Explicit path to the alignment binary |
@@ -563,18 +574,34 @@ Writes to the specified output directory:
 
 `--uniprot_ids` resolves each UniProt accession to its top-ranked PDB structure via EBI PDBe's [`mappings/best_structures`](https://www.ebi.ac.uk/pdbe/api/doc/sifts.html) endpoint. Responses are cached under `--cache_dir` (default `./.sifts_cache/`) so repeat runs don't re-hit the network. SIFTS returns lowercase PDB IDs; the lookup tries both `{id}.pdb` and `{ID}.pdb` inside `--pdb_dir`, so either RCSB-style or lowercase filenames work.
 
-The PDB files must already exist in `--pdb_dir`; SIFTS only resolves IDs, it does not fetch structures.
+By default the PDB files must already exist in `--pdb_dir`; SIFTS only resolves IDs, it does not fetch structures. Pass `--fetch` to download missing PDBs from `--pdb_source` (`rcsb` or `pdbe`) into `--pdb_dir` on demand. The on-disk filename is always normalized to `{pdb_id_lower}.pdb` regardless of source, so the existing case-insensitive lookup keeps working. Cache hits avoid the network entirely; pass `--force_refetch` to bypass.
 
 The same mechanism is available at the library level for programmatic users:
 
 ```python
-from mysca.structure import SequencePdbMap
+from mysca.structure import SequencePdbMap, download_pdb_file
+
+# Resolution-only (today's default):
 seq_map = SequencePdbMap.from_sifts_for_uniprot_ids(
     ["P00742", "P09211", "P02768"],
     pdb_dir="./pdbs",
     cache_dir="./.sifts_cache",  # optional; default ./.sifts_cache
 )
 # seq_map["P00742"].pdb_path → "./pdbs/1c4v.pdb" (whichever case exists)
+
+# Resolution + on-demand fetch:
+seq_map = SequencePdbMap.from_sifts_for_uniprot_ids(
+    ["P00742", "P09211"],
+    pdb_dir="./.pdb_cache",
+    fetch=True,                      # download missing PDBs
+    pdb_source="rcsb",               # default
+    pdb_form="asym",                 # default
+)
+
+# Or call the fetcher directly:
+path = download_pdb_file(
+    "1SHF", dest_dir="./.pdb_cache", source="rcsb", form="asym",
+)  # → "./.pdb_cache/1shf.pdb"
 ```
 
-Missing files raise `FileNotFoundError` under `strict=True` (the default) or are logged and skipped under `strict=False`.
+Missing files (with `fetch=False` or after a failed fetch) raise `FileNotFoundError` under `strict=True` (the default) or are logged and skipped under `strict=False`.
