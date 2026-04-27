@@ -377,3 +377,76 @@ def _compute_fijab_gpu(xmsa, ws_norm, lam, nsyms):
     fijab = torch.where(diag[:, :, None, None],
                         fijab + reg_diag, fijab + reg_off)
     return fijab.cpu().numpy()
+
+
+def _compute_eigvalsh_bootstrap_gpu(
+        xmsa_batch, ws_norm, *, qa, lam, nsyms,
+):
+    """Batched GPU bootstrap kernel.
+
+    Takes a stack of one-hot-encoded shuffled MSAs (shape
+    ``(B, nseq, npos, naas)``) and returns the descending-sorted
+    eigenvalues of each iter's `Cij_corr` (shape ``(B, npos)``).
+
+    Lifts the full per-iter pipeline onto torch:
+        fia -> fijab -> Cijab_raw -> phi_ia -> Cijab_corr
+            -> Cij_corr -> eigvalsh
+    so intermediate tensors stay on the device across the batch.
+
+    Raises:
+        RuntimeError: when no GPU is detected. Caller is expected to
+            fall back to the per-iter CPU path.
+    """
+    from mysca._acceleration import detect_device
+    import torch
+
+    device = detect_device()
+    if device.type == "cpu":
+        raise RuntimeError(
+            "No GPU device found; "
+            "_compute_eigvalsh_bootstrap_gpu cannot run."
+        )
+
+    B, nseq, npos, naas = xmsa_batch.shape
+    xf = torch.as_tensor(
+        np.asarray(xmsa_batch, dtype=np.float64),
+        dtype=torch.float64, device=device,
+    )
+    ws_t = torch.as_tensor(
+        np.asarray(ws_norm, dtype=np.float64),
+        dtype=torch.float64, device=device,
+    )
+    qa_t = torch.as_tensor(
+        np.asarray(qa, dtype=np.float64),
+        dtype=torch.float64, device=device,
+    )
+
+    # fia[b, p, a] = (1-lam) * sum_s ws_norm[s] * xf[b, s, p, a] + lam/nsyms
+    fia = (1.0 - lam) * torch.einsum('s,bspa->bpa', ws_t, xf) + (lam / nsyms)
+
+    # fijab[b, i, j, a, b'] = (1-lam) * sum_s ws_norm[s] * xf[b,s,i,a] * xf[b,s,j,b']
+    weighted = ws_t[None, :, None, None] * xf  # (B, S, P, A)
+    fijab = torch.einsum('bspa,bsqc->bpqac', weighted, xf)
+    fijab = fijab * (1.0 - lam)
+    diag = torch.eye(npos, dtype=torch.bool, device=device)
+    reg_diag = lam / nsyms
+    reg_off = lam / (nsyms * nsyms)
+    fijab = torch.where(
+        diag[None, :, :, None, None],
+        fijab + reg_diag, fijab + reg_off,
+    )
+
+    # Cijab_raw[b, i, j, a, b'] = fijab[b, i, j, a, b'] - fia[b, i, a] * fia[b, j, b']
+    Cijab_raw = fijab - fia[:, :, None, :, None] * fia[:, None, :, None, :]
+    # phi_ia[b, p, a] = log((fia*(1-qa)) / ((1-fia)*qa))
+    phi_ia = torch.log((fia * (1.0 - qa_t)) / ((1.0 - fia) * qa_t))
+    Cijab_corr = (
+        phi_ia[:, :, None, :, None] * phi_ia[:, None, :, None, :] * Cijab_raw
+    )
+    # Cij_corr[b, i, j] = sqrt(sum_{a,b'} Cijab_corr[b, i, j, a, b']^2)
+    Cij_corr = torch.sqrt(torch.sum(Cijab_corr ** 2, dim=(-1, -2)))
+
+    # Batched symmetric eigvalsh; ascending order. Flip to descending.
+    evals_asc = torch.linalg.eigvalsh(Cij_corr)  # (B, P)
+    evals_desc = torch.flip(evals_asc, dims=[-1])
+    return evals_desc.cpu().numpy()

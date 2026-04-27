@@ -185,6 +185,7 @@ sca-core -i <preprocessing-dir> -o <output-dir> [options]
 | `--accelerator` | `none` | Global accelerator preference. Choices: `none`, `gpu`. When `gpu`, `--freq_method` auto-defaults to `gpu` (torch tensordot with graceful CPU fallback). An explicit `--freq_method` overrides this preference |
 | `--freq_method` | (resolved via `--accelerator`) | Backend for the `compute_fijab` kernel. Choices: `numpy` (CPU `np.tensordot`; ~9x faster than the legacy v1 double-loop on SH3-scale input), `jax` (whole-tensordot under `jax.jit`), `gpu` (torch tensordot, falls back to `numpy` on no-GPU). When unset, defaults to `numpy` (or `gpu` when `--accelerator gpu`) |
 | `--use_jax` | off | **DEPRECATED**: alias for `--freq_method=jax`. Emits a `DeprecationWarning` when used; will be removed in a future release |
+| `--bootstrap_chunk` | 1 | Number of bootstrap iterations to batch per GPU dispatch when `--freq_method=gpu`. Default 1 (per-iter dispatch — equivalent to today's behavior). Larger chunks amortize per-iter setup but multiply peak GPU memory by the chunk size; auto-reduced on OOM. Ignored on non-GPU paths |
 | `--nodendro` | off | Skip dendrogram and sequence-similarity plots |
 | `--plot / --no-plot` | on | Write diagnostic plots to `outdir/images/`. Default: on. Pass `--no-plot` to skip plot generation entirely (no `images/` directory is created) |
 | `--load_data` | "" | Path to a previous SCA output directory to load precomputed data (skips recomputation) |

@@ -18,6 +18,7 @@ from mysca.core import (
     _compute_fijab_v3,
     _compute_fijab_v4_jax,
     _compute_fijab_gpu,
+    _compute_eigvalsh_bootstrap_gpu,
 )
 # from mysca.helpers import map_msa_positions_to_sequence
 
@@ -312,4 +313,72 @@ def test_compute_fijab_kernels_agree(nseq, npos, naas):
     # tensordot does it implicitly. Verify.
     assert np.allclose(f3, f3.transpose(1, 0, 3, 2)), (
         "v3 fijab is not symmetric under (i,a)<->(j,b) swap"
+    )
+
+
+def test_bootstrap_gpu_eigvals_match_per_iter():
+    """The batched-GPU bootstrap helper must produce eigenvalues that
+    rank-match the per-iter (CPU/v3) path on the same input.
+
+    On no-GPU machines the helper raises RuntimeError; the test then
+    just exercises the per-iter path and verifies its own self-
+    consistency (which is trivially true). On GPU machines it
+    additionally asserts the batched + per-iter paths agree on each
+    iter's eigenvalues within fp64 tolerance.
+
+    Why we test eigenvalues directly (not kstar): kstar depends on a
+    statistical-significance threshold that's noisy on small synthetic
+    inputs. Eigenvalue-array allclose is the right contract — kstar
+    stability follows.
+    """
+    rng = np.random.default_rng(seed=20260427)
+    nseq, npos, naas = 60, 10, 6
+    nsyms = naas + 1
+    lam = 0.03
+    qa = np.full(naas, 1.0 / naas)
+
+    # Build a synthetic int MSA in [1..naas] (gap=0); construct the
+    # one-hot batch of `B` shuffled iters by permuting columns.
+    msa = rng.integers(1, naas + 1, size=(nseq, npos)).astype(np.int8)
+    B = 4
+    shuffled = np.empty((B, nseq, npos), dtype=msa.dtype)
+    for b in range(B):
+        # Same per-column shuffling shape as run_sca's shuffle_columns.
+        shuf = msa.copy()
+        for col in range(npos):
+            shuf[:, col] = rng.permutation(shuf[:, col])
+        shuffled[b] = shuf
+
+    # One-hot encode (drop the gap channel).
+    onehot = np.eye(nsyms, dtype=bool)[shuffled]
+    xmsa_batch = np.delete(onehot, 0, axis=-1).astype(bool)
+    weights = rng.random(nseq)
+    ws_norm = weights / weights.sum()
+
+    # Per-iter CPU reference: run the same Cij_corr derivation per iter
+    # via run_sca, take eigvalsh, sort descending.
+    per_iter_evals = np.empty((B, npos))
+    for b in range(B):
+        res = run_sca(
+            xmsa_batch[b], weights, background_map={},
+            background_arr=qa, regularization=lam, return_keys=["Cij_corr"],
+            pbar=False,
+        )
+        evals = np.linalg.eigvalsh(res["Cij_corr"])
+        per_iter_evals[b] = np.flip(evals)  # descending
+
+    try:
+        batched_evals = _compute_eigvalsh_bootstrap_gpu(
+            xmsa_batch, ws_norm, qa=qa, lam=lam, nsyms=nsyms,
+        )
+    except RuntimeError:
+        pytest.skip("No GPU available for batched-bootstrap test.")
+
+    assert batched_evals.shape == per_iter_evals.shape
+    # GPU path may diverge in low-order bits; tolerance loose enough to
+    # tolerate non-deterministic reductions on some accelerators while
+    # still catching real bugs (sign flips, broadcast mismatches, etc.).
+    assert np.allclose(batched_evals, per_iter_evals, atol=1e-9), (
+        f"batched-GPU eigenvalues disagree with per-iter; "
+        f"max abs diff = {np.max(np.abs(batched_evals - per_iter_evals)):.3e}"
     )

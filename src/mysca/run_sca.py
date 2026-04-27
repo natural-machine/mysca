@@ -62,6 +62,13 @@ Optional:
                             When unset, resolved via --accelerator.
     --use_jax             : DEPRECATED alias for --freq_method=jax.
                             Emits a DeprecationWarning when used.
+    --bootstrap_chunk     : number of bootstrap iterations to batch
+                            per GPU dispatch when --freq_method=gpu.
+                            Default 1 (per-iter; today's behavior).
+                            Larger chunks amortize per-iter setup at
+                            the cost of multiplying peak GPU memory.
+                            Auto-reduced on OOM. Ignored on non-GPU
+                            paths.
     --nodendro            : skip the sequence-similarity / dendrogram plots.
     --plot / --no-plot    : write diagnostic plots to outdir/images/.
                             Default: on. Pass --no-plot to skip plot
@@ -151,7 +158,11 @@ from mysca.helpers import get_group_rawseq_positions_by_entry
 from mysca.helpers import get_group_rawseq_scores_by_entry
 from mysca.helpers import get_rawseq_indices_of_msa
 from mysca.constants import SECTOR_COLORS, DEFAULT_BACKGROUND_FREQ
-from mysca.core import FREQ_METHOD_CHOICES, _resolve_freq_method
+from mysca.core import (
+    FREQ_METHOD_CHOICES,
+    _resolve_freq_method,
+    _compute_eigvalsh_bootstrap_gpu,
+)
 from mysca._acceleration import ACCELERATOR_CHOICES, resolve_method
 
 from mysca.pl import (
@@ -214,6 +225,15 @@ def parse_args(args):
              "defaults to their GPU variants where available "
              "(currently: --freq_method auto-selects 'gpu'). An "
              "explicit --freq_method overrides this preference.",
+    )
+    parser.add_argument(
+        "--bootstrap_chunk", type=int, default=1,
+        help="Number of bootstrap iterations to batch per GPU "
+             "dispatch when --freq_method=gpu. Default 1 (per-iter "
+             "GPU dispatch — equivalent to today's behavior). Larger "
+             "chunks amortize per-iter setup but multiply the peak "
+             "GPU memory by chunk_size; reduce automatically on OOM. "
+             "Ignored on non-GPU paths (numpy / jax).",
     )
     parser.add_argument(
         "--freq_method", type=str, default=None,
@@ -311,6 +331,7 @@ def main(args):
     LOAD_DATA = args.load_data
     USE_JAX = args.use_jax
     ACCELERATOR = args.accelerator
+    BOOTSTRAP_CHUNK = max(1, int(args.bootstrap_chunk))
     # Resolve --freq_method / --accelerator / --use_jax once up front.
     # Precedence: explicit --freq_method wins; else --use_jax (deprecated)
     # routes to 'jax' with a DeprecationWarning; else --accelerator gpu
@@ -459,7 +480,70 @@ def main(args):
     DO_SHUFFLING = N_BOOT > 0
     evals_shuff = np.full([N_BOOT, *evals_sca.shape], np.nan)
     evals_shuff_fpath = os.path.join(SCADIR, EVALS_SHUFF_SAVEAS)
-    if DO_SHUFFLING:
+    use_gpu_batch = (
+        DO_SHUFFLING
+        and FREQ_METHOD == "gpu"
+        and BOOTSTRAP_CHUNK > 1
+    )
+    if use_gpu_batch:
+        ws_norm = (weights / weights.sum()).astype(np.float64)
+        ws_for_bootstrap = ws_norm
+        # qa_for_bootstrap mirrors run_sca: derived from background_freq
+        # via mapping.aa_list, then renormalized to sum to 1.
+        qa_for_bootstrap = np.array(
+            [background_freq.get(a, 0.0) for a in sym_map.aa_list]
+        )
+        if background_freq_array is not None:
+            qa_for_bootstrap = background_freq_array
+        qa_for_bootstrap = qa_for_bootstrap / qa_for_bootstrap.sum()
+        nsyms_for_bootstrap = NSYMS
+        chunk_size = BOOTSTRAP_CHUNK
+        logger.info(
+            "Batched-GPU bootstrap: %d iters in chunks of %d.",
+            N_BOOT, chunk_size,
+        )
+        i = 0
+        progress = tqdm.tqdm(total=N_BOOT, disable=not PBAR)
+        while i < N_BOOT:
+            j = min(i + chunk_size, N_BOOT)
+            bsize = j - i
+            shuffled = np.empty((bsize, *msa.shape), dtype=msa.dtype)
+            for b in range(bsize):
+                shuffled[b] = shuffle_columns(msa, rng=rng)
+            xmsa_batch = onehot_without_gap(
+                shuffled, NSYMS, sym_map.gapint,
+            )  # (bsize, nseq, npos, naas)
+            try:
+                evals_chunk = _compute_eigvalsh_bootstrap_gpu(
+                    xmsa_batch, ws_for_bootstrap,
+                    qa=qa_for_bootstrap,
+                    lam=regularization,
+                    nsyms=nsyms_for_bootstrap,
+                )
+            except RuntimeError as exc:
+                # OOM or no-GPU. Halve and retry, or fall back to per-iter.
+                if "memory" in str(exc).lower() and chunk_size > 1:
+                    new_chunk = max(1, chunk_size // 2)
+                    logger.warning(
+                        "Batched bootstrap OOM at chunk_size=%d; "
+                        "retrying with chunk_size=%d.",
+                        chunk_size, new_chunk,
+                    )
+                    chunk_size = new_chunk
+                    continue
+                logger.warning(
+                    "Batched bootstrap unavailable (%s); falling back "
+                    "to per-iter loop.", exc,
+                )
+                use_gpu_batch = False
+                break
+            evals_shuff[i:j] = evals_chunk
+            progress.update(bsize)
+            i = j
+        progress.close()
+        if use_gpu_batch:
+            np.save(evals_shuff_fpath, evals_shuff)
+    if DO_SHUFFLING and not use_gpu_batch:
         for iteridx in tqdm.trange(N_BOOT):
             msa_shuff = shuffle_columns(msa, rng=rng)
             xmsa_shuff = onehot_without_gap(msa_shuff, NSYMS, sym_map.gapint)
@@ -750,6 +834,7 @@ def main(args):
         "plot": bool(DO_PLOT),
         "freq_method": FREQ_METHOD,
         "accelerator": ACCELERATOR,
+        "bootstrap_chunk": int(BOOTSTRAP_CHUNK),
     }
     results.save(
         OUTDIR, save_all=SAVE_ALL, retained_positions=retained_positions,
