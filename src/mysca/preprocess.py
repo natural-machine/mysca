@@ -539,15 +539,7 @@ def _compute_weights_v6(**kwargs):
 
     return ws
 
-def _detect_device():
-    import torch
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    if torch.backends.mps.is_available():
-        return torch.device("mps")
-    if hasattr(torch, "xpu") and torch.xpu.is_available():
-        return torch.device("xpu")
-    return torch.device("cpu")
+from mysca._acceleration import detect_device as _detect_device
 
 
 def _compute_weights_gpu(**kwargs):

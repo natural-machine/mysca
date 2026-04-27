@@ -125,7 +125,8 @@ sca-preprocess -i <input-msa> -o <output-dir> [options]
 | `--syms` | `default` | Symbol alphabet. `default` → standard 20 amino acids; `none` → disable excluded-symbol filtering and auto-detect; any other string is treated as an explicit character set |
 | `--gapsym` | `-` | Gap symbol in the input MSA |
 | `--gap_value` | 0 | Integer assigned to the gap symbol in the `SymMap`. Default 0 (gap first). Pass `len(aa_syms)` (e.g. 20) to place the gap at the end (legacy behavior) |
-| `--weight_method` | `sparse` | Sequence-weight computation backend. `sparse` uses a CPU sparse-CSR implementation; `gpu` dispatches to torch (CUDA/MPS/XPU), falling back to `sparse` if no accelerator is detected. See [weight methods](weight_methods.md) for full details |
+| `--accelerator` | `none` | Global accelerator preference. Choices: `none`, `gpu`. When `gpu`, `--weight_method` auto-defaults to `gpu` (torch CUDA/MPS/XPU; falls back to `sparse` if no accelerator is detected). An explicit `--weight_method` overrides this preference |
+| `--weight_method` | (resolved via `--accelerator`) | Sequence-weight computation backend. Choices: `sparse` (CPU sparse-CSR), `gpu` (torch CUDA/MPS/XPU). When unset, defaults to `sparse` (or `gpu` when `--accelerator gpu`). See [weight methods](weight_methods.md) for full details |
 | `--block_size` | 512 | Block size for relevant weight computations |
 
 ### Output
@@ -181,7 +182,8 @@ sca-core -i <preprocessing-dir> -o <output-dir> [options]
 |----------|---------|-------------|
 | `--seed` | None | Random seed for reproducibility. `None` or non-positive auto-generates one |
 | `--save_all` | off | Save large intermediate matrices (`Cijab_raw`, `fijab`) into `scarun_results.npz` |
-| `--freq_method` | `numpy` | Backend for the `compute_fijab` kernel. Choices: `numpy` (CPU `np.tensordot`; ~9x faster than the legacy v1 double-loop on SH3-scale input), `jax` (whole-tensordot under `jax.jit`). The `gpu` backend will be added by a follow-up workstream stage |
+| `--accelerator` | `none` | Global accelerator preference. Choices: `none`, `gpu`. When `gpu`, `--freq_method` auto-defaults to `gpu` (torch tensordot with graceful CPU fallback). An explicit `--freq_method` overrides this preference |
+| `--freq_method` | (resolved via `--accelerator`) | Backend for the `compute_fijab` kernel. Choices: `numpy` (CPU `np.tensordot`; ~9x faster than the legacy v1 double-loop on SH3-scale input), `jax` (whole-tensordot under `jax.jit`), `gpu` (torch tensordot, falls back to `numpy` on no-GPU). When unset, defaults to `numpy` (or `gpu` when `--accelerator gpu`) |
 | `--use_jax` | off | **DEPRECATED**: alias for `--freq_method=jax`. Emits a `DeprecationWarning` when used; will be removed in a future release |
 | `--nodendro` | off | Skip dendrogram and sequence-similarity plots |
 | `--plot / --no-plot` | on | Write diagnostic plots to `outdir/images/`. Default: on. Pass `--no-plot` to skip plot generation entirely (no `images/` directory is created) |

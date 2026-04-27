@@ -49,12 +49,17 @@ Optional:
     --seed                : random seed (None or non-positive auto-picks).
     --load_data           : previous sca-core output directory to reload.
     --save_all            : also write the large Cijab_raw / fijab arrays.
-    --freq_method          : backend for the fijab kernel. Choices:
-                            'numpy' (default; CPU tensordot, ~9x faster
-                            than the legacy v1 numpy double-loop) and
-                            'jax' (whole-tensordot under jax.jit; useful
-                            on JAX-enabled hardware). 'gpu' will be
-                            added by a follow-up workstream stage.
+    --accelerator         : global accelerator preference, one of
+                            {none, gpu}. Default 'none'. When 'gpu',
+                            --freq_method auto-defaults to 'gpu' (a
+                            torch tensordot path with graceful CPU
+                            fallback). Per-step --freq_method overrides.
+    --freq_method         : backend for the fijab kernel. Choices:
+                            'numpy' (CPU tensordot, ~9x faster than the
+                            legacy v1 numpy double-loop), 'jax' (whole-
+                            tensordot under jax.jit), 'gpu' (torch
+                            tensordot, falls back to CPU on no-GPU).
+                            When unset, resolved via --accelerator.
     --use_jax             : DEPRECATED alias for --freq_method=jax.
                             Emits a DeprecationWarning when used.
     --nodendro            : skip the sequence-similarity / dendrogram plots.
@@ -147,6 +152,7 @@ from mysca.helpers import get_group_rawseq_scores_by_entry
 from mysca.helpers import get_rawseq_indices_of_msa
 from mysca.constants import SECTOR_COLORS, DEFAULT_BACKGROUND_FREQ
 from mysca.core import FREQ_METHOD_CHOICES, _resolve_freq_method
+from mysca._acceleration import ACCELERATOR_CHOICES, resolve_method
 
 from mysca.pl import (
     plot_conservation,
@@ -201,12 +207,24 @@ def parse_args(args):
                         "non-positive value auto-generates one.")
     
     parser.add_argument(
+        "--accelerator", type=str, default="none",
+        choices=list(ACCELERATOR_CHOICES),
+        help="Global accelerator preference. 'none' (default) keeps "
+             "the CPU-default kernels. 'gpu' flips per-step kernel "
+             "defaults to their GPU variants where available "
+             "(currently: --freq_method auto-selects 'gpu'). An "
+             "explicit --freq_method overrides this preference.",
+    )
+    parser.add_argument(
         "--freq_method", type=str, default=None,
         choices=list(FREQ_METHOD_CHOICES),
-        help="Backend for the compute_fijab kernel. Default 'numpy' "
-             "uses np.tensordot (~9x faster than the legacy v1 numpy "
-             "double-loop on SH3-scale input). 'jax' lifts the same "
-             "tensordot under jax.jit. See docs/cli_reference.md.",
+        help="Backend for the compute_fijab kernel. When unset, "
+             "resolves via --accelerator: 'none' -> 'numpy' (CPU "
+             "tensordot, ~9x faster than the legacy v1 double-loop on "
+             "SH3-scale input); 'gpu' -> 'gpu' (torch tensordot with "
+             "graceful CPU fallback). 'jax' is also available "
+             "(whole-tensordot under jax.jit). See "
+             "docs/cli_reference.md.",
     )
     parser.add_argument(
         "--use_jax", action="store_true",
@@ -292,12 +310,19 @@ def main(args):
     DO_PLOT = args.plot
     LOAD_DATA = args.load_data
     USE_JAX = args.use_jax
-    # Resolve --freq_method / --use_jax once up front. argparse leaves
-    # freq_method=None when the user didn't pass it; _resolve_freq_method
-    # routes that through use_jax (with DeprecationWarning) or to the
-    # default "numpy".
-    FREQ_METHOD = _resolve_freq_method(
-        freq_method=args.freq_method, use_jax=USE_JAX,
+    ACCELERATOR = args.accelerator
+    # Resolve --freq_method / --accelerator / --use_jax once up front.
+    # Precedence: explicit --freq_method wins; else --use_jax (deprecated)
+    # routes to 'jax' with a DeprecationWarning; else --accelerator gpu
+    # routes to 'gpu'; else 'numpy' (CPU default).
+    FREQ_METHOD = resolve_method(
+        method=args.freq_method,
+        accelerator=ACCELERATOR,
+        cpu_default="numpy",
+        gpu_choice="gpu",
+        deprecated_alias=USE_JAX,
+        deprecated_alias_name="--use_jax",
+        deprecated_alias_target="jax",
     )
     SAVE_ALL = args.save_all
     sector_cmap = args.sector_cmap
@@ -724,6 +749,7 @@ def main(args):
         "n_logged_comps": int(n_logged_comps),
         "plot": bool(DO_PLOT),
         "freq_method": FREQ_METHOD,
+        "accelerator": ACCELERATOR,
     }
     results.save(
         OUTDIR, save_all=SAVE_ALL, retained_positions=retained_positions,

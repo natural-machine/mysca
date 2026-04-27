@@ -18,6 +18,10 @@ Weights are computed during `sca-preprocess` and saved with the preprocessing re
 | v6 | Active | No | Yes | v5 + JAX JIT compilation |
 | gpu | Active | Yes | Yes | PyTorch with automatic device detection |
 
+## Selection via `--accelerator`
+
+`sca-preprocess` exposes a global `--accelerator {none, gpu}` flag (default `none`). When unset, `--weight_method` defaults to `sparse`. When `--accelerator gpu`, `--weight_method` auto-defaults to `gpu`. An explicit `--weight_method` always wins over `--accelerator`. The same flag and resolution logic exist on `sca-core` for the frequency-tensor kernel (`--freq_method`).
+
 ## Method Details
 
 ### v3 — Direct comparison

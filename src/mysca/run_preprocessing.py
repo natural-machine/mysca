@@ -7,6 +7,16 @@ an output directory with the preprocessed results. See references:
 -------------------------------------------------------------------------------
 COMMAND LINE ARGUMENTS:
 
+Optional:
+    --accelerator            Global accelerator preference, one of
+        {none, gpu}. Default 'none'. When 'gpu', --weight_method
+        auto-defaults to 'gpu' (torch CUDA/MPS/XPU; falls back to
+        'sparse' if no accelerator is detected). An explicit
+        --weight_method overrides this preference.
+    --weight_method          {sparse, gpu}. When unset, resolved via
+        --accelerator. Default-with-accelerator-none: 'sparse' (CPU
+        sparse-CSR). Default-with-accelerator-gpu: 'gpu'.
+
 SCA parameters (see [1] for definitions):
     --gap_truncation_thresh   (τ; default 0.4) Remove columns with gap
         frequency above this threshold, applied before any sequence-level
@@ -83,6 +93,7 @@ from mysca.logging_config import configure_logging
 from mysca.mappings import SymMap
 from mysca.constants import AA_STD20
 from mysca.preprocess import preprocess_msa
+from mysca._acceleration import ACCELERATOR_CHOICES, resolve_method
 from mysca.pl import plot_filter_history, plot_filter_distributions
 from mysca.results import (
     PreprocessingResults,
@@ -134,14 +145,24 @@ def parse_args(args):
         "(legacy behavior).",
     )
     parser.add_argument(
-        "--weight_method", type=str, default="sparse",
+        "--accelerator", type=str, default="none",
+        choices=list(ACCELERATOR_CHOICES),
+        help="Global accelerator preference. 'none' (default) keeps "
+        "the CPU-default kernels. 'gpu' flips per-step kernel "
+        "defaults to their GPU variants where available "
+        "(currently: --weight_method auto-selects 'gpu'). An "
+        "explicit --weight_method overrides this preference.",
+    )
+    parser.add_argument(
+        "--weight_method", type=str, default=None,
         choices=["sparse", "gpu"],
-        help="Sequence-weight computation backend. 'sparse' (default) "
-        "uses a CPU sparse-CSR implementation; 'gpu' dispatches to torch "
-        "(CUDA/MPS/XPU), falling back to 'sparse' if no accelerator is "
-        "detected. Non-production benchmark variants ('_v3', '_v4', "
-        "'_v6') remain callable via the preprocess_msa library API but "
-        "are intentionally not exposed here.",
+        help="Sequence-weight computation backend. When unset, "
+        "resolves via --accelerator: 'none' -> 'sparse' (CPU "
+        "sparse-CSR), 'gpu' -> 'gpu' (torch CUDA/MPS/XPU; falls back "
+        "to 'sparse' if no accelerator is detected). Non-production "
+        "benchmark variants ('_v3', '_v4', '_v6') remain callable via "
+        "the preprocess_msa library API but are intentionally not "
+        "exposed here.",
     )
     parser.add_argument(
         "--block_size", type=int, default=512,
@@ -192,7 +213,15 @@ def main(args):
     verbosity = args.verbosity
     pbar = args.pbar
     do_plot = args.plot
-    weight_computation_version = args.weight_method
+    accelerator = args.accelerator
+    # Resolve --weight_method / --accelerator. Explicit --weight_method
+    # wins; else --accelerator gpu routes to 'gpu'; else 'sparse'.
+    weight_computation_version = resolve_method(
+        method=args.weight_method,
+        accelerator=accelerator,
+        cpu_default="sparse",
+        gpu_choice="gpu",
+    )
     block_size = args.block_size
     
     syms = args.syms
@@ -270,6 +299,14 @@ def main(args):
         sym_map=sym_map,
         msa_obj_orig=msa_obj_orig,
     )
+    # Persist weight_method (resolved) and accelerator (raw) into the
+    # args bundle for run-replay parity. Both are CLI-layer concerns and
+    # don't belong in preprocess_msa's signature.
+    results.args = {
+        **(results.args or {}),
+        "weight_method": weight_computation_version,
+        "accelerator": accelerator,
+    }
     results.save(outdir)
 
     if do_plot:

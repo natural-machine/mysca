@@ -17,6 +17,7 @@ from mysca.core import (
     _compute_fijab_v2,
     _compute_fijab_v3,
     _compute_fijab_v4_jax,
+    _compute_fijab_gpu,
 )
 # from mysca.helpers import map_msa_positions_to_sequence
 
@@ -288,6 +289,10 @@ def test_compute_fijab_kernels_agree(nseq, npos, naas):
     f2 = _compute_fijab_v2(xmsa, ws_norm, lam, nsyms)
     f3 = _compute_fijab_v3(xmsa, ws_norm, lam, nsyms)
     f4 = _compute_fijab_v4_jax(xmsa, ws_norm, lam, nsyms)
+    # GPU kernel falls back to v3 internally on no-GPU machines (with a
+    # WARNING); on GPU-equipped machines this exercises torch.tensordot
+    # at fp64. Either way the answer must match v1.
+    f5 = _compute_fijab_gpu(xmsa, ws_norm, lam, nsyms)
 
     assert np.allclose(f1, f3, atol=1e-12), (
         f"v3 disagrees with v1; max abs diff = {np.max(np.abs(f1 - f3)):.3e}"
@@ -297,6 +302,10 @@ def test_compute_fijab_kernels_agree(nseq, npos, naas):
     )
     assert np.allclose(f1, f4, atol=1e-12), (
         f"v4_jax disagrees with v1; max abs diff = {np.max(np.abs(f1 - f4)):.3e}"
+    )
+    assert np.allclose(f1, f5, atol=1e-10), (
+        f"gpu kernel disagrees with v1; max abs diff = "
+        f"{np.max(np.abs(f1 - f5)):.3e}"
     )
     # v3 must preserve the (j, i) symmetry of v1 — fijab[j, i, b, a] is
     # the transpose of fijab[i, j, a, b]. v1 enforces this explicitly;

@@ -177,10 +177,11 @@ def run_ica(
 
 # Mapping from user-facing --freq_method values to internal compute_fijab
 # version codes. Centralized so run_sca and compute_fijab agree.
-FREQ_METHOD_CHOICES = ("numpy", "jax")
+FREQ_METHOD_CHOICES = ("numpy", "jax", "gpu")
 _FREQ_METHOD_TO_VERSION = {
     "numpy": "v3",
     "jax":   "v4",
+    "gpu":   "v5",
 }
 
 
@@ -227,6 +228,8 @@ def compute_fijab(
         return _compute_fijab_v3(xmsa, ws_norm, lam, nsyms)
     elif version == "v4":
         return _compute_fijab_v4_jax(xmsa, ws_norm, lam, nsyms)
+    elif version == "v5":
+        return _compute_fijab_gpu(xmsa, ws_norm, lam, nsyms)
     else:
         raise RuntimeError(f"Unknown version to compute fijab: {version}")
 
@@ -317,7 +320,7 @@ def _compute_fijab_v4_jax(xmsa, ws_norm, lam, nsyms):
     The whole tensordot + regularization is lifted under `jax.jit` so
     JAX can compile and (on accelerator-equipped backends) execute it
     on-device. Comparable speed to v3 on CPU; the GPU path lives in
-    `_compute_fijab_gpu` (E3) so this stays a CPU-flavored alternative
+    `_compute_fijab_gpu` so this stays a CPU-flavored alternative
     for users on JAX-only setups.
 
     Numerics match v1/v3 within fp64 tolerance; verified by
@@ -332,3 +335,45 @@ def _compute_fijab_v4_jax(xmsa, ws_norm, lam, nsyms):
         float(lam / (nsyms * nsyms)),
     )
     return np.asarray(fijab)
+
+
+def _compute_fijab_gpu(xmsa, ws_norm, lam, nsyms):
+    """torch GPU equivalent of v3.
+
+    Lazy-imports torch and uses ``torch.tensordot`` over fp64 on the
+    first available accelerator (CUDA / MPS / XPU). On no-GPU
+    detection, logs a WARNING and falls back to ``_compute_fijab_v3``
+    — same graceful-fallback pattern as ``_compute_weights_gpu`` in
+    ``mysca.preprocess``.
+
+    Numerics: bit-stable vs v1/v3 within fp64 tolerance on the host
+    side; bit-divergence is acceptable in low-order bits of the
+    intermediate due to non-deterministic reductions on some GPUs,
+    but the final downstream ``kstar`` selection should not change.
+    """
+    from mysca._acceleration import detect_device
+    import torch
+
+    device = detect_device()
+    if device.type == "cpu":
+        logger.warning(
+            "No GPU device found; falling back to CPU tensordot "
+            "(_compute_fijab_v3)."
+        )
+        return _compute_fijab_v3(xmsa, ws_norm, lam, nsyms)
+
+    npos = xmsa.shape[1]
+    xf = torch.as_tensor(np.asarray(xmsa, dtype=np.float64),
+                         dtype=torch.float64, device=device)
+    ws_t = torch.as_tensor(np.asarray(ws_norm, dtype=np.float64),
+                           dtype=torch.float64, device=device)
+    weighted = ws_t[:, None, None] * xf
+    fijab = torch.tensordot(weighted, xf, dims=([0], [0])).permute(0, 2, 1, 3)
+    fijab = fijab * (1.0 - lam)
+    diag = torch.eye(npos, dtype=torch.bool, device=device)
+    reg_diag = torch.tensor(lam / nsyms, dtype=torch.float64, device=device)
+    reg_off = torch.tensor(lam / (nsyms * nsyms), dtype=torch.float64,
+                           device=device)
+    fijab = torch.where(diag[:, :, None, None],
+                        fijab + reg_diag, fijab + reg_off)
+    return fijab.cpu().numpy()
