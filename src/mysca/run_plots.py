@@ -27,7 +27,11 @@ Per-stage, plots are written into ``{stage_dir}/images/`` by default, or into
                          on or after commit HEAD), plot_sca_spectrum,
                          plot_sca_spectrum_vs_null, plot_dendrogram,
                          plot_t_distributions, plot_data_2d/3d (EV + IC
-                         sweeps), plot_sca_matrix_sector_subset.
+                         sweeps), plot_sca_matrix_sector_subset,
+                         plot_seq_projection_2d (requires --preprocessing
+                         for msa_binary3d; optionally colored by
+                         --seq_proj_color_by COLUMN of
+                         sequence_metadata.tsv).
 """
 
 import argparse
@@ -54,6 +58,7 @@ from mysca.pl import (
     plot_sca_spectrum,
     plot_sca_spectrum_vs_null,
     plot_sequence_similarity,
+    plot_seq_projection_2d,
     plot_t_distributions,
 )
 
@@ -110,6 +115,12 @@ def parse_args(args):
         "--imgdir", type=str, default=None, metavar="DIR",
         help="Output directory for all plots. Default: write into each "
         "stage's own 'images/' subdirectory.",
+    )
+    parser.add_argument(
+        "--seq_proj_color_by", type=str, default=None, metavar="COLUMN",
+        help="Color the seq_proj_ic*.png plot by this column of "
+        "sequence_metadata.tsv (loaded from --scacore). Numeric "
+        "columns get a colorbar; categorical columns get a legend.",
     )
     parser.add_argument("-v", "--verbosity", type=int, default=1)
 
@@ -168,7 +179,11 @@ def _replay_preprocessing(stage_dir, imgdir_override):
         )
 
 
-def _replay_scacore(stage_dir, imgdir_override, *, preproc_dir=None):
+def _replay_scacore(
+        stage_dir, imgdir_override, *,
+        preproc_dir=None,
+        seq_proj_color_by=None,
+):
     if not os.path.isdir(stage_dir):
         raise FileNotFoundError(f"SCA core directory not found: {stage_dir}")
     sca = SCAResults.load(stage_dir)
@@ -289,6 +304,49 @@ def _replay_scacore(stage_dir, imgdir_override, *, preproc_dir=None):
             stage_dir,
         )
 
+    prep = _maybe_load_preprocessing(preproc_dir, stage_dir)
+    if prep is not None and prep.msa_binary3d is not None:
+        try:
+            up_seq = sca.project_sequences(prep.msa_binary3d)
+        except RuntimeError as e:
+            logger.warning(
+                "Cannot compute sequence projection in %s: %s", stage_dir, e,
+            )
+        else:
+            color_values = None
+            color_label = None
+            if seq_proj_color_by is not None:
+                if sca.sequence_metadata is None:
+                    logger.warning(
+                        "--seq_proj_color_by=%r ignored: %s has no "
+                        "sequence_metadata.tsv.",
+                        seq_proj_color_by, stage_dir,
+                    )
+                elif seq_proj_color_by not in sca.sequence_metadata.columns:
+                    logger.warning(
+                        "--seq_proj_color_by=%r ignored: column missing. "
+                        "Available: %s",
+                        seq_proj_color_by,
+                        list(sca.sequence_metadata.columns),
+                    )
+                else:
+                    md_indexed = sca.sequence_metadata.set_index(
+                        "seq_id", drop=False,
+                    )
+                    color_values = md_indexed[seq_proj_color_by].reindex(
+                        list(prep.retained_sequence_ids)
+                    ).to_numpy()
+                    color_label = seq_proj_color_by
+            plot_seq_projection_2d(
+                up_seq, (0, 1), imgdir,
+                color_values=color_values, color_label=color_label,
+            )
+    else:
+        logger.warning(
+            "Preprocessing dir not resolved or msa_binary3d missing; "
+            "skipping seq_proj_ic*.png (needs PreprocessingResults.msa_binary3d).",
+        )
+
 
 def _maybe_load_preprocessing(preproc_dir, stage_dir):
     if preproc_dir is None:
@@ -319,6 +377,7 @@ def main(args):
     if args.scacore:
         _replay_scacore(
             args.scacore, args.imgdir, preproc_dir=args.preprocessing,
+            seq_proj_color_by=args.seq_proj_color_by,
         )
 
     logger.info("sca-plots done.")

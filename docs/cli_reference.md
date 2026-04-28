@@ -182,9 +182,13 @@ sca-core -i <preprocessing-dir> -o <output-dir> [options]
 |----------|---------|-------------|
 | `--seed` | None | Random seed for reproducibility. `None` or non-positive auto-generates one |
 | `--save_all` | off | Save large intermediate matrices (`Cijab_raw`, `fijab`) into `scarun_results.npz` |
+| `--save_dataframe` | off | Also write `seq_projections.tsv` (columns: `seq_id`, `aligned_sequence`, `up_0..up_{n_components-1}`) for every retained sequence. Requires pandas |
+| `--seq_metadata` | None | Optional TSV path with a `seq_id` column plus any user-supplied columns. Persisted as `sequence_metadata.tsv` and merged into `seq_projections.tsv` via left-join on `seq_id` when `--save_dataframe` is set |
+| `--seq_proj_color_by` | None | Optional column name in `--seq_metadata` to color the `seq_proj_ic*.png` plot by. Numeric columns get a colorbar; categorical columns get a legend |
 | `--accelerator` | `none` | Global accelerator preference. Choices: `none`, `gpu`. When `gpu`, `--freq_method` auto-defaults to `gpu` (torch tensordot with graceful CPU fallback). An explicit `--freq_method` overrides this preference |
 | `--freq_method` | (resolved via `--accelerator`) | Backend for the `compute_fijab` kernel. Choices: `numpy` (CPU `np.tensordot`; ~9x faster than the legacy v1 double-loop on SH3-scale input), `jax` (whole-tensordot under `jax.jit`), `gpu` (torch tensordot, falls back to `numpy` on no-GPU). When unset, defaults to `numpy` (or `gpu` when `--accelerator gpu`) |
 | `--use_jax` | off | **DEPRECATED**: alias for `--freq_method=jax`. Emits a `DeprecationWarning` when used; will be removed in a future release |
+| `--precision` | `fp64` | GPU compute precision for the `fijab` and eigvalsh-bootstrap kernels. Choices: `fp64` (matches CPU bit-for-bit), `fp32` (~2× faster on most GPUs, ~7-decimal precision), `fp16` (highest throughput on tensor cores; the eigendecomposition auto-promotes to `fp32` since `eigvalsh` is unstable in fp16 — treat fp16 as a preview). Ignored on CPU kernels |
 | `--bootstrap_chunk` | 1 | Number of bootstrap iterations to batch per GPU dispatch when `--freq_method=gpu`. Default 1 (per-iter dispatch — equivalent to today's behavior). Larger chunks amortize per-iter setup but multiply peak GPU memory by the chunk size; auto-reduced on OOM. Ignored on non-GPU paths |
 | `--nodendro` | off | Skip dendrogram and sequence-similarity plots |
 | `--plot / --no-plot` | on | Write diagnostic plots to `outdir/images/`. Default: on. Pass `--no-plot` to skip plot generation entirely (no `images/` directory is created) |
@@ -205,7 +209,9 @@ Writes to the specified output directory:
 - `sca_results/` — `v_ica_normalized.npy`, `w_ica.npy`, `t_dists_info.json`, `evals_shuff.npy`, `sca_matrix_sector_subset.npy`, scalar text files (`kstar.txt`, `n_components.txt`, etc.)
 - `ic_positions/` — per-IC bundle: `ic_{i}_msaproc.npy` (high-load positions in processed-MSA coordinates), `ic_{i}_msaorig.npy` (the same positions in original-MSA coordinates), `ic_{i}_loadings.npy` (IC loadings at those positions)
 - `scarun.log` — run log
-- `images/` — plots (conservation, SCA matrix, spectrum vs null, dendrogram, t-distributions, EV/IC scatter sweeps). Only written when `--plot` is set (the default); `--no-plot` skips the directory entirely.
+- `seq_projections.tsv` — only when `--save_dataframe`; tab-separated table with `seq_id`, `aligned_sequence`, and `up_0..up_{n_components-1}` columns. When `--seq_metadata` is also given, the metadata file's non-`seq_id` columns are merged in via left-join on `seq_id`
+- `sequence_metadata.tsv` — only when `--seq_metadata` is supplied; verbatim copy of the user-supplied TSV (loadable via `SCAResults.load`)
+- `images/` — plots (conservation, SCA matrix, spectrum vs null, dendrogram, t-distributions, EV/IC scatter sweeps, sector-subset, and `seq_proj_ic0v1.png` projecting all sequences onto the first two ICs). Only written when `--plot` is set (the default); `--no-plot` skips the directory entirely.
 
 ---
 
@@ -419,8 +425,9 @@ sca-plots [--prealign DIR] [--preprocessing DIR] [--scacore DIR] [--imgdir DIR] 
 |----------|---------|-------------|
 | `--prealign` | None | Prealign output directory (contains `filter_history.json`). Regenerates `plot_prealign_filter_history` |
 | `--preprocessing` | None | Preprocessing output directory (contains `preprocessing_results.npz`, `filter_history.json`, `msa_binary2d_sp.npz`). Regenerates `plot_filter_history`, `plot_filter_distributions`, `plot_sequence_similarity`. When passed alongside `--scacore`, also enables the positional conservation plots (they need `retained_positions` + the original MSA length) |
-| `--scacore` | None | SCA core output directory. Regenerates `plot_conservation`, `plot_sca_matrix`, `plot_sca_spectrum`, `plot_sca_spectrum_vs_null`, `plot_dendrogram`, `plot_t_distributions`, `plot_data_2d`/`3d` (EV + IC sweeps), `plot_sca_matrix_sector_subset`. With `--preprocessing` also given, adds `plot_conservation_top` and `plot_conservation_positional` |
+| `--scacore` | None | SCA core output directory. Regenerates `plot_conservation`, `plot_sca_matrix`, `plot_sca_spectrum`, `plot_sca_spectrum_vs_null`, `plot_dendrogram`, `plot_t_distributions`, `plot_data_2d`/`3d` (EV + IC sweeps), `plot_sca_matrix_sector_subset`. With `--preprocessing` also given, adds `plot_conservation_top`, `plot_conservation_positional`, and `plot_seq_projection_2d` (the latter needs `msa_binary3d`) |
 | `--imgdir` | None | Output directory for all plots. When omitted, plots go into each stage's own `images/` subdirectory |
+| `--seq_proj_color_by` | None | Color the `seq_proj_ic*.png` plot by this column of `sequence_metadata.tsv` (loaded from `--scacore`). Numeric columns get a colorbar; categorical columns get a legend |
 | `-v, --verbosity` | 1 | Verbosity level |
 
 ### Notes
@@ -474,14 +481,16 @@ Exactly one of `-i/--input_fpath` or (`--from_msa` + `--seq_id`) is required.
 | `--aligner` | `mafft_add` | Out-of-sample alignment method. `mafft_add` uses `mafft --add --keeplength`. `hmmalign` builds a profile HMM (`hmmbuild --hand --amino`) with every reference column as a match state, then aligns new sequences (`hmmalign --outformat afa`) and keeps only match columns. In-sample records bypass alignment entirely |
 | `--align_bin` | None | Explicit path to the alignment binary (default: resolve from PATH). For `--aligner hmmalign` this is `hmmalign`; `hmmbuild` is resolved from PATH |
 | `--align_threads` | 1 | Threads for the alignment tool (unused by `hmmalign`) |
+| `--save_dataframe` | off | Also write `seq_projections.tsv` with columns `seq_id`, `aligned_sequence`, `raw_sequence`, `in_sample`, `up_0..up_{n_components-1}`. Requires pandas |
 | `-v, --verbosity` | 1 | Verbosity level |
 
 ### Output
 
 Writes to the specified output directory:
 
-- `projection.json` — top-level result: per-sequence dicts containing `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col` (length `L_proc`), `ic_residues` (per-IC raw residue indices), `ic_loadings`, `ic_processed_cols`, `in_sample`
+- `projection.json` — top-level result: per-sequence dicts containing `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col` (length `L_proc`), `ic_residues` (per-IC raw residue indices), `ic_loadings`, `ic_processed_cols`, `in_sample`, `up_score` (length `n_components` — the sequence's `Uᵖ` row, or `null` when the source SCAResults lacks the eigendecomposition fields)
 - `per_sequence/<seqid>_residues.tsv` — one row per (IC, residue) for readable inspection
+- `seq_projections.tsv` — only when `--save_dataframe`; tab-separated table with `seq_id`, `aligned_sequence`, `raw_sequence`, `in_sample`, `up_0..up_{n_components-1}` columns
 - `projection_args.json` — arguments used
 - `projection.log` — run log
 - `from_msa_input.fasta` — only when `--from_msa` is used: the materialized one-record FASTA actually fed to the projector

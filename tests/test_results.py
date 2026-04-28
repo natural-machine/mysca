@@ -622,6 +622,266 @@ class TestSCAResults:
         ))
         assert kstar == original.kstar
 
+    def _make_projection_fixture(self, L=4, D=3, K=2, M=5, seed=0):
+        """Construct a minimal SCAResults sized for project_sequences tests
+        plus a synthetic one-hot xmsa (M, L, D)."""
+        rng = np.random.default_rng(seed)
+        phi_ia = rng.uniform(0.1, 1.0, size=(L, D))
+        fia = rng.uniform(0.1, 1.0, size=(L, D))
+        evecs_sca = rng.standard_normal((L, L))
+        evals_sca = np.sort(rng.uniform(0.5, 2.0, size=L))[::-1]
+        w_ica = rng.standard_normal((K, K))
+
+        sca = SCAResults(
+            phi_ia=phi_ia, fia=fia,
+            evecs_sca=evecs_sca,
+            evals_sca=evals_sca,
+            significant_evecs_sca=evecs_sca[:, :K],
+            significant_evals_sca=evals_sca[:K],
+            w_ica=w_ica,
+            n_components=K,
+        )
+
+        msa_int = rng.integers(0, D, size=(M, L))
+        xmsa = np.eye(D, dtype=bool)[msa_int]
+        return sca, xmsa
+
+    def test_project_sequences_known_value(self):
+        """Hand-derive Uᵖ for a small fixture and verify the method matches."""
+        sca, xmsa = self._make_projection_fixture()
+
+        pf = sca.phi_ia * sca.fia
+        denom = np.sqrt(np.sum(pf * pf, axis=-1, keepdims=True))
+        pia = pf / denom
+        xsi = np.einsum("ia,mia->mi", pia, xmsa.astype(np.float64))
+        n_comp = sca.w_ica.shape[0]
+        evecs = sca.evecs_sca[:, :n_comp]
+        evals = sca.evals_sca[:n_comp]
+        utilde = (xsi @ evecs) / np.sqrt(evals)
+        expected = utilde @ sca.w_ica.T
+
+        got = sca.project_sequences(xmsa)
+        assert got.shape == expected.shape
+        np.testing.assert_allclose(got, expected, rtol=0, atol=1e-12)
+
+    def test_project_sequences_paper_normalization(self):
+        """Per-position P̃ normalization differs from a global-scalar one
+        whenever positions have different ||phi*fia||₂. Construct such a
+        case and verify project_sequences uses the per-position form."""
+        L, D, K = 3, 2, 1
+        phi_ia = np.array([[1.0, 0.0], [2.0, 0.0], [4.0, 0.0]])
+        fia = np.array([[1.0, 1.0], [1.0, 1.0], [1.0, 1.0]])
+        # Full eigendecomposition; project_sequences uses the first
+        # w_ica.shape[0] columns/values, here just position 0.
+        evecs_sca = np.array([
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ])
+        evals_sca = np.array([1.0, 1.0, 1.0])
+        w_ica = np.array([[1.0]])
+        sca = SCAResults(
+            phi_ia=phi_ia, fia=fia,
+            evecs_sca=evecs_sca,
+            evals_sca=evals_sca,
+            significant_evecs_sca=evecs_sca[:, :K],
+            significant_evals_sca=evals_sca[:K],
+            w_ica=w_ica,
+            n_components=K,
+        )
+        # Single sequence: amino acid 0 at every position
+        xmsa = np.zeros((1, L, D), dtype=bool)
+        xmsa[0, :, 0] = True
+
+        # Per-position: pia[0,0] = 1 (since phi*f at position 0 is [1, 0])
+        # so xsi[0,0] = 1, utilde[0] = 1 / sqrt(1) = 1, Up = 1.
+        per_position_expected = np.array([[1.0]])
+        # Global: pia[0,0] = 1 / sqrt(1+4+16) = 1/sqrt(21), xsi[0,0] = 1/sqrt(21),
+        # utilde[0] = 1/sqrt(21), Up = 1/sqrt(21) ≈ 0.2182.
+        global_alt = 1.0 / np.sqrt(21.0)
+
+        got = sca.project_sequences(xmsa)
+        np.testing.assert_allclose(got, per_position_expected, atol=1e-12)
+        assert not np.isclose(got[0, 0], global_alt)
+
+    def test_project_sequences_round_trip(self):
+        """Save + load preserves project_sequences output bit-for-bit."""
+        sca = self._make_sample_results(include_sectors=False)
+        # Reuse the larger sample fixture's dimensions so save() writes
+        # all six core fields cleanly.
+        L, D = sca.fia.shape
+        K = sca.significant_evals_sca.shape[0]
+        rng = np.random.default_rng(7)
+        msa_int = rng.integers(0, D, size=(8, L))
+        xmsa = np.eye(D, dtype=bool)[msa_int]
+        before = sca.project_sequences(xmsa)
+
+        sca.save(OUTDIR_SCA)
+        loaded = SCAResults.load(OUTDIR_SCA)
+        after = loaded.project_sequences(xmsa)
+
+        np.testing.assert_allclose(after, before, rtol=0, atol=1e-12)
+
+    def test_project_sequences_missing_fields(self):
+        """Clear error when a required operand is None."""
+        sca, xmsa = self._make_projection_fixture()
+        sca.w_ica = None
+        with pytest.raises(RuntimeError, match="w_ica"):
+            sca.project_sequences(xmsa)
+
+    def test_project_sequences_rejects_wrong_shape(self):
+        sca, xmsa = self._make_projection_fixture()
+        with pytest.raises(ValueError, match="expected"):
+            sca.project_sequences(xmsa[:, :, :-1])  # truncate D
+
+    def test_sequence_metadata_round_trip(self):
+        """save() writes sequence_metadata.tsv; load() restores it."""
+        pd = pytest.importorskip("pandas")
+        sca = self._make_sample_results(include_sectors=False)
+        sca.sequence_metadata = pd.DataFrame({
+            "seq_id": ["seq_0", "seq_1", "seq_2"],
+            "kingdom": ["Bacteria", "Archaea", "Eukaryota"],
+            "taxid": [1, 2, 3],
+        })
+        sca.save(OUTDIR_SCA)
+        assert os.path.isfile(
+            os.path.join(OUTDIR_SCA, "sequence_metadata.tsv")
+        )
+        loaded = SCAResults.load(OUTDIR_SCA)
+        assert loaded.sequence_metadata is not None
+        pd.testing.assert_frame_equal(
+            loaded.sequence_metadata.reset_index(drop=True),
+            sca.sequence_metadata.reset_index(drop=True),
+        )
+
+    def test_plot_seq_projection_2d_categorical_coloring(self, tmp_path):
+        """plot_seq_projection_2d accepts categorical color_values and
+        writes a PNG without raising."""
+        from mysca.pl import plot_seq_projection_2d
+        rng = np.random.default_rng(31)
+        up = rng.standard_normal((20, 3))
+        kingdoms = np.array(
+            ["Bacteria"] * 8 + ["Archaea"] * 6 + ["Eukaryota"] * 6,
+            dtype=object,
+        )
+        ax = plot_seq_projection_2d(
+            up, (0, 1), str(tmp_path),
+            color_values=kingdoms, color_label="kingdom", save=True,
+        )
+        assert ax is not None
+        png_path = tmp_path / "seq_proj_ic0v1_by_kingdom.png"
+        assert png_path.exists()
+
+    def test_plot_seq_projection_2d_numeric_coloring(self, tmp_path):
+        """plot_seq_projection_2d accepts numeric color_values and adds
+        a colorbar."""
+        from mysca.pl import plot_seq_projection_2d
+        rng = np.random.default_rng(32)
+        up = rng.standard_normal((15, 3))
+        scores = rng.uniform(0, 1, size=15)
+        ax = plot_seq_projection_2d(
+            up, (0, 1), str(tmp_path),
+            color_values=scores, color_label="score", save=True,
+        )
+        assert ax is not None
+        assert (tmp_path / "seq_proj_ic0v1_by_score.png").exists()
+
+    def test_to_dataframe_merges_metadata(self):
+        """to_dataframe joins sequence_metadata onto seq_id when present."""
+        pd = pytest.importorskip("pandas")
+        from Bio.Seq import Seq
+        from Bio.SeqRecord import SeqRecord
+        from Bio.Align import MultipleSeqAlignment
+
+        sca = self._make_sample_results(include_sectors=False)
+        L, D = sca.fia.shape
+        rng = np.random.default_rng(13)
+        M = 3
+        msa_int = rng.integers(0, D, size=(M, L))
+        msa_binary3d = np.eye(D, dtype=bool)[msa_int]
+        aa_list = list("ACDEFGHIKLMNPQRSTVWY")
+        records = [
+            SeqRecord(
+                Seq("".join(aa_list[c] for c in msa_int[m])),
+                id=f"seq_{m}",
+            )
+            for m in range(M)
+        ]
+        prep = PreprocessingResults(
+            msa=msa_int, msa_binary3d=msa_binary3d,
+            retained_sequences=np.arange(M),
+            retained_positions=np.arange(L),
+            retained_sequence_ids=np.array([f"seq_{i}" for i in range(M)]),
+            sequence_weights=np.ones(M),
+            fi0_pretruncation=np.zeros(L),
+            args={},
+            sym_map={c: i for i, c in enumerate(aa_list)} | {"-": D},
+            msa_obj_orig=MultipleSeqAlignment(records),
+            filter_history=None,
+        )
+        sca.sequence_metadata = pd.DataFrame({
+            "seq_id": ["seq_0", "seq_1"],
+            "phylum": ["Firmicutes", "Proteobacteria"],
+        })
+        df = sca.to_dataframe(prep)
+        assert "phylum" in df.columns
+        # seq_2 has no metadata entry → NaN
+        assert df.loc[df["seq_id"] == "seq_2", "phylum"].isna().all()
+        assert df.loc[df["seq_id"] == "seq_0", "phylum"].iloc[0] == \
+            "Firmicutes"
+
+    def test_to_dataframe_columns_and_rows(self):
+        """SCAResults.to_dataframe(prep) yields one row per retained
+        sequence with seq_id, aligned_sequence, and up_* columns."""
+        pd = pytest.importorskip("pandas")
+        from Bio.Seq import Seq
+        from Bio.SeqRecord import SeqRecord
+        from Bio.Align import MultipleSeqAlignment
+
+        sca = self._make_sample_results(include_sectors=False)
+        L, D = sca.fia.shape
+        K = sca.significant_evals_sca.shape[0]
+        rng = np.random.default_rng(11)
+        # Build a synthetic preprocessing fixture matching sca's L_proc.
+        M = 4
+        msa_int = rng.integers(0, D, size=(M, L))
+        msa_binary3d = np.eye(D, dtype=bool)[msa_int]
+        retained_sequences = np.arange(M)
+        retained_sequence_ids = np.array([f"seq_{i}" for i in range(M)])
+        # Aligned sequences (length L, no actual gaps because the test
+        # MSA has no truncation; the original-MSA-coordinate sequence
+        # equals the processed sequence here).
+        aa_list = list("ACDEFGHIKLMNPQRSTVWY")  # 20-AA canonical
+        records = [
+            SeqRecord(
+                Seq("".join(aa_list[c] for c in msa_int[m])),
+                id=f"seq_{m}",
+            )
+            for m in range(M)
+        ]
+        msa_obj_orig = MultipleSeqAlignment(records)
+        prep = PreprocessingResults(
+            msa=msa_int,
+            msa_binary3d=msa_binary3d,
+            retained_sequences=retained_sequences,
+            retained_positions=np.arange(L),
+            retained_sequence_ids=retained_sequence_ids,
+            sequence_weights=np.ones(M),
+            fi0_pretruncation=np.zeros(L),
+            args={},
+            sym_map={c: i for i, c in enumerate(aa_list)} | {"-": D},
+            msa_obj_orig=msa_obj_orig,
+            filter_history=None,
+        )
+
+        df = sca.to_dataframe(prep)
+        assert isinstance(df, pd.DataFrame)
+        assert len(df) == M
+        assert set(["seq_id", "aligned_sequence"]).issubset(df.columns)
+        for k in range(K):
+            assert f"up_{k}" in df.columns
+        assert df["seq_id"].tolist() == list(retained_sequence_ids)
+
 
 class TestFieldDescriptions:
     """FIELD_DESCRIPTIONS / info() contract for both result classes."""

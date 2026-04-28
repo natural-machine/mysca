@@ -157,6 +157,86 @@ def test_project_in_sample_matches_ic_residues_per_seq(prep_and_sca_dirs):
             )
 
 
+def test_project_in_sample_up_score_matches_direct_projection(
+        prep_and_sca_dirs,
+):
+    """ProjectionResult.up_scores for in-sample sequences must match the
+    rows of SCAResults.project_sequences(prep.msa_binary3d), since the
+    one-hot tensor is the same up to row-permutation by retained_sequences.
+    """
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    sca = SCAResults.load(sca_dir)
+
+    msa_obj = prep.msa_obj_orig
+    ids_to_row = {rec.id: i for i, rec in enumerate(msa_obj)}
+    retained_ids = list(prep.retained_sequence_ids)
+    in_fasta = os.path.join(sca_dir, "_retained_input_up.fasta")
+    with open(in_fasta, "w") as f:
+        for sid in retained_ids:
+            rec = msa_obj[ids_to_row[sid]]
+            f.write(f">{sid}\n{str(rec.seq).replace('-', '')}\n")
+
+    result = project_sequences(
+        in_fasta,
+        sca_result_dir=sca_dir,
+        preproc_result_dir=prep_dir,
+        aligner="mafft_add",
+    )
+    assert result.up_scores is not None
+    assert result.up_scores.shape == (
+        len(retained_ids), sca.w_ica.shape[0],
+    )
+
+    # Direct projection from the persisted msa_binary3d (the canonical
+    # in-sample one-hot, ordered by retained_sequences).
+    expected_all = sca.project_sequences(prep.msa_binary3d)
+    retained_seqs = list(prep.retained_sequences)
+    for i, sid in enumerate(retained_ids):
+        proj = result.by_id(sid)
+        # In-sample input order matches retained_sequence_ids order;
+        # the i-th projection should match the i-th row of expected_all.
+        np.testing.assert_allclose(
+            proj.up_score, expected_all[i], rtol=1e-10, atol=1e-12,
+        )
+
+
+def test_projection_to_dataframe(prep_and_sca_dirs):
+    """ProjectionResult.to_dataframe yields one row per projection with
+    seq_id / aligned_sequence / raw_sequence / in_sample plus up_* cols.
+    """
+    pd = pytest.importorskip("pandas")
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    sca = SCAResults.load(sca_dir)
+
+    msa_obj = prep.msa_obj_orig
+    ids_to_row = {rec.id: i for i, rec in enumerate(msa_obj)}
+    retained_ids = list(prep.retained_sequence_ids)[:5]
+    in_fasta = os.path.join(sca_dir, "_retained_input_df.fasta")
+    with open(in_fasta, "w") as f:
+        for sid in retained_ids:
+            rec = msa_obj[ids_to_row[sid]]
+            f.write(f">{sid}\n{str(rec.seq).replace('-', '')}\n")
+
+    result = project_sequences(
+        in_fasta,
+        sca_result_dir=sca_dir,
+        preproc_result_dir=prep_dir,
+        aligner="mafft_add",
+    )
+    df = result.to_dataframe()
+    assert isinstance(df, pd.DataFrame)
+    assert len(df) == len(retained_ids)
+    expected_cols = {"seq_id", "aligned_sequence", "raw_sequence",
+                     "in_sample"}
+    assert expected_cols.issubset(df.columns)
+    n_comp = sca.w_ica.shape[0]
+    for k in range(n_comp):
+        assert f"up_{k}" in df.columns
+    assert df["seq_id"].tolist() == retained_ids
+
+
 # ---------------------------------------------------------------------- #
 # ic_residues_per_seq coordinate-space contract tests.                   #
 #                                                                        #

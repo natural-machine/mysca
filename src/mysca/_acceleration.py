@@ -24,6 +24,56 @@ logger = logging.getLogger("mysca._acceleration")
 
 ACCELERATOR_CHOICES = ("none", "gpu")
 
+PRECISION_CHOICES = ("fp64", "fp32", "fp16")
+DEFAULT_PRECISION = "fp64"
+
+
+def resolve_torch_dtype(precision):
+    """Map a precision string to a torch floating-point dtype.
+
+    fp16 is offered for raw throughput on accelerator hardware. It is
+    numerically risky for the SCA covariance/eigendecomposition path
+    (small eigenvalues can be lost to ~10⁻³ relative precision), and
+    callers should treat fp16 results as a preview.
+
+    Args:
+        precision: one of PRECISION_CHOICES.
+
+    Returns:
+        A torch.dtype.
+
+    Raises:
+        ValueError: if `precision` is not a recognized choice.
+    """
+    import torch
+    table = {
+        "fp64": torch.float64,
+        "fp32": torch.float32,
+        "fp16": torch.float16,
+    }
+    try:
+        return table[precision]
+    except KeyError:
+        raise ValueError(
+            f"Unknown precision {precision!r}. Choices: {PRECISION_CHOICES}"
+        )
+
+
+def resolve_numpy_dtype(precision):
+    """Map a precision string to a numpy floating-point dtype."""
+    import numpy as np
+    table = {
+        "fp64": np.float64,
+        "fp32": np.float32,
+        "fp16": np.float16,
+    }
+    try:
+        return table[precision]
+    except KeyError:
+        raise ValueError(
+            f"Unknown precision {precision!r}. Choices: {PRECISION_CHOICES}"
+        )
+
 
 def resolve_method(
         *,

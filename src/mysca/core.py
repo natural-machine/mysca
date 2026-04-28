@@ -31,6 +31,7 @@ def run_sca(
         verbosity: int = 1,
         use_jax: bool = False,
         freq_method: str | None = None,
+        precision: str = "fp64",
 ):
     """Run SCA algorithm on given MSA matrix
 
@@ -81,6 +82,7 @@ def run_sca(
         pbar=pbar,
         leave_pbar=leave_pbar,
         version=fijab_version,
+        precision=precision,
     )
 
     if qa is None:
@@ -214,7 +216,7 @@ def _resolve_freq_method(*, freq_method, use_jax):
 
 def compute_fijab(
         xmsa, ws_norm, lam, nsyms, pbar=False, leave_pbar=False,
-        version="v3",
+        version="v3", precision="fp64",
 ):
     if version == "v1":
         return _compute_fijab_v1(
@@ -229,7 +231,9 @@ def compute_fijab(
     elif version == "v4":
         return _compute_fijab_v4_jax(xmsa, ws_norm, lam, nsyms)
     elif version == "v5":
-        return _compute_fijab_gpu(xmsa, ws_norm, lam, nsyms)
+        return _compute_fijab_gpu(
+            xmsa, ws_norm, lam, nsyms, precision=precision,
+        )
     else:
         raise RuntimeError(f"Unknown version to compute fijab: {version}")
 
@@ -337,21 +341,24 @@ def _compute_fijab_v4_jax(xmsa, ws_norm, lam, nsyms):
     return np.asarray(fijab)
 
 
-def _compute_fijab_gpu(xmsa, ws_norm, lam, nsyms):
+def _compute_fijab_gpu(xmsa, ws_norm, lam, nsyms, *, precision="fp64"):
     """torch GPU equivalent of v3.
 
-    Lazy-imports torch and uses ``torch.tensordot`` over fp64 on the
-    first available accelerator (CUDA / MPS / XPU). On no-GPU
-    detection, logs a WARNING and falls back to ``_compute_fijab_v3``
-    — same graceful-fallback pattern as ``_compute_weights_gpu`` in
+    Lazy-imports torch and uses ``torch.tensordot`` on the first
+    available accelerator (CUDA / MPS / XPU). On no-GPU detection,
+    logs a WARNING and falls back to ``_compute_fijab_v3`` — same
+    graceful-fallback pattern as ``_compute_weights_gpu`` in
     ``mysca.preprocess``.
 
-    Numerics: bit-stable vs v1/v3 within fp64 tolerance on the host
-    side; bit-divergence is acceptable in low-order bits of the
-    intermediate due to non-deterministic reductions on some GPUs,
-    but the final downstream ``kstar`` selection should not change.
+    `precision` selects the on-device floating-point dtype: ``fp64``
+    (default, bit-stable vs the CPU path), ``fp32`` (~2× faster on
+    most GPUs, ~7-decimal precision — adequate for routine
+    Cij_corr/eigvalsh use), or ``fp16`` (highest throughput on TF32 /
+    half-precision tensor cores; ~10⁻³ relative precision —
+    numerically risky for downstream eigvalsh on small eigenvalues,
+    treat as preview-only).
     """
-    from mysca._acceleration import detect_device
+    from mysca._acceleration import detect_device, resolve_torch_dtype
     import torch
 
     device = detect_device()
@@ -362,25 +369,29 @@ def _compute_fijab_gpu(xmsa, ws_norm, lam, nsyms):
         )
         return _compute_fijab_v3(xmsa, ws_norm, lam, nsyms)
 
+    dtype = resolve_torch_dtype(precision)
+
     npos = xmsa.shape[1]
     xf = torch.as_tensor(np.asarray(xmsa, dtype=np.float64),
-                         dtype=torch.float64, device=device)
+                         dtype=dtype, device=device)
     ws_t = torch.as_tensor(np.asarray(ws_norm, dtype=np.float64),
-                           dtype=torch.float64, device=device)
+                           dtype=dtype, device=device)
     weighted = ws_t[:, None, None] * xf
     fijab = torch.tensordot(weighted, xf, dims=([0], [0])).permute(0, 2, 1, 3)
     fijab = fijab * (1.0 - lam)
     diag = torch.eye(npos, dtype=torch.bool, device=device)
-    reg_diag = torch.tensor(lam / nsyms, dtype=torch.float64, device=device)
-    reg_off = torch.tensor(lam / (nsyms * nsyms), dtype=torch.float64,
+    reg_diag = torch.tensor(lam / nsyms, dtype=dtype, device=device)
+    reg_off = torch.tensor(lam / (nsyms * nsyms), dtype=dtype,
                            device=device)
     fijab = torch.where(diag[:, :, None, None],
                         fijab + reg_diag, fijab + reg_off)
-    return fijab.cpu().numpy()
+    # Always return float64 to the caller — downstream pipeline assumes
+    # fp64 for Cij_corr / eigvalsh / bootstrap.
+    return fijab.to(torch.float64).cpu().numpy()
 
 
 def _compute_eigvalsh_bootstrap_gpu(
-        xmsa_batch, ws_norm, *, qa, lam, nsyms,
+        xmsa_batch, ws_norm, *, qa, lam, nsyms, precision="fp64",
 ):
     """Batched GPU bootstrap kernel.
 
@@ -397,7 +408,7 @@ def _compute_eigvalsh_bootstrap_gpu(
         RuntimeError: when no GPU is detected. Caller is expected to
             fall back to the per-iter CPU path.
     """
-    from mysca._acceleration import detect_device
+    from mysca._acceleration import detect_device, resolve_torch_dtype
     import torch
 
     device = detect_device()
@@ -407,18 +418,24 @@ def _compute_eigvalsh_bootstrap_gpu(
             "_compute_eigvalsh_bootstrap_gpu cannot run."
         )
 
+    dtype = resolve_torch_dtype(precision)
+    # eigvalsh requires fp32+ on most backends and is numerically
+    # treacherous in fp16; promote to fp32 for the eigendecomposition
+    # while keeping the cheap fijab/Cij_corr ops in the chosen dtype.
+    eig_dtype = torch.float32 if dtype == torch.float16 else dtype
+
     B, nseq, npos, naas = xmsa_batch.shape
     xf = torch.as_tensor(
         np.asarray(xmsa_batch, dtype=np.float64),
-        dtype=torch.float64, device=device,
+        dtype=dtype, device=device,
     )
     ws_t = torch.as_tensor(
         np.asarray(ws_norm, dtype=np.float64),
-        dtype=torch.float64, device=device,
+        dtype=dtype, device=device,
     )
     qa_t = torch.as_tensor(
         np.asarray(qa, dtype=np.float64),
-        dtype=torch.float64, device=device,
+        dtype=dtype, device=device,
     )
 
     # fia[b, p, a] = (1-lam) * sum_s ws_norm[s] * xf[b, s, p, a] + lam/nsyms
@@ -447,6 +464,10 @@ def _compute_eigvalsh_bootstrap_gpu(
     Cij_corr = torch.sqrt(torch.sum(Cijab_corr ** 2, dim=(-1, -2)))
 
     # Batched symmetric eigvalsh; ascending order. Flip to descending.
-    evals_asc = torch.linalg.eigvalsh(Cij_corr)  # (B, P)
+    # Promote to eig_dtype (fp32 minimum) — eigvalsh on fp16 is unstable
+    # and unsupported on most backends.
+    evals_asc = torch.linalg.eigvalsh(Cij_corr.to(eig_dtype))  # (B, P)
     evals_desc = torch.flip(evals_asc, dims=[-1])
-    return evals_desc.cpu().numpy()
+    # Always return float64 to the caller for consistent downstream
+    # numerics (kstar selection, cutoff comparisons).
+    return evals_desc.to(torch.float64).cpu().numpy()

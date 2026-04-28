@@ -49,6 +49,18 @@ Optional:
     --seed                : random seed (None or non-positive auto-picks).
     --load_data           : previous sca-core output directory to reload.
     --save_all            : also write the large Cijab_raw / fijab arrays.
+    --save_dataframe      : also write seq_projections.tsv (seq_id,
+                            aligned_sequence, up_0..up_{n_components-1})
+                            for every retained sequence. Requires pandas.
+    --seq_metadata        : optional TSV path with a 'seq_id' column plus
+                            any user-supplied columns. Persisted as
+                            sequence_metadata.tsv and merged into
+                            seq_projections.tsv via left-join on seq_id
+                            when --save_dataframe is set.
+    --seq_proj_color_by   : optional column name in --seq_metadata to
+                            color the seq_proj_ic*.png plot by. Numeric
+                            columns get a colorbar; categorical columns
+                            get a legend.
     --accelerator         : global accelerator preference, one of
                             {none, gpu}. Default 'none'. When 'gpu',
                             --freq_method auto-defaults to 'gpu' (a
@@ -62,6 +74,13 @@ Optional:
                             When unset, resolved via --accelerator.
     --use_jax             : DEPRECATED alias for --freq_method=jax.
                             Emits a DeprecationWarning when used.
+    --precision           : GPU compute precision for the fijab and
+                            eigvalsh-bootstrap kernels. {fp64 (default,
+                            matches CPU bit-for-bit), fp32 (~2x faster,
+                            ~7-decimal precision), fp16 (highest
+                            throughput on tensor cores; eigvalsh
+                            auto-promotes to fp32 — preview-only)}.
+                            Ignored on CPU kernels.
     --bootstrap_chunk     : number of bootstrap iterations to batch
                             per GPU dispatch when --freq_method=gpu.
                             Default 1 (per-iter; today's behavior).
@@ -112,10 +131,21 @@ ic_positions/
 scarun.log
     Run log including the human-readable top-N IC summary.
 
+seq_projections.tsv (only when --save_dataframe)
+    Tab-separated table with one row per retained sequence: seq_id,
+    aligned_sequence, up_0..up_{n_components-1}. When --seq_metadata
+    is also supplied, that file's non-seq_id columns are merged in
+    via left-join on seq_id.
+
+sequence_metadata.tsv (only when --seq_metadata is supplied)
+    Verbatim copy of the user-supplied metadata TSV.
+
 images/
     Conservation, SCA-matrix, spectrum, dendrogram, t-distribution,
-    EV/IC 2D/3D scatter, and sector-subset figures. Only written when
-    --plot is set (the default); --no-plot skips the directory entirely.
+    EV/IC 2D/3D scatter, sector-subset, and seq_proj_ic0v1.png (sequences
+    projected onto the first two ICs via SCAResults.project_sequences).
+    Only written when --plot is set (the default); --no-plot skips the
+    directory entirely.
 
 -------------------------------------------------------------------------------
 EXAMPLE USAGE:
@@ -163,7 +193,10 @@ from mysca.core import (
     _resolve_freq_method,
     _compute_eigvalsh_bootstrap_gpu,
 )
-from mysca._acceleration import ACCELERATOR_CHOICES, resolve_method
+from mysca._acceleration import (
+    ACCELERATOR_CHOICES, PRECISION_CHOICES, DEFAULT_PRECISION,
+    resolve_method,
+)
 
 from mysca.pl import (
     plot_conservation,
@@ -178,6 +211,7 @@ from mysca.pl import (
     plot_sca_spectrum,
     plot_sca_spectrum_vs_null,
     plot_sequence_similarity,
+    plot_seq_projection_2d,
     plot_t_distributions,
 )
 
@@ -227,6 +261,17 @@ def parse_args(args):
              "explicit --freq_method overrides this preference.",
     )
     parser.add_argument(
+        "--precision", type=str, default=DEFAULT_PRECISION,
+        choices=list(PRECISION_CHOICES),
+        help="GPU compute precision for the fijab and eigvalsh-bootstrap "
+             "kernels. fp64 (default) matches the CPU path bit-for-bit. "
+             "fp32 (~2x faster on most GPUs, ~7-decimal precision — "
+             "adequate for routine analysis). fp16 (highest throughput "
+             "on tensor cores; ~10⁻³ relative precision — numerically "
+             "risky for downstream eigvalsh on small eigenvalues, treat "
+             "as preview-only). Ignored on CPU kernels.",
+    )
+    parser.add_argument(
         "--bootstrap_chunk", type=int, default=1,
         help="Number of bootstrap iterations to batch per GPU "
              "dispatch when --freq_method=gpu. Default 1 (per-iter "
@@ -262,9 +307,29 @@ def parse_args(args):
              "Pass --no-plot to skip plot generation entirely (no "
              "images/ directory is created).",
     )
-    parser.add_argument("--save_all", action="store_true", 
+    parser.add_argument("--save_all", action="store_true",
                         help="Save all SCA results (includes large files).")
-    parser.add_argument("--load_data", type=str, default="", 
+    parser.add_argument(
+        "--save_dataframe", action="store_true",
+        help="Also write seq_projections.tsv to outdir, with columns "
+             "seq_id, aligned_sequence, up_0..up_{n_components-1} for "
+             "every retained sequence. Requires pandas.",
+    )
+    parser.add_argument(
+        "--seq_metadata", type=str, default=None, metavar="TSV",
+        help="Optional path to a TSV with a 'seq_id' column plus any "
+             "number of additional columns (e.g. taxid, kingdom, "
+             "phylum). Persisted alongside SCAResults as "
+             "sequence_metadata.tsv and merged into seq_projections.tsv "
+             "via left-join on seq_id when --save_dataframe is set.",
+    )
+    parser.add_argument(
+        "--seq_proj_color_by", type=str, default=None, metavar="COLUMN",
+        help="Optional column name in --seq_metadata to color the "
+             "seq_proj_ic*.png plot by. Numeric columns get a colorbar; "
+             "categorical columns get a legend.",
+    )
+    parser.add_argument("--load_data", type=str, default="",
                         help="SCA directory to load precomputed data.")
     parser.add_argument("--sector_cmap", type=str, default="default",
                         choices=["none", "default"])
@@ -331,6 +396,15 @@ def main(args):
     LOAD_DATA = args.load_data
     USE_JAX = args.use_jax
     ACCELERATOR = args.accelerator
+    PRECISION = args.precision
+    if PRECISION == "fp16":
+        logger.warning(
+            "--precision=fp16 enabled. Eigvalsh on fp16 is unstable; "
+            "the bootstrap kernel auto-promotes to fp32 for the "
+            "eigendecomposition. fijab is computed in fp16 and may lose "
+            "precision in low-magnitude correlations. Treat as a "
+            "preview; rerun with fp32 or fp64 for publication.",
+        )
     BOOTSTRAP_CHUNK = max(1, int(args.bootstrap_chunk))
     # Resolve --freq_method / --accelerator / --use_jax once up front.
     # Precedence: explicit --freq_method wins; else --use_jax (deprecated)
@@ -346,6 +420,9 @@ def main(args):
         deprecated_alias_target="jax",
     )
     SAVE_ALL = args.save_all
+    SAVE_DATAFRAME = args.save_dataframe
+    SEQ_METADATA_PATH = args.seq_metadata
+    SEQ_PROJ_COLOR_BY = args.seq_proj_color_by
     sector_cmap = args.sector_cmap
     assignment_method = args.assignment
     weak_assignment = args.weak_assignment
@@ -446,6 +523,7 @@ def main(args):
             pbar=PBAR,
             leave_pbar=True,
             freq_method=FREQ_METHOD,
+            precision=PRECISION,
         )
         results = SCAResults.from_core_output(sca_results)
         Dia = results.Dia
@@ -519,6 +597,7 @@ def main(args):
                     qa=qa_for_bootstrap,
                     lam=regularization,
                     nsyms=nsyms_for_bootstrap,
+                    precision=PRECISION,
                 )
             except RuntimeError as exc:
                 # OOM or no-GPU. Halve and retry, or fall back to per-iter.
@@ -557,6 +636,7 @@ def main(args):
                 pbar=PBAR,
                 leave_pbar=False,
                 freq_method=FREQ_METHOD,
+                precision=PRECISION,
             )
             cij_shuff = res["Cij_corr"]
             evals = np.linalg.eigvalsh(cij_shuff)
@@ -834,13 +914,58 @@ def main(args):
         "plot": bool(DO_PLOT),
         "freq_method": FREQ_METHOD,
         "accelerator": ACCELERATOR,
+        "precision": PRECISION,
         "bootstrap_chunk": int(BOOTSTRAP_CHUNK),
     }
+    if SEQ_METADATA_PATH is not None:
+        import pandas as pd
+        md = pd.read_csv(SEQ_METADATA_PATH, sep="\t")
+        if "seq_id" not in md.columns:
+            raise ValueError(
+                f"--seq_metadata TSV {SEQ_METADATA_PATH!r} is missing "
+                f"required 'seq_id' column. Got columns: "
+                f"{list(md.columns)!r}"
+            )
+        results.sequence_metadata = md
+        logger.info(
+            "Loaded sequence metadata: %d rows, %d cols (%s)",
+            len(md), len(md.columns), ", ".join(md.columns),
+        )
+
     results.save(
         OUTDIR, save_all=SAVE_ALL, retained_positions=retained_positions,
     )
 
+    if SAVE_DATAFRAME:
+        df = results.to_dataframe(prep)
+        df_path = os.path.join(OUTDIR, "seq_projections.tsv")
+        df.to_csv(df_path, sep="\t", index=False)
+        logger.info("Wrote sequence projection DataFrame to %s", df_path)
+
     if DO_PLOT:
+        up_seq = results.project_sequences(msa_binary3d)
+        color_values = None
+        color_label = None
+        if SEQ_PROJ_COLOR_BY is not None:
+            if results.sequence_metadata is None:
+                logger.warning(
+                    "--seq_proj_color_by=%r ignored: no --seq_metadata "
+                    "supplied.", SEQ_PROJ_COLOR_BY,
+                )
+            elif SEQ_PROJ_COLOR_BY not in results.sequence_metadata.columns:
+                logger.warning(
+                    "--seq_proj_color_by=%r ignored: column not found in "
+                    "sequence_metadata. Available: %s",
+                    SEQ_PROJ_COLOR_BY,
+                    list(results.sequence_metadata.columns),
+                )
+            else:
+                color_values = _resolve_color_values(
+                    results.sequence_metadata,
+                    list(prep.retained_sequence_ids),
+                    SEQ_PROJ_COLOR_BY,
+                )
+                color_label = SEQ_PROJ_COLOR_BY
         make_plots(
             retained_positions,
             Di,
@@ -861,6 +986,9 @@ def main(args):
             sig_evecs_sca,
             sca_mat_imp,
             sector_color_set,
+            up_seq=up_seq,
+            seq_proj_color_values=color_values,
+            seq_proj_color_label=color_label,
         )
 
     logger.info("Done!")
@@ -1147,6 +1275,18 @@ IC_AXES_2D = EV_AXES_2D
 IC_AXES_3D = EV_AXES_3D
 
 
+def _resolve_color_values(metadata_df, retained_sequence_ids, column):
+    """Look up metadata_df[column] aligned to retained_sequence_ids.
+
+    Returns a 1D array of length len(retained_sequence_ids). Sequences
+    absent from the metadata get None (categorical) or NaN (numeric),
+    handled by the plotter.
+    """
+    md_indexed = metadata_df.set_index("seq_id", drop=False)
+    series = md_indexed[column].reindex(retained_sequence_ids)
+    return series.to_numpy()
+
+
 def make_plots(
         retained_positions,
         Di,
@@ -1167,6 +1307,10 @@ def make_plots(
         sig_evecs_sca,
         sca_mat_imp,
         sector_color_set,
+        *,
+        up_seq=None,
+        seq_proj_color_values=None,
+        seq_proj_color_label=None,
 ):
     plot_conservation_top(retained_positions, Di, NUM_POS_ORIG, IMGDIR)
     plot_conservation_positional(retained_positions, Di, NUM_POS_ORIG, IMGDIR)
@@ -1211,6 +1355,13 @@ def make_plots(
     plot_sca_matrix_sector_subset(
         sca_mat_imp, groups, sector_color_set, IMGDIR,
     )
+
+    if up_seq is not None:
+        plot_seq_projection_2d(
+            up_seq, (0, 1), IMGDIR,
+            color_values=seq_proj_color_values,
+            color_label=seq_proj_color_label,
+        )
 
 
 if __name__ == "__main__":

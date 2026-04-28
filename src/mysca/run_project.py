@@ -36,6 +36,9 @@ COMMAND LINE ARGUMENTS:
         ``hmmbuild`` is resolved from PATH.
     --align_threads : Threads for the alignment tool. Default 1
         (unused by ``hmmalign``).
+    --save_dataframe : also write ``seq_projections.tsv`` to outdir,
+        with columns seq_id, aligned_sequence, raw_sequence, in_sample,
+        up_0..up_{n_components-1}. Requires pandas.
 
 -------------------------------------------------------------------------------
 OUTPUTS:
@@ -44,7 +47,9 @@ projection.json
     Top-level dict containing run args plus a list of per-sequence
     dicts: seq_id, raw_sequence, aligned_sequence,
     residue_by_processed_col (length L_proc), ic_residues (per IC
-    raw-residue indices), ic_loadings, ic_processed_cols, in_sample.
+    raw-residue indices), ic_loadings, ic_processed_cols, in_sample,
+    up_score (length n_components — the sequence's Uᵖ row, or None
+    when the source SCAResults lacks the eigendecomposition fields).
 
 per_sequence/<seqid>_residues.tsv
     One row per (IC, residue) pairing for readable inspection.
@@ -54,6 +59,10 @@ projection_args.json
 
 projection.log
     Run log.
+
+seq_projections.tsv (only when --save_dataframe)
+    Tab-separated table: seq_id, aligned_sequence, raw_sequence,
+    in_sample, up_0..up_{n_components-1}.
 
 -------------------------------------------------------------------------------
 EXAMPLE USAGE:
@@ -159,6 +168,12 @@ def parse_args(args):
         help="Threads for the alignment tool. Default 1 "
         "(unused by hmmalign).",
     )
+    parser.add_argument(
+        "--save_dataframe", action="store_true",
+        help="Also write seq_projections.tsv to outdir, with columns "
+             "seq_id, aligned_sequence, raw_sequence, in_sample, "
+             "up_0..up_{n_components-1}. Requires pandas.",
+    )
     parser.add_argument("-v", "--verbosity", type=int, default=1,
                         help="Verbosity level (0=warnings only).")
     parsed = parser.parse_args(args)
@@ -260,6 +275,12 @@ def main(args):
                     f.write(
                         f"{ic_idx}\t{int(resi)}\t{int(col)}\t{float(loading)}\n"
                     )
+
+    if args.save_dataframe:
+        df = result.to_dataframe()
+        df_path = os.path.join(outdir, "seq_projections.tsv")
+        df.to_csv(df_path, sep="\t", index=False)
+        logger.info("Wrote sequence projection DataFrame to %s", df_path)
 
     n_in = sum(1 for p in result.projections if p.in_sample)
     n_out = len(result.projections) - n_in

@@ -85,6 +85,7 @@ SCARUN_EIGENDECOMP_FNAME = "sca_eigendecomp.npz"
 IC_RESIDUES_PER_SEQ_FNAME = "ic_residues_per_seq.npz"
 IC_LOADINGS_PER_SEQ_FNAME = "ic_loadings_per_seq.npz"
 EVALS_SHUFF_FNAME = "evals_shuff.npy"
+SEQUENCE_METADATA_FNAME = "sequence_metadata.tsv"
 
 
 def _describe_value(val):
@@ -394,6 +395,14 @@ class SCAResults:
     ``SCAResults.FIELD_DESCRIPTIONS`` and can be rendered for any instance
     via ``results.info()``.
 
+    Sequence-space projection:
+        :meth:`project_sequences` maps one-hot sequences (M x L_proc x D)
+        onto the IC coordinate system (Uᵖ, M x n_components) on demand,
+        following Rivoire et al. (2016) Eqs. 14–15 with per-position P̃
+        normalization. No new on-disk fields are required — the operands
+        (``phi_ia``, ``fia``, ``significant_evecs_sca``,
+        ``significant_evals_sca``, ``w_ica``) are already persisted below.
+
     On-disk format (usable without mysca):
         scarun_results.npz
             Dia          : float array (L x D), conservation per position+aa
@@ -538,11 +547,18 @@ class SCAResults:
             "Submatrix of `sca_matrix` restricted to all group positions "
             "(concatenated). Shape (sum_i len(groups[i])) squared."
         ),
+        "sequence_metadata": (
+            "Optional pandas DataFrame with a `seq_id` column plus any "
+            "number of user-supplied columns (e.g. taxid, kingdom, "
+            "phylum). Loaded from `--seq_metadata <tsv>` at sca-core "
+            "invocation; persisted as `sequence_metadata.tsv`. None "
+            "when no metadata was supplied."
+        ),
         # Args
         "args": (
             "Dict of CLI arguments used for this run (regularization, "
             "kstar, n_components, pstar, assignment, seed, n_boot, "
-            "n_logged_comps, plot, freq_method, accelerator, "
+            "n_logged_comps, plot, freq_method, accelerator, precision, "
             "bootstrap_chunk)."
         ),
     }
@@ -592,6 +608,7 @@ class SCAResults:
         ic_residues_per_seq=None,
         ic_loadings_per_seq=None,
         sca_matrix_sector_subset=None,
+        sequence_metadata=None,
         # Args
         args=None,
     ):
@@ -621,6 +638,7 @@ class SCAResults:
         self.ic_residues_per_seq = ic_residues_per_seq
         self.ic_loadings_per_seq = ic_loadings_per_seq
         self.sca_matrix_sector_subset = sca_matrix_sector_subset
+        self.sequence_metadata = sequence_metadata
         self.args = args
 
     @property
@@ -634,6 +652,107 @@ class SCAResults:
         if self.conservation is not None:
             return len(self.conservation)
         return None
+
+    def _require_fields(self, *names):
+        missing = [n for n in names if getattr(self, n, None) is None]
+        if missing:
+            raise RuntimeError(
+                f"{type(self).__name__} is missing required fields "
+                f"{missing} (got None). Was this loaded from a partial run?"
+            )
+
+    def project_sequences(self, xmsa):
+        """Project one-hot sequences onto IC coordinates (Uᵖ).
+
+        Implements the Rivoire et al. (2016) sequence-position mapping
+        (Eqs. 14, 15) with per-position P̃ normalization (Box 1, p. 6):
+
+            P̃[i,a] = φ_ia · f_ia / sqrt(Σ_b (φ_ib · f_ib)²)
+            xsi[m,i] = Σ_a P̃[i,a] · xmsa[m,i,a]
+            Ũ        = xsi · V̌ · diag(λ̃^-½)
+            Uᵖ       = Ũ · Wᵀ
+
+        Requires `phi_ia`, `fia`, `evecs_sca`, `evals_sca`, and `w_ica`
+        to be present on this instance. Uses the first ``w_ica.shape[0]``
+        eigenmodes (== `n_components`, the dimension ICA was run on),
+        which may exceed `kstar` when sca-core was invoked with
+        ``--n_components`` greater than the bootstrap-significant count.
+
+        Parameters
+        ----------
+        xmsa : array-like, shape (M, L_proc, D)
+            One-hot encoded sequences in processed-MSA coordinates. Gaps
+            are all-zero rows (matches `PreprocessingResults.msa_binary3d`
+            and the output of `mysca.preprocess.onehot_without_gap`).
+
+        Returns
+        -------
+        up : np.ndarray, shape (M, n_components), float64
+            Sequence-space IC scores Uᵖ.
+        """
+        self._require_fields(
+            "phi_ia", "fia", "evecs_sca", "evals_sca", "w_ica",
+        )
+        L, D = self.fia.shape
+        xmsa = np.asarray(xmsa)
+        if xmsa.ndim != 3 or xmsa.shape[1:] != (L, D):
+            raise ValueError(
+                f"xmsa has shape {xmsa.shape}; expected (M, {L}, {D}) to "
+                f"match this SCAResults' fia dimensions."
+            )
+        n_comp = self.w_ica.shape[0]
+        evecs = self.evecs_sca[:, :n_comp]
+        evals = self.evals_sca[:n_comp]
+        pf = self.phi_ia * self.fia
+        denom = np.sqrt(np.sum(pf * pf, axis=-1, keepdims=True))
+        pia = pf / denom
+        xf = xmsa.astype(np.float64, copy=False)
+        xsi = np.einsum("ia,mia->mi", pia, xf)
+        utilde = (xsi @ evecs) / np.sqrt(evals)
+        return utilde @ self.w_ica.T
+
+    def to_dataframe(self, prep):
+        """In-sample sequence DataFrame keyed by retained_sequence_ids.
+
+        Columns: ``seq_id``, ``aligned_sequence`` (length L_orig, the
+        original-MSA-coordinate sequence from msa_obj_orig),
+        ``up_0``, ``up_1``, ..., ``up_{n_components-1}`` (Uᵖ row from
+        ``project_sequences(prep.msa_binary3d)``). When
+        ``sequence_metadata`` is populated on this instance, its
+        non-``seq_id`` columns are merged in via left-join on
+        ``seq_id``.
+
+        Requires pandas installed and a PreprocessingResults instance
+        with ``msa_obj_orig``, ``retained_sequence_ids``,
+        ``retained_sequences``, and ``msa_binary3d`` populated.
+        """
+        import pandas as pd
+        if prep.msa_obj_orig is None:
+            raise RuntimeError(
+                "to_dataframe requires PreprocessingResults.msa_obj_orig; "
+                "the source preprocessing run did not persist msa_orig.fasta-aln."
+            )
+        if prep.msa_binary3d is None:
+            raise RuntimeError(
+                "to_dataframe requires PreprocessingResults.msa_binary3d "
+                "(persisted as msa_binary2d_sp.npz)."
+            )
+        up = self.project_sequences(prep.msa_binary3d)
+        ids_to_row = {rec.id: i for i, rec in enumerate(prep.msa_obj_orig)}
+        rows = []
+        for i, sid in enumerate(prep.retained_sequence_ids):
+            rec = prep.msa_obj_orig[ids_to_row[sid]]
+            row = {
+                "seq_id": sid,
+                "aligned_sequence": str(rec.seq),
+            }
+            for k, v in enumerate(up[i]):
+                row[f"up_{k}"] = float(v)
+            rows.append(row)
+        df = pd.DataFrame(rows)
+        if self.sequence_metadata is not None:
+            df = df.merge(self.sequence_metadata, on="seq_id", how="left")
+        return df
 
     @classmethod
     def from_core_output(cls, sca_results_dict, args=None):
@@ -822,6 +941,14 @@ class SCAResults:
                 **self.ic_loadings_per_seq,
             )
 
+        # Optional sequence metadata table (always TSV — pandas is a
+        # hard dep so loaders can rely on its presence).
+        if self.sequence_metadata is not None:
+            self.sequence_metadata.to_csv(
+                os.path.join(outdir, SEQUENCE_METADATA_FNAME),
+                sep="\t", index=False,
+            )
+
     @classmethod
     def load(cls, dirpath):
         """Load results from a directory previously created by save()."""
@@ -932,6 +1059,12 @@ class SCAResults:
                 np.load(loadings_path, allow_pickle=True)
             )
 
+        sequence_metadata = None
+        md_path = os.path.join(dirpath, SEQUENCE_METADATA_FNAME)
+        if os.path.isfile(md_path):
+            import pandas as pd
+            sequence_metadata = pd.read_csv(md_path, sep="\t")
+
         return cls(
             Dia=Dia,
             conservation=conservation,
@@ -959,6 +1092,7 @@ class SCAResults:
             ic_loadings_per_seq=ic_loadings_per_seq,
             t_dists_info=t_dists_info,
             sca_matrix_sector_subset=sca_matrix_sector_subset,
+            sequence_metadata=sequence_metadata,
             args=args,
         )
 

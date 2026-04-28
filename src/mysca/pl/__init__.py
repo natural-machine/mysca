@@ -22,6 +22,7 @@ from mysca.pl.plotting import (
     plot_sca_spectrum,
     plot_sca_spectrum_vs_null,
     plot_sequence_similarity,
+    plot_seq_projection_2d,
     plot_t_distributions,
 )
 
@@ -41,5 +42,6 @@ __all__ = [
     "plot_sca_spectrum",
     "plot_sca_spectrum_vs_null",
     "plot_sequence_similarity",
+    "plot_seq_projection_2d",
     "plot_t_distributions",
 ]

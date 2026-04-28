@@ -382,3 +382,54 @@ def test_bootstrap_gpu_eigvals_match_per_iter():
         f"batched-GPU eigenvalues disagree with per-iter; "
         f"max abs diff = {np.max(np.abs(batched_evals - per_iter_evals)):.3e}"
     )
+
+
+def test_resolve_torch_dtype_choices():
+    """resolve_torch_dtype maps each precision choice to the expected
+    torch dtype and rejects unknown values."""
+    pytest.importorskip("torch")
+    import torch
+    from mysca._acceleration import (
+        resolve_torch_dtype, PRECISION_CHOICES,
+    )
+    expected = {
+        "fp64": torch.float64,
+        "fp32": torch.float32,
+        "fp16": torch.float16,
+    }
+    for p in PRECISION_CHOICES:
+        assert resolve_torch_dtype(p) is expected[p]
+    with pytest.raises(ValueError, match="Unknown precision"):
+        resolve_torch_dtype("bf16")
+
+
+def test_compute_fijab_gpu_precision_match():
+    """The fp32 GPU kernel must agree with the fp64 GPU kernel within
+    ~1e-5 relative tolerance. Skips when no GPU is available (the
+    fallback CPU path ignores precision)."""
+    from mysca._acceleration import detect_device
+    try:
+        device = detect_device()
+    except Exception:
+        pytest.skip("torch not available")
+    if device.type == "cpu":
+        pytest.skip("No GPU available for fp32-vs-fp64 GPU kernel test.")
+
+    rng = np.random.default_rng(seed=20260428)
+    nseq, npos, naas = 80, 10, 6
+    xmsa = np.zeros((nseq, npos, naas), dtype=bool)
+    msa_int = rng.integers(0, naas, size=(nseq, npos))
+    for i in range(nseq):
+        for j in range(npos):
+            xmsa[i, j, msa_int[i, j]] = True
+    ws_norm = rng.random(nseq)
+    ws_norm = ws_norm / ws_norm.sum()
+    lam = 0.03
+    nsyms = naas + 1
+
+    f64 = _compute_fijab_gpu(xmsa, ws_norm, lam, nsyms, precision="fp64")
+    f32 = _compute_fijab_gpu(xmsa, ws_norm, lam, nsyms, precision="fp32")
+    assert np.allclose(f32, f64, rtol=1e-4, atol=1e-6), (
+        f"fp32 GPU fijab disagrees with fp64 beyond fp32 precision; "
+        f"max abs diff = {np.max(np.abs(f32 - f64)):.3e}"
+    )

@@ -126,7 +126,7 @@ sca-core \
 ```
 
 **Inputs:** an `sca-preprocess` output directory.
-**Outputs (under `<core-outdir>`):** `scarun_results.npz` (`Dia`, `conservation`, `sca_matrix`, `phi_ia`, `fi0`, `fia`, `Cij_raw`; plus `Cijab_raw`/`fijab` with `--save_all`), `sca_eigendecomp.npz`, `ic_positions/ic_<i>_msaproc.npy` + `ic_<i>_msaorig.npy` + `ic_<i>_loadings.npy` (per-IC high-load positions in both MSA coord spaces, plus loadings), `ic_residues_per_seq.npz` and `ic_loadings_per_seq.npz` (per-target raw-residue indices and loadings, keyed `ic_<i>_<seqid>`), `sca_results/` (ICA + bootstrap byproducts, scalar text files), `scarun_args.json`, `scarun.log`, and `images/` (conservation, SCA matrix, spectrum, dendrogram, t-distributions, EV/IC scatter sweeps, sector subset).
+**Outputs (under `<core-outdir>`):** `scarun_results.npz` (`Dia`, `conservation`, `sca_matrix`, `phi_ia`, `fi0`, `fia`, `Cij_raw`; plus `Cijab_raw`/`fijab` with `--save_all`), `sca_eigendecomp.npz`, `ic_positions/ic_<i>_msaproc.npy` + `ic_<i>_msaorig.npy` + `ic_<i>_loadings.npy` (per-IC high-load positions in both MSA coord spaces, plus loadings), `ic_residues_per_seq.npz` and `ic_loadings_per_seq.npz` (per-target raw-residue indices and loadings, keyed `ic_<i>_<seqid>`), `sca_results/` (ICA + bootstrap byproducts, scalar text files), `scarun_args.json`, `scarun.log`, and `images/` (conservation, SCA matrix, spectrum, dendrogram, t-distributions, EV/IC scatter sweeps, sector subset, and `seq_proj_ic0v1.png` — sequences projected onto the first two ICs). Optionally `seq_projections.tsv` (`--save_dataframe`) and `sequence_metadata.tsv` (`--seq_metadata`).
 
 Key options:
 
@@ -137,7 +137,12 @@ Key options:
 - `--assignment overlap|exclusive` — how a residue that clears multiple ICs' cutoffs is placed
 - `--sectors_for` — which target sequences expand into the per-seq output files (default reference only; `all` or a text file of IDs)
 - `--save_all` — include large intermediate matrices in the output
-- `--use_jax` — use JAX for accelerated computation
+- `--save_dataframe` — also write `seq_projections.tsv` (per-sequence Uᵖ scores) for every retained sequence
+- `--seq_metadata <tsv>` — optional per-sequence metadata TSV (`seq_id` column + arbitrary others); persisted alongside results and merged into `seq_projections.tsv`
+- `--seq_proj_color_by <column>` — color the `seq_proj_ic0v1.png` plot by a metadata column (numeric → colorbar, categorical → legend)
+- `--accelerator {none,gpu}` — flips per-step kernel defaults to GPU variants when set to `gpu`
+- `--precision {fp64,fp32,fp16}` — GPU compute precision for `fijab` / eigvalsh-bootstrap kernels (default `fp64`; ignored on CPU)
+- `--use_jax` — DEPRECATED alias for `--freq_method=jax`
 
 ### Project a sequence
 
@@ -155,7 +160,7 @@ sca-project \
 Records whose IDs are already in the reference MSA short-circuit the alignment step; the rest are aligned onto the reference MSA columns via MAFFT (default) or HMMER.
 
 **Inputs:** a FASTA of sequences to project, plus the upstream `sca-preprocess` and `sca-core` output directories.
-**Outputs (under `<project-outdir>`):** `projection.json` (per-sequence: `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col`, `ic_residues`, `ic_loadings`, `ic_processed_cols`, `in_sample`), `per_sequence/<seqid>_residues.tsv` (one row per IC residue), `projection_args.json`, `projection.log`.
+**Outputs (under `<project-outdir>`):** `projection.json` (per-sequence: `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col`, `ic_residues`, `ic_loadings`, `ic_processed_cols`, `in_sample`, `up_score` — the sequence's Uᵖ row of length `n_components`, or `null` when the source SCAResults lacks the eigendecomposition fields), `per_sequence/<seqid>_residues.tsv` (one row per IC residue), `projection_args.json`, `projection.log`. With `--save_dataframe`, also `seq_projections.tsv` (per-sequence Uᵖ scores in tabular form).
 
 ### Project a PDB structure
 
@@ -242,9 +247,18 @@ print(sca.n_ic_positions)
 print(sca.conservation)   # positional conservation (Di)
 print(sca.sca_matrix)     # corrected covariance matrix (Cij_corr)
 print(sca.info())         # printable field-by-field summary
+
+# Sequence-space projection (Rivoire et al. 2016 Eqs. 14–15): Uᵖ
+# coordinates for any one-hot sequence tensor (M, L_proc, D) — both
+# in-sample (prep.msa_binary3d) and out-of-sample.
+up = sca.project_sequences(prep.msa_binary3d)   # (M, n_components)
+
+# Tabular view: seq_id, aligned_sequence, up_0, ..., up_{k-1}, plus
+# any columns merged in from sca.sequence_metadata.
+df = sca.to_dataframe(prep)
 ```
 
-All output files use standard formats (`.npz`, `.npy`, `.json`) and can be read without mysca installed.
+All output files use standard formats (`.npz`, `.npy`, `.json`, `.tsv`) and can be read without mysca installed.
 
 Projection and structure APIs:
 
@@ -252,7 +266,9 @@ Projection and structure APIs:
 from mysca.project import project_sequences
 from mysca.structure import PDBStructure, project_pdb, SequencePdbMap
 
-# Project a new primary sequence onto an existing SCA result
+# Project a new primary sequence onto an existing SCA result. Each
+# SequenceProjection now carries an `up_score` (length n_components):
+# the sequence's Uᵖ row in IC sequence-space.
 result = project_sequences(
     "new_sequences.fasta",
     sca_result_dir="path/to/scacore",
@@ -260,7 +276,12 @@ result = project_sequences(
     aligner="mafft_add",
 )
 for proj in result.projections:
-    print(proj.seq_id, proj.ic_residues)
+    print(proj.seq_id, proj.ic_residues, proj.up_score)
+
+# Stacked Uᵖ matrix and a tabular view across all projected sequences.
+result.up_scores         # (M, n_components) np.ndarray
+result.to_dataframe()    # seq_id / aligned_sequence / raw_sequence /
+                         # in_sample / up_0 .. up_{k-1}
 
 # Load a PDB and project it
 pdb = PDBStructure.from_file("1SHF.pdb", chain="A")

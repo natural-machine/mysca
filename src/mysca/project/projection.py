@@ -82,6 +82,12 @@ class SequenceProjection:
             "and therefore to PDB residue numbers — without assuming "
             "all input residues survived."
         ),
+        "up_score": (
+            "1D float array of length n_components — this sequence's "
+            "coordinates in the SCA IC sequence space (Uᵖ row), per "
+            "Rivoire et al. (2016) Eqs. 14–15. None when the source "
+            "SCAResults lacks the required eigendecomposition fields."
+        ),
     }
 
     def __init__(
@@ -95,6 +101,7 @@ class SequenceProjection:
         ic_processed_cols: list[np.ndarray],
         in_sample: bool,
         input_residue_indices: list[int],
+        up_score: Optional[np.ndarray] = None,
     ):
         self.seq_id = seq_id
         self.raw_sequence = raw_sequence
@@ -105,6 +112,7 @@ class SequenceProjection:
         self.ic_processed_cols = ic_processed_cols
         self.in_sample = in_sample
         self.input_residue_indices = list(input_residue_indices)
+        self.up_score = up_score
 
     def info(self) -> str:
         return _format_info_table(
@@ -132,6 +140,10 @@ class SequenceProjection:
             ],
             "in_sample": bool(self.in_sample),
             "input_residue_indices": list(self.input_residue_indices),
+            "up_score": (
+                self.up_score.tolist() if self.up_score is not None
+                else None
+            ),
         }
 
 
@@ -195,6 +207,51 @@ class ProjectionResult:
                 return p
         raise KeyError(f"seq_id {seq_id!r} not found in projections")
 
+    @property
+    def up_scores(self) -> Optional[np.ndarray]:
+        """Stack of per-projection Uᵖ rows (M × n_components) or None
+        when no projection has up_score populated."""
+        rows = [p.up_score for p in self.projections]
+        if all(r is None for r in rows):
+            return None
+        if any(r is None for r in rows):
+            raise RuntimeError(
+                "Inconsistent up_score state: some projections have "
+                "Uᵖ rows and others don't. This should not happen — "
+                "Up is computed in batch over all projections."
+            )
+        return np.stack(rows, axis=0)
+
+    def to_dataframe(self):
+        """Return a pandas DataFrame with seq_id, sequence, and Uᵖ columns.
+
+        Columns: ``seq_id``, ``aligned_sequence``, ``raw_sequence``,
+        ``in_sample``, ``up_0``, ``up_1``, ..., ``up_{n_components-1}``.
+
+        Raises ImportError if pandas is not installed; raises
+        RuntimeError if up_score has not been populated on the
+        projections.
+        """
+        import pandas as pd
+        if any(p.up_score is None for p in self.projections):
+            raise RuntimeError(
+                "to_dataframe requires up_score on every projection. "
+                "Re-run projection on a SCAResults that has the full "
+                "eigendecomposition (evecs_sca, evals_sca, w_ica)."
+            )
+        rows = []
+        for p in self.projections:
+            row = {
+                "seq_id": p.seq_id,
+                "aligned_sequence": p.aligned_sequence,
+                "raw_sequence": p.raw_sequence,
+                "in_sample": p.in_sample,
+            }
+            for k, v in enumerate(p.up_score):
+                row[f"up_{k}"] = float(v)
+            rows.append(row)
+        return pd.DataFrame(rows)
+
 
 # Gap chars recognized in an aligned sequence. `-` is the universal gap
 # character; `.` is the Stockholm convention for insert-column gaps. Our
@@ -225,6 +282,31 @@ def _residue_indices_for_aligned(aligned_seq: str) -> np.ndarray:
             continue
         out[j] = idx
         idx += 1
+    return out
+
+
+def _aligned_to_xmsa(
+    aligned_seqs: Sequence[str],
+    retained_positions: np.ndarray,
+    aa_list: Sequence[str],
+) -> np.ndarray:
+    """Convert column-aligned sequences to a one-hot tensor in
+    processed-MSA coordinates.
+
+    Output shape (M, L_proc, D), bool. Gap, missing, and non-canonical
+    symbols at any processed column produce an all-zero row, matching
+    the ``onehot_without_gap`` convention used by ``preprocess_msa``.
+    """
+    aa_to_col = {c: i for i, c in enumerate(aa_list)}
+    D = len(aa_list)
+    M = len(aligned_seqs)
+    L_proc = len(retained_positions)
+    out = np.zeros((M, L_proc, D), dtype=bool)
+    for m, aligned in enumerate(aligned_seqs):
+        for j, pos in enumerate(retained_positions):
+            col = aa_to_col.get(aligned[pos])
+            if col is not None:
+                out[m, j, col] = True
     return out
 
 
@@ -434,6 +516,33 @@ def project_sequences(
                 in_sample=is_in_sample,
                 input_residue_indices=input_residue_indices,
             ))
+
+        # Sequence-space Uᵖ scores (Rivoire et al. Eqs. 14–15) for every
+        # projected sequence. Best-effort: skip silently if the source
+        # SCAResults lacks any of the eigendecomposition / ICA fields
+        # (older sca-core runs predate eigendecomp persistence) or the
+        # SymMap is unavailable.
+        sym_map = getattr(prep, "sym_map", None)
+        aa_list = getattr(sym_map, "aa_list", None)
+        if aa_list is not None:
+            try:
+                xmsa_new = _aligned_to_xmsa(
+                    [p.aligned_sequence for p in projections],
+                    retained_positions, aa_list,
+                )
+                up_all = sca.project_sequences(xmsa_new)
+            except (RuntimeError, AttributeError) as e:
+                logger.warning(
+                    "Skipping Uᵖ scores on projections: %s", e,
+                )
+            else:
+                for p, row in zip(projections, up_all):
+                    p.up_score = row
+        else:
+            logger.warning(
+                "PreprocessingResults.sym_map has no aa_list; skipping "
+                "Uᵖ scores on projections.",
+            )
     finally:
         if workdir_ctx is not None:
             workdir_ctx.cleanup()

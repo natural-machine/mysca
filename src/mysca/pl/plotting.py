@@ -152,6 +152,104 @@ def plot_data_3d(
     return ax
 
 
+def plot_seq_projection_2d(
+        up, axidxs,
+        outdir=".",
+        *,
+        color_values=None,
+        color_label=None,
+        filename=None,
+        save=True,
+):
+    """Scatter sequences in IC sequence-space (Uᵖ).
+
+    One point per row of `up` (one sequence). Implements the canonical
+    Rivoire et al. (2016) sequence-position mapping output (Eqs. 14, 15);
+    typically called with `up = sca.project_sequences(prep.msa_binary3d)`.
+
+    Parameters
+    ----------
+    up : np.ndarray, shape (M, n_components)
+        Sequence-space IC scores.
+    axidxs : (int, int)
+        IC pair to plot on the (x, y) axes.
+    color_values : array-like of length M, optional
+        Per-sequence color values. Numeric arrays render with a
+        continuous colormap + colorbar. Object/string arrays render as
+        discrete categories with a legend (NA values shown in grey).
+    color_label : str, optional
+        Axis label for the colorbar / legend title.
+    """
+    axi, axj = axidxs
+    if axj >= up.shape[1]:
+        logger.debug(
+            "plot_seq_projection_2d: skipping IC axes (%d,%d); up has only "
+            "%d columns.", axi, axj, up.shape[1],
+        )
+        return None
+    fig, ax = plt.subplots(1, 1)
+
+    if color_values is None:
+        ax.scatter(
+            up[:, axi], up[:, axj],
+            s=6, c="k", alpha=0.3, edgecolor="none",
+        )
+    else:
+        cv = np.asarray(color_values)
+        if cv.shape[0] != up.shape[0]:
+            raise ValueError(
+                f"color_values length {cv.shape[0]} does not match "
+                f"up rows {up.shape[0]}."
+            )
+        is_numeric = np.issubdtype(cv.dtype, np.number)
+        if is_numeric:
+            sc = ax.scatter(
+                up[:, axi], up[:, axj],
+                c=cv, s=8, alpha=0.7, edgecolor="none", cmap="viridis",
+            )
+            cbar = fig.colorbar(sc, ax=ax)
+            if color_label is not None:
+                cbar.ax.set_ylabel(color_label)
+        else:
+            cv_str = np.where(
+                np.array([v is None for v in cv]) |
+                np.array([
+                    isinstance(v, float) and np.isnan(v) for v in cv
+                ]),
+                "NA",
+                cv.astype(str),
+            )
+            categories = sorted(set(cv_str) - {"NA"})
+            palette = plt.get_cmap("tab20")(
+                np.linspace(0, 1, max(len(categories), 1))
+            )
+            cat_to_color = {c: palette[i] for i, c in enumerate(categories)}
+            cat_to_color["NA"] = (0.7, 0.7, 0.7, 0.5)
+            for cat in categories + ["NA"]:
+                mask = cv_str == cat
+                if not mask.any():
+                    continue
+                ax.scatter(
+                    up[mask, axi], up[mask, axj],
+                    color=[cat_to_color[cat]], label=cat,
+                    s=8, alpha=0.7, edgecolor="none",
+                )
+            ax.legend(
+                bbox_to_anchor=(1.05, 1), loc="upper left",
+                fontsize=7, title=color_label,
+            )
+
+    ax.set_xlabel(f"seq score IC {axi} ($\\tilde{{U}}^p_{{{axi}}}$)")
+    ax.set_ylabel(f"seq score IC {axj} ($\\tilde{{U}}^p_{{{axj}}}$)")
+    ax.set_title("Sequences in IC space")
+    fig.tight_layout()
+    if filename is None:
+        suffix = f"_by_{color_label}" if color_label else ""
+        filename = f"seq_proj_ic{axi}v{axj}{suffix}.png"
+    _maybe_save(fig, save, outdir, filename)
+    return ax
+
+
 def plot_dendrogram(
         Cij,
         outdir=".",
