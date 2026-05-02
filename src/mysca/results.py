@@ -192,7 +192,7 @@ class PreprocessingResults:
             "SymMap instance: the alphabet and gap symbol used. Integer "
             "encoding of every symbol is stable across save/load."
         ),
-        "msa_obj_orig": (
+        "msa_obj_loaded": (
             "Original MSA as a Biopython MultipleSeqAlignment (before any "
             "filtering). Needed for raw-residue coordinate mapping."
         ),
@@ -225,7 +225,7 @@ class PreprocessingResults:
         fi0_pretruncation,
         args,
         sym_map=None,
-        msa_obj_orig=None,
+        msa_obj_loaded=None,
         filter_history=None,
     ):
         self.msa = msa
@@ -237,7 +237,7 @@ class PreprocessingResults:
         self.fi0_pretruncation = fi0_pretruncation
         self.args = args
         self.sym_map = sym_map
-        self.msa_obj_orig = msa_obj_orig
+        self.msa_obj_loaded = msa_obj_loaded
         self.filter_history = filter_history
 
     @property
@@ -250,7 +250,7 @@ class PreprocessingResults:
 
     @classmethod
     def from_preprocess_output(cls, msa, results_dict, sym_map=None,
-                               msa_obj_orig=None):
+                               msa_obj_loaded=None):
         """Construct from the (msa, results_dict) returned by preprocess_msa().
         """
         return cls(
@@ -263,7 +263,7 @@ class PreprocessingResults:
             fi0_pretruncation=results_dict["fi0_pretruncation"],
             args=results_dict["args"],
             sym_map=sym_map,
-            msa_obj_orig=msa_obj_orig,
+            msa_obj_loaded=msa_obj_loaded,
             filter_history=results_dict.get("filter_history"),
         )
 
@@ -301,10 +301,10 @@ class PreprocessingResults:
                 ),
             )
 
-        if self.msa_obj_orig is not None:
+        if self.msa_obj_loaded is not None:
             from Bio import AlignIO
             AlignIO.write(
-                self.msa_obj_orig,
+                self.msa_obj_loaded,
                 os.path.join(outdir, PREPROCESSING_MSAORIG_FNAME),
                 format="fasta",
             )
@@ -357,12 +357,12 @@ class PreprocessingResults:
             )
 
         # Try to load original MSA (requires Biopython)
-        msa_obj_orig = None
+        msa_obj_loaded = None
         orig_path = os.path.join(dirpath, PREPROCESSING_MSAORIG_FNAME)
         if os.path.isfile(orig_path):
             try:
                 from Bio import AlignIO
-                msa_obj_orig = AlignIO.read(orig_path, "fasta")
+                msa_obj_loaded = AlignIO.read(orig_path, "fasta")
             except ImportError:
                 pass
 
@@ -383,7 +383,7 @@ class PreprocessingResults:
             fi0_pretruncation=fi0_pretruncation,
             args=args,
             sym_map=sym_map,
-            msa_obj_orig=msa_obj_orig,
+            msa_obj_loaded=msa_obj_loaded,
             filter_history=filter_history,
         )
 
@@ -715,21 +715,21 @@ class SCAResults:
         """In-sample sequence DataFrame keyed by retained_sequence_ids.
 
         Columns: ``seq_id``, ``aligned_sequence`` (length L_orig, the
-        original-MSA-coordinate sequence from msa_obj_orig),
-        ``up_0``, ``up_1``, ..., ``up_{n_components-1}`` (Uᵖ row from
+        original-MSA-coordinate sequence from msa_obj_loaded),
+        ``Up_0``, ``Up_1``, ..., ``Up_{n_components-1}`` (Uᵖ row from
         ``project_sequences(prep.msa_binary3d)``). When
         ``sequence_metadata`` is populated on this instance, its
         non-``seq_id`` columns are merged in via left-join on
         ``seq_id``.
 
         Requires pandas installed and a PreprocessingResults instance
-        with ``msa_obj_orig``, ``retained_sequence_ids``,
+        with ``msa_obj_loaded``, ``retained_sequence_ids``,
         ``retained_sequences``, and ``msa_binary3d`` populated.
         """
         import pandas as pd
-        if prep.msa_obj_orig is None:
+        if prep.msa_obj_loaded is None:
             raise RuntimeError(
-                "to_dataframe requires PreprocessingResults.msa_obj_orig; "
+                "to_dataframe requires PreprocessingResults.msa_obj_loaded; "
                 "the source preprocessing run did not persist msa_orig.fasta-aln."
             )
         if prep.msa_binary3d is None:
@@ -738,16 +738,16 @@ class SCAResults:
                 "(persisted as msa_binary2d_sp.npz)."
             )
         up = self.project_sequences(prep.msa_binary3d)
-        ids_to_row = {rec.id: i for i, rec in enumerate(prep.msa_obj_orig)}
+        ids_to_row = {rec.id: i for i, rec in enumerate(prep.msa_obj_loaded)}
         rows = []
         for i, sid in enumerate(prep.retained_sequence_ids):
-            rec = prep.msa_obj_orig[ids_to_row[sid]]
+            rec = prep.msa_obj_loaded[ids_to_row[sid]]
             row = {
                 "seq_id": sid,
                 "aligned_sequence": str(rec.seq),
             }
             for k, v in enumerate(up[i]):
-                row[f"up_{k}"] = float(v)
+                row[f"Up_{k}"] = float(v)
             rows.append(row)
         df = pd.DataFrame(rows)
         if self.sequence_metadata is not None:

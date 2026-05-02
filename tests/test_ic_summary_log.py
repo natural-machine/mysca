@@ -81,7 +81,7 @@ def test_log_top_ic_summary_basic_marker_and_positions(capture_run_sca_logs):
     log_top_ic_summary(
         groups, kstar=2, evals_sca=evals_sca,
         retained_positions=retained_positions,
-        msa_obj_orig=msa, reference_id=None,
+        msa_obj_loaded=msa, reference_id=None,
         n_logged_comps=10,
     )
     msgs = [r.getMessage() for r in capture_run_sca_logs]
@@ -129,7 +129,7 @@ def test_log_top_ic_summary_reference_mapping(capture_run_sca_logs):
     log_top_ic_summary(
         groups, kstar=1, evals_sca=evals_sca,
         retained_positions=retained_positions,
-        msa_obj_orig=msa, reference_id="ref",
+        msa_obj_loaded=msa, reference_id="ref",
         n_logged_comps=5,
     )
     msgs = [r.getMessage() for r in capture_run_sca_logs]
@@ -170,7 +170,7 @@ def test_log_top_ic_summary_with_dropped_cols_and_reference_gap(
     log_top_ic_summary(
         groups, kstar=1, evals_sca=evals_sca,
         retained_positions=retained_positions,
-        msa_obj_orig=msa, reference_id="ref",
+        msa_obj_loaded=msa, reference_id="ref",
         n_logged_comps=5,
     )
     msgs = [r.getMessage() for r in capture_run_sca_logs]
@@ -188,7 +188,7 @@ def test_log_top_ic_summary_respects_n_logged_comps(capture_run_sca_logs):
     log_top_ic_summary(
         groups, kstar=5, evals_sca=evals_sca,
         retained_positions=retained_positions,
-        msa_obj_orig=msa, reference_id=None,
+        msa_obj_loaded=msa, reference_id=None,
         n_logged_comps=2,
     )
     msgs = [r.getMessage() for r in capture_run_sca_logs]
@@ -200,7 +200,7 @@ def test_log_top_ic_summary_noop_when_n_logged_comps_zero(capture_run_sca_logs):
     log_top_ic_summary(
         [np.array([0])], kstar=1, evals_sca=np.array([1.0]),
         retained_positions=np.array([0]),
-        msa_obj_orig=_msa([("x", "A")]), reference_id=None,
+        msa_obj_loaded=_msa([("x", "A")]), reference_id=None,
         n_logged_comps=0,
     )
     assert capture_run_sca_logs == []

@@ -50,7 +50,7 @@ Optional:
     --load_data           : previous sca-core output directory to reload.
     --save_all            : also write the large Cijab_raw / fijab arrays.
     --save_dataframe      : also write seq_projections.tsv (seq_id,
-                            aligned_sequence, up_0..up_{n_components-1})
+                            aligned_sequence, Up_0..Up_{n_components-1})
                             for every retained sequence. Requires pandas.
     --seq_metadata        : optional TSV path with a 'seq_id' column plus
                             any user-supplied columns. Persisted as
@@ -133,7 +133,7 @@ scarun.log
 
 seq_projections.tsv (only when --save_dataframe)
     Tab-separated table with one row per retained sequence: seq_id,
-    aligned_sequence, up_0..up_{n_components-1}. When --seq_metadata
+    aligned_sequence, Up_0..Up_{n_components-1}. When --seq_metadata
     is also supplied, that file's non-seq_id columns are merged in
     via left-join on seq_id.
 
@@ -312,7 +312,7 @@ def parse_args(args):
     parser.add_argument(
         "--save_dataframe", action="store_true",
         help="Also write seq_projections.tsv to outdir, with columns "
-             "seq_id, aligned_sequence, up_0..up_{n_components-1} for "
+             "seq_id, aligned_sequence, Up_0..Up_{n_components-1} for "
              "every retained sequence. Requires pandas.",
     )
     parser.add_argument(
@@ -493,8 +493,8 @@ def main(args):
     weights = prep.sequence_weights
     msa_binary3d = prep.msa_binary3d
     NSYMS = len(sym_map)
-    msa_obj_orig = prep.msa_obj_orig
-    NUM_POS_ORIG = msa_obj_orig.get_alignment_length()
+    msa_obj_loaded = prep.msa_obj_loaded
+    NUM_POS_ORIG = msa_obj_loaded.get_alignment_length()
 
     # Create the background frequency distribution q
     logger.info("Background frequencies:")
@@ -793,14 +793,14 @@ def main(args):
     ref_id_for_log = prep.args.get("reference_id") if prep.args else None
     log_top_ic_summary(
         groups, kstar, evals_sca, retained_positions,
-        msa_obj_orig, ref_id_for_log,
+        msa_obj_loaded, ref_id_for_log,
         n_logged_comps=n_logged_comps,
     )
 
     # Determine which sequences to generate per-sequence sector mappings for.
     # IDs that were filtered out during preprocessing are silently skipped.
     retained_ids = set(
-        msa_obj_orig[int(sidx)].id for sidx in retained_sequences
+        msa_obj_loaded[int(sidx)].id for sidx in retained_sequences
     )
     if sectors_for is not None and sectors_for.lower() == "all":
         sector_seqidxs = retained_sequences
@@ -819,7 +819,7 @@ def main(args):
         found_ids = requested_ids & retained_ids
         sector_seqidxs = np.array([
             sidx for sidx in retained_sequences
-            if msa_obj_orig[int(sidx)].id in found_ids
+            if msa_obj_loaded[int(sidx)].id in found_ids
         ])
         logger.info(
             "Generating per-sequence sectors for %d/%d sequences.",
@@ -831,7 +831,7 @@ def main(args):
         if ref_id is not None and ref_id in retained_ids:
             sector_seqidxs = np.array([
                 sidx for sidx in retained_sequences
-                if msa_obj_orig[int(sidx)].id == ref_id
+                if msa_obj_loaded[int(sidx)].id == ref_id
             ])
             logger.info(
                 "Generating per-sequence sectors for reference sequence: %s",
@@ -852,7 +852,7 @@ def main(args):
                 )
 
     # Map processed MSA positions to original sequence positions
-    rawseq_idxs = get_rawseq_indices_of_msa(msa_obj_orig)
+    rawseq_idxs = get_rawseq_indices_of_msa(msa_obj_loaded)
     rawseq_idxs = rawseq_idxs[retained_sequences,:]
     rawseq_idxs = rawseq_idxs[:,retained_positions]
 
@@ -867,10 +867,10 @@ def main(args):
         sector_rawseq_idxs, groups, group_scores
     )
     group_rawseq_positions_by_entry = get_group_rawseq_positions_by_entry(
-        msa_obj_orig, sector_seqidxs, groups, group_rawseq_positions
+        msa_obj_loaded, sector_seqidxs, groups, group_rawseq_positions
     )
     group_rawseq_scores_by_entry = get_group_rawseq_scores_by_entry(
-        msa_obj_orig, sector_seqidxs, groups, group_rawseq_scores
+        msa_obj_loaded, sector_seqidxs, groups, group_rawseq_scores
     )
     # Per-target IC residues (and parallel IC loadings) scale with
     # n_components × |sector_seqidxs| and dominate on-disk size when the
@@ -883,7 +883,7 @@ def main(args):
     n_sector_groups = min(kstar, len(groups))
     for gidx in range(n_sector_groups):
         for seqidx in sector_seqidxs:
-            entry = msa_obj_orig[int(seqidx)]
+            entry = msa_obj_loaded[int(seqidx)]
             sid = entry.id
             residues = group_rawseq_positions_by_entry[sid][gidx]
             loadings = group_rawseq_scores_by_entry[sid][gidx]
@@ -1057,7 +1057,7 @@ def _format_list(values):
 
 def log_top_ic_summary(
         groups, kstar, evals_sca, retained_positions,
-        msa_obj_orig, reference_id, *, n_logged_comps=10,
+        msa_obj_loaded, reference_id, *, n_logged_comps=10,
 ):
     """Write a human-readable summary of the top-N ICs to the module logger.
 
@@ -1075,7 +1075,7 @@ def log_top_ic_summary(
       acids involved without cross-referencing the MSA.
 
     The reference block is only emitted when ``reference_id`` resolves
-    to a row in ``msa_obj_orig``; the header echoes the chosen
+    to a row in ``msa_obj_loaded``; the header echoes the chosen
     reference so downstream readers aren't guessing.
 
     No-op when ``n_logged_comps <= 0`` or ``groups`` is empty.
@@ -1086,11 +1086,11 @@ def log_top_ic_summary(
     aligned_ref = None
     ref_raw_positions = None
     if reference_id is not None:
-        ids = [rec.id for rec in msa_obj_orig]
+        ids = [rec.id for rec in msa_obj_loaded]
         if reference_id in ids:
             ref_row = ids.index(reference_id)
-            aligned_ref = str(msa_obj_orig[ref_row].seq)
-            all_raw = get_rawseq_indices_of_msa(msa_obj_orig)
+            aligned_ref = str(msa_obj_loaded[ref_row].seq)
+            all_raw = get_rawseq_indices_of_msa(msa_obj_loaded)
             ref_raw_positions = all_raw[ref_row]  # shape (npos_orig,)
 
     n_show = min(n_logged_comps, len(groups))

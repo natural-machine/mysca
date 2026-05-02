@@ -123,7 +123,7 @@ def test_project_in_sample_matches_ic_residues_per_seq(prep_and_sca_dirs):
 
     # Write the retained sequences out as a FASTA for sca-project's
     # input (in-sample short-circuit applies to every record).
-    msa_obj = prep.msa_obj_orig
+    msa_obj = prep.msa_obj_loaded
     ids_to_row = {rec.id: i for i, rec in enumerate(msa_obj)}
     in_fasta = os.path.join(sca_dir, "_retained_input.fasta")
     with open(in_fasta, "w") as f:
@@ -168,7 +168,7 @@ def test_project_in_sample_up_score_matches_direct_projection(
     prep = PreprocessingResults.load(prep_dir)
     sca = SCAResults.load(sca_dir)
 
-    msa_obj = prep.msa_obj_orig
+    msa_obj = prep.msa_obj_loaded
     ids_to_row = {rec.id: i for i, rec in enumerate(msa_obj)}
     retained_ids = list(prep.retained_sequence_ids)
     in_fasta = os.path.join(sca_dir, "_retained_input_up.fasta")
@@ -210,7 +210,7 @@ def test_projection_to_dataframe(prep_and_sca_dirs):
     prep = PreprocessingResults.load(prep_dir)
     sca = SCAResults.load(sca_dir)
 
-    msa_obj = prep.msa_obj_orig
+    msa_obj = prep.msa_obj_loaded
     ids_to_row = {rec.id: i for i, rec in enumerate(msa_obj)}
     retained_ids = list(prep.retained_sequence_ids)[:5]
     in_fasta = os.path.join(sca_dir, "_retained_input_df.fasta")
@@ -233,7 +233,7 @@ def test_projection_to_dataframe(prep_and_sca_dirs):
     assert expected_cols.issubset(df.columns)
     n_comp = sca.w_ica.shape[0]
     for k in range(n_comp):
-        assert f"up_{k}" in df.columns
+        assert f"Up_{k}" in df.columns
     assert df["seq_id"].tolist() == retained_ids
 
 
@@ -265,9 +265,9 @@ def test_ic_residues_per_seq_values_are_target_residue_indices(
 
     raw_lengths = {
         rec.id: len(str(rec.seq).replace("-", "").replace(".", ""))
-        for rec in prep.msa_obj_orig
+        for rec in prep.msa_obj_loaded
     }
-    L_orig = prep.msa_obj_orig.get_alignment_length()
+    L_orig = prep.msa_obj_loaded.get_alignment_length()
 
     for key, arr in sca.ic_residues_per_seq.items():
         # Key format: "ic_{j}_{seqid}". seqid may contain underscores
@@ -309,9 +309,9 @@ def test_ic_residues_per_seq_values_match_raw_seq_lookup_from_ic_positions(
     if not sca.ic_residues_per_seq or not sca.ic_positions:
         pytest.skip("ic_residues_per_seq or ic_positions not populated")
 
-    rawseq_idxs = get_rawseq_indices_of_msa(prep.msa_obj_orig)
+    rawseq_idxs = get_rawseq_indices_of_msa(prep.msa_obj_loaded)
     seq_msa_idx_by_id = {
-        rec.id: i for i, rec in enumerate(prep.msa_obj_orig)
+        rec.id: i for i, rec in enumerate(prep.msa_obj_loaded)
     }
     retained_positions = np.asarray(prep.retained_positions, dtype=int)
 
@@ -336,11 +336,11 @@ def test_ic_residues_per_seq_values_match_raw_seq_lookup_from_ic_positions(
 
 
 def test_project_in_sample_does_not_invoke_aligner(prep_and_sca_dirs, tmp_path):
-    """When every input ID is already in msa_obj_orig, no aligner
+    """When every input ID is already in msa_obj_loaded, no aligner
     callable should be invoked (even if one would crash)."""
     prep_dir, sca_dir = prep_and_sca_dirs
     prep = PreprocessingResults.load(prep_dir)
-    msa_obj = prep.msa_obj_orig
+    msa_obj = prep.msa_obj_loaded
 
     # Build a one-sequence in-sample input.
     rec = msa_obj[0]
@@ -370,7 +370,7 @@ def _out_of_sample_roundtrip(prep_dir, sca_dir, tmp_path, aligner):
     per-IC residues must match ic_residues_per_seq for the donor."""
     prep = PreprocessingResults.load(prep_dir)
     sca = SCAResults.load(sca_dir)
-    msa_obj = prep.msa_obj_orig
+    msa_obj = prep.msa_obj_loaded
 
     donor_id = prep.retained_sequence_ids[0]
     donor_rec = next(r for r in msa_obj if r.id == donor_id)
@@ -452,7 +452,7 @@ def test_field_descriptions_cover_all_init_args():
 def test_sca_project_cli_writes_expected_artifacts(prep_and_sca_dirs, tmp_path):
     prep_dir, sca_dir = prep_and_sca_dirs
     prep = PreprocessingResults.load(prep_dir)
-    msa_obj = prep.msa_obj_orig
+    msa_obj = prep.msa_obj_loaded
 
     # Two in-sample records.
     in_fasta = tmp_path / "cli_input.fasta"
@@ -494,7 +494,7 @@ def test_sca_project_cli_sanitizes_seq_ids_with_slashes(
     spurious subdirectories when the per-sequence TSV is written."""
     prep_dir, sca_dir = prep_and_sca_dirs
     prep = PreprocessingResults.load(prep_dir)
-    rec = prep.msa_obj_orig[0]
+    rec = prep.msa_obj_loaded[0]
     raw = str(rec.seq).replace("-", "")
     donor_id = rec.id  # real ID so the in-sample path is taken
     # Alias the same sequence under a Pfam-style ID, then project both.
@@ -540,8 +540,8 @@ def test_sca_project_cli_from_msa_matches_input_fpath(
     prep = PreprocessingResults.load(prep_dir)
     msa_path = os.path.join(prep_dir, "msa_orig.fasta-aln")
     assert os.path.isfile(msa_path)
-    target_id = prep.msa_obj_orig[0].id
-    raw = str(prep.msa_obj_orig[0].seq).replace("-", "")
+    target_id = prep.msa_obj_loaded[0].id
+    raw = str(prep.msa_obj_loaded[0].seq).replace("-", "")
 
     out_fpath = str(tmp_path / "out_input_fpath")
     in_fasta = tmp_path / "single.fasta"
@@ -674,7 +674,7 @@ def test_out_of_sample_invariant_on_insertion(prep_and_sca_dirs, tmp_path, align
     prep_dir, sca_dir = prep_and_sca_dirs
     prep = PreprocessingResults.load(prep_dir)
     donor_id = prep.retained_sequence_ids[0]
-    donor = next(r for r in prep.msa_obj_orig if r.id == donor_id)
+    donor = next(r for r in prep.msa_obj_loaded if r.id == donor_id)
     donor_raw = str(donor.seq).replace("-", "")
     if len(donor_raw) < 3:
         pytest.skip("donor sequence too short for a middle insertion")
@@ -710,7 +710,7 @@ def test_out_of_sample_invariant_on_deletion(prep_and_sca_dirs, tmp_path, aligne
     prep_dir, sca_dir = prep_and_sca_dirs
     prep = PreprocessingResults.load(prep_dir)
     donor_id = prep.retained_sequence_ids[0]
-    donor = next(r for r in prep.msa_obj_orig if r.id == donor_id)
+    donor = next(r for r in prep.msa_obj_loaded if r.id == donor_id)
     donor_raw = str(donor.seq).replace("-", "")
     if len(donor_raw) < 3:
         pytest.skip("donor sequence too short for a middle deletion")
@@ -763,7 +763,7 @@ def test_in_sample_invariant():
 
     prep = PreprocessingResults.load(prep_dir)
     seq_id = prep.retained_sequence_ids[0]
-    donor = next(r for r in prep.msa_obj_orig if r.id == seq_id)
+    donor = next(r for r in prep.msa_obj_loaded if r.id == seq_id)
     donor_raw = str(donor.seq).replace("-", "")
 
     in_fasta = f"{TMPDIR}/_invariant_in_sample.fasta"

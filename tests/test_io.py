@@ -34,7 +34,7 @@ SYMMAP1_EXC_X = SymMap("ACDEF", '-', "X")
 ])
 def test_load_msa(fa_fpath, msa_shape_exp, symmap, expect_context):
     with expect_context:
-        msa_obj, msa, msa_ids, _ = load_msa(
+        msa_obj, msa, msa_ids, _, _, _ = load_msa(
             fa_fpath, format="fasta",
             mapping=symmap
         )

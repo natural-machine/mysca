@@ -220,12 +220,12 @@ def test_run_sca(
     if background_map is None:
         background_map = {s: 1 / len(symmap.aa2int) for s in symmap.aa2int}
     
-    msa_obj, msa_orig, msa_ids_orig, _ = load_msa(
+    msa_obj, msa_loaded, msa_ids_loaded, _, _, _ = load_msa(
         fa_fpath, format="fasta", mapping=symmap,
     )
 
     msa, preprocessing_results = preprocess_msa(
-        msa_orig, msa_ids_orig, 
+        msa_loaded, msa_ids_loaded, 
         mapping=symmap, 
         gap_truncation_thresh=gap_truncation_thresh,
         sequence_gap_thresh=sequence_gap_thresh,

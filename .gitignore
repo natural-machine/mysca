@@ -9,9 +9,12 @@ demo/SH3/out/*
 # SIFTS best_structures JSON cache (default: cwd-local). Per-machine
 # state with no value under version control.
 .sifts_cache/
+_misc/
+.vscode/
 
 # Claude
 .claude/
+docs/.claude_prompts/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

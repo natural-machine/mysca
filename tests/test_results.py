@@ -58,7 +58,7 @@ class TestPreprocessingResults:
             fi0_pretruncation=fi0_pretruncation,
             args=args,
             sym_map=sym_map,
-            msa_obj_orig=None,
+            msa_obj_loaded=None,
         )
 
     def test_attributes(self):
@@ -816,7 +816,7 @@ class TestSCAResults:
             fi0_pretruncation=np.zeros(L),
             args={},
             sym_map={c: i for i, c in enumerate(aa_list)} | {"-": D},
-            msa_obj_orig=MultipleSeqAlignment(records),
+            msa_obj_loaded=MultipleSeqAlignment(records),
             filter_history=None,
         )
         sca.sequence_metadata = pd.DataFrame({
@@ -859,7 +859,7 @@ class TestSCAResults:
             )
             for m in range(M)
         ]
-        msa_obj_orig = MultipleSeqAlignment(records)
+        msa_obj_loaded = MultipleSeqAlignment(records)
         prep = PreprocessingResults(
             msa=msa_int,
             msa_binary3d=msa_binary3d,
@@ -870,7 +870,7 @@ class TestSCAResults:
             fi0_pretruncation=np.zeros(L),
             args={},
             sym_map={c: i for i, c in enumerate(aa_list)} | {"-": D},
-            msa_obj_orig=msa_obj_orig,
+            msa_obj_loaded=msa_obj_loaded,
             filter_history=None,
         )
 
@@ -879,7 +879,7 @@ class TestSCAResults:
         assert len(df) == M
         assert set(["seq_id", "aligned_sequence"]).issubset(df.columns)
         for k in range(K):
-            assert f"up_{k}" in df.columns
+            assert f"Up_{k}" in df.columns
         assert df["seq_id"].tolist() == list(retained_sequence_ids)
 
 

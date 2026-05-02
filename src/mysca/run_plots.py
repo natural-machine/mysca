@@ -199,14 +199,14 @@ def _replay_scacore(
         plot_conservation(sca.conservation, imgdir)
         prep = _maybe_load_preprocessing(preproc_dir, stage_dir)
         if prep is not None and prep.retained_positions is not None \
-                and prep.msa_obj_orig is not None:
-            num_pos_orig = prep.msa_obj_orig.get_alignment_length()
+                and prep.msa_obj_loaded is not None:
+            num_pos_loaded = prep.msa_obj_loaded.get_alignment_length()
             plot_conservation_top(
-                prep.retained_positions, sca.conservation, num_pos_orig,
+                prep.retained_positions, sca.conservation, num_pos_loaded,
                 imgdir,
             )
             plot_conservation_positional(
-                prep.retained_positions, sca.conservation, num_pos_orig,
+                prep.retained_positions, sca.conservation, num_pos_loaded,
                 imgdir,
             )
         else:

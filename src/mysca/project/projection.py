@@ -9,7 +9,7 @@ The core operation composes three coordinate-system transforms already
 formalized elsewhere in ``mysca``:
 
 1. New-sequence residue ↔ original MSA column (provided by alignment —
-   either in-sample lookup on ``msa_obj_orig`` or out-of-sample
+   either in-sample lookup on ``msa_obj_loaded`` or out-of-sample
    ``mafft --add --keeplength``).
 2. Original MSA column ↔ processed MSA column (``retained_positions``).
 3. Processed MSA column ↔ IC group membership (``groups``).
@@ -66,7 +66,7 @@ class SequenceProjection:
             "group coordinate."
         ),
         "in_sample": (
-            "True iff seq_id was found in msa_obj_orig and no new "
+            "True iff seq_id was found in msa_obj_loaded and no new "
             "alignment was performed."
         ),
         "input_residue_indices": (
@@ -226,7 +226,7 @@ class ProjectionResult:
         """Return a pandas DataFrame with seq_id, sequence, and Uᵖ columns.
 
         Columns: ``seq_id``, ``aligned_sequence``, ``raw_sequence``,
-        ``in_sample``, ``up_0``, ``up_1``, ..., ``up_{n_components-1}``.
+        ``in_sample``, ``Up_0``, ``Up_1``, ..., ``Up_{n_components-1}``.
 
         Raises ImportError if pandas is not installed; raises
         RuntimeError if up_score has not been populated on the
@@ -248,7 +248,7 @@ class ProjectionResult:
                 "in_sample": p.in_sample,
             }
             for k, v in enumerate(p.up_score):
-                row[f"up_{k}"] = float(v)
+                row[f"Up_{k}"] = float(v)
             rows.append(row)
         return pd.DataFrame(rows)
 
@@ -352,7 +352,7 @@ def project_sequences(
     Args:
         sequences_fpath: Path to an input FASTA. Each record is projected
             independently. Records whose ID matches an entry in the
-            reference MSA ``msa_obj_orig`` are resolved in-sample (no
+            reference MSA ``msa_obj_loaded`` are resolved in-sample (no
             external alignment performed).
         sca_result_dir: Directory written by ``sca-core``
             (read via ``SCAResults.load``).
@@ -372,7 +372,7 @@ def project_sequences(
     prep = PreprocessingResults.load(preproc_result_dir)
     sca = SCAResults.load(sca_result_dir)
 
-    if prep.msa_obj_orig is None:
+    if prep.msa_obj_loaded is None:
         raise FileNotFoundError(
             f"Reference MSA not available in {preproc_result_dir}; "
             "msa_orig.fasta-aln is required for projection."
@@ -389,12 +389,12 @@ def project_sequences(
             "IC loadings."
         )
 
-    msa_obj_orig = prep.msa_obj_orig
+    msa_obj_loaded = prep.msa_obj_loaded
     retained_positions = np.asarray(prep.retained_positions, dtype=int)
     groups = sca.ic_positions
     v_ica = sca.v_ica
     n_components = len(groups)
-    L_orig = msa_obj_orig.get_alignment_length()
+    L_orig = msa_obj_loaded.get_alignment_length()
     L_proc = len(retained_positions)
 
     # Parse input sequences. We keep records in input order and decide
@@ -406,7 +406,7 @@ def project_sequences(
         raise ValueError(
             f"No sequences parsed from {sequences_fpath}"
         )
-    ids_in_msa = {rec.id: i for i, rec in enumerate(msa_obj_orig)}
+    ids_in_msa = {rec.id: i for i, rec in enumerate(msa_obj_loaded)}
 
     needs_align: list[SeqRecord] = []
     per_record_in_sample: list[bool] = []
@@ -436,7 +436,7 @@ def project_sequences(
             with open(new_fasta, "w") as fout:
                 SeqIO.write(needs_align, fout, "fasta")
             info = align_to_msa(
-                new_fasta, msa_obj_orig, active_workdir,
+                new_fasta, msa_obj_loaded, active_workdir,
                 method=aligner,
                 **(aligner_kwargs or {}),
             )
@@ -449,7 +449,7 @@ def project_sequences(
         for rec, is_in_sample in zip(input_records, per_record_in_sample):
             if is_in_sample:
                 aligned_seq = str(
-                    msa_obj_orig[ids_in_msa[rec.id]].seq
+                    msa_obj_loaded[ids_in_msa[rec.id]].seq
                 )
                 raw = _gapless(aligned_seq)
                 # In-sample: raw came from the MSA row, so its indices

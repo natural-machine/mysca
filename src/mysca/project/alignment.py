@@ -11,10 +11,10 @@ Public surface:
 - ``align_to_msa(...)`` — top-level dispatch.
 
 Each aligner callable has signature
-``(new_fasta_path, msa_obj_orig, workdir) -> dict`` and must write the
+``(new_fasta_path, msa_obj_loaded, workdir) -> dict`` and must write the
 aligned output for *only the new sequences* to
 ``workdir/aligned_new.fasta``. The length of each aligned sequence
-must equal the length of ``msa_obj_orig`` (column-preserving). Return
+must equal the length of ``msa_obj_loaded`` (column-preserving). Return
 value is a dict of diagnostics (``n_in``, ``n_out``, ``elapsed_s``).
 """
 
@@ -51,17 +51,17 @@ def _write_msa_to_fasta(msa_obj, path):
 
 def _mafft_add(
     new_fasta_path: str,
-    msa_obj_orig: MultipleSeqAlignment,
+    msa_obj_loaded: MultipleSeqAlignment,
     workdir: str,
     *,
     bin_path: str | None = None,
     threads: int = 1,
     extra_args: Iterable[str] = (),
 ) -> dict:
-    """Align new sequences onto `msa_obj_orig` via ``mafft --add --keeplength``.
+    """Align new sequences onto `msa_obj_loaded` via ``mafft --add --keeplength``.
 
     ``--keeplength`` is load-bearing: it forbids MAFFT from inserting new
-    columns, so `msa_obj_orig`'s column indexing (and therefore the
+    columns, so `msa_obj_loaded`'s column indexing (and therefore the
     preprocessing `retained_positions` array) stays valid for the newly
     aligned rows.
 
@@ -75,7 +75,7 @@ def _mafft_add(
     combined_fpath = os.path.join(workdir, "mafft_add_out.fasta")
     out_fpath = os.path.join(workdir, ALIGNED_NEW_FNAME)
 
-    _write_msa_to_fasta(msa_obj_orig, ref_fpath)
+    _write_msa_to_fasta(msa_obj_loaded, ref_fpath)
 
     with open(new_fasta_path) as f:
         new_ids = [rec.id for rec in SeqIO.parse(f, "fasta")]
@@ -93,7 +93,7 @@ def _mafft_add(
     logger.info(
         "Aligning %d new sequences with mafft --add --keeplength "
         "against a %d-sequence reference",
-        n_in, len(msa_obj_orig),
+        n_in, len(msa_obj_loaded),
     )
     logger.info("Running: %s > %s", " ".join(argv), combined_fpath)
 
@@ -111,7 +111,7 @@ def _mafft_add(
             raise
     elapsed = time.perf_counter() - t0
 
-    n_ref = len(msa_obj_orig)
+    n_ref = len(msa_obj_loaded)
     new_recs = []
     with open(combined_fpath) as f:
         for i, rec in enumerate(SeqIO.parse(f, "fasta")):
@@ -123,7 +123,7 @@ def _mafft_add(
             f"mafft --add produced {len(new_recs)} new aligned rows; "
             f"expected {n_in} (one per input sequence)."
         )
-    ref_len = msa_obj_orig.get_alignment_length()
+    ref_len = msa_obj_loaded.get_alignment_length()
     bad = [r.id for r in new_recs if len(r.seq) != ref_len]
     if bad:
         raise RuntimeError(
@@ -167,7 +167,7 @@ def _write_stockholm_with_full_rf(msa_obj, path):
 
 def _hmmalign(
     new_fasta_path: str,
-    msa_obj_orig: MultipleSeqAlignment,
+    msa_obj_loaded: MultipleSeqAlignment,
     workdir: str,
     *,
     bin_path: str | None = None,
@@ -175,7 +175,7 @@ def _hmmalign(
     threads: int = 1,
     extra_args: Iterable[str] = (),
 ) -> dict:
-    """Align new sequences onto ``msa_obj_orig`` via HMMER.
+    """Align new sequences onto ``msa_obj_loaded`` via HMMER.
 
     Pipeline: build a profile HMM from the reference MSA with every
     column forced to a match state (``hmmbuild --hand``), then align
@@ -203,12 +203,12 @@ def _hmmalign(
     if n_in == 0:
         raise ValueError(f"No sequences found in {new_fasta_path}")
 
-    _write_stockholm_with_full_rf(msa_obj_orig, ref_sto)
-    L_orig = msa_obj_orig.get_alignment_length()
+    _write_stockholm_with_full_rf(msa_obj_loaded, ref_sto)
+    L_orig = msa_obj_loaded.get_alignment_length()
 
     logger.info(
         "hmmbuild --hand on %d reference sequences (%d columns).",
-        len(msa_obj_orig), L_orig,
+        len(msa_obj_loaded), L_orig,
     )
     t0 = time.perf_counter()
     hmmbuild_argv = [hmmbuild, "--hand", "--amino", hmm_path, ref_sto]
@@ -243,7 +243,7 @@ def _hmmalign(
     # hmmalign emits an A2M-style aFASTA: uppercase = match column,
     # lowercase = insert column, '-' = match column with a delete, '.'
     # = insert column with a gap. We keep only match columns so the
-    # output lines up 1:1 with msa_obj_orig's columns.
+    # output lines up 1:1 with msa_obj_loaded's columns.
     new_recs_out = []
     for rec in SeqIO.parse(afa_path, "fasta"):
         s = str(rec.seq)
@@ -285,13 +285,13 @@ ALIGNERS: dict[str, Callable] = {
 
 def align_to_msa(
     new_fasta_path: str,
-    msa_obj_orig: MultipleSeqAlignment,
+    msa_obj_loaded: MultipleSeqAlignment,
     workdir: str,
     *,
     method: str = "mafft_add",
     **method_kwargs,
 ) -> dict:
-    """Align new FASTA sequences onto `msa_obj_orig`'s column structure.
+    """Align new FASTA sequences onto `msa_obj_loaded`'s column structure.
 
     Returns a dict with ``aligned_new_fpath`` (path to the aligned-only-
     new-sequences FASTA) plus any backend-specific diagnostics.
@@ -302,5 +302,5 @@ def align_to_msa(
         )
     os.makedirs(workdir, exist_ok=True)
     return ALIGNERS[method](
-        new_fasta_path, msa_obj_orig, workdir, **method_kwargs,
+        new_fasta_path, msa_obj_loaded, workdir, **method_kwargs,
     )

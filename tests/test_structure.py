@@ -240,7 +240,7 @@ def test_project_pdb_in_sample_matches_ic_residues_per_seq(
     sca = SCAResults.load(sca_dir)
 
     seq_id = prep.retained_sequence_ids[0]
-    donor = next(r for r in prep.msa_obj_orig if r.id == seq_id)
+    donor = next(r for r in prep.msa_obj_loaded if r.id == seq_id)
     raw = str(donor.seq).replace("-", "")
 
     # Residue numbers 10..10+L-1 so the PDB-resi→raw-resi offset is
@@ -292,7 +292,7 @@ def test_project_groups_to_pdb_length_guard(prep_and_sca_dirs, tmp_path):
     prep_dir, sca_dir = prep_and_sca_dirs
     prep = PreprocessingResults.load(prep_dir)
     seq_id = prep.retained_sequence_ids[0]
-    donor = next(r for r in prep.msa_obj_orig if r.id == seq_id)
+    donor = next(r for r in prep.msa_obj_loaded if r.id == seq_id)
     raw = str(donor.seq).replace("-", "")
 
     pdb_path = str(tmp_path / "ok.pdb")
@@ -326,7 +326,7 @@ def test_sca_structure_cli_single_pdb(prep_and_sca_dirs, tmp_path):
     prep = PreprocessingResults.load(prep_dir)
 
     seq_id = prep.retained_sequence_ids[0]
-    donor = next(r for r in prep.msa_obj_orig if r.id == seq_id)
+    donor = next(r for r in prep.msa_obj_loaded if r.id == seq_id)
     raw = str(donor.seq).replace("-", "")
 
     pdb_path = str(tmp_path / f"{seq_id}.pdb")
@@ -369,7 +369,7 @@ def test_sca_structure_cli_seq_map(prep_and_sca_dirs, tmp_path):
     chosen_ids = list(prep.retained_sequence_ids[:2])
     tsv_lines = []
     for sid in chosen_ids:
-        donor = next(r for r in prep.msa_obj_orig if r.id == sid)
+        donor = next(r for r in prep.msa_obj_loaded if r.id == sid)
         raw = str(donor.seq).replace("-", "")
         pdb_path = tmp_path / f"{sid}.pdb"
         _write_minimal_pdb(raw, str(pdb_path))
@@ -466,7 +466,7 @@ def test_cli_uniprot_ids_e2e(prep_and_sca_dirs, tmp_path):
     prep_dir, sca_dir = prep_and_sca_dirs
     prep = PreprocessingResults.load(prep_dir)
     seq_id = prep.retained_sequence_ids[0]
-    donor = next(r for r in prep.msa_obj_orig if r.id == seq_id)
+    donor = next(r for r in prep.msa_obj_loaded if r.id == seq_id)
     raw = str(donor.seq).replace("-", "")
 
     pdb_dir = tmp_path / "pdbs"

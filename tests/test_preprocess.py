@@ -250,15 +250,15 @@ def test_preprocessing(
         gap_value=gap_value,
     )
 
-    msa_obj, msa_orig, msa_ids_orig, _ = load_msa(
+    msa_obj, msa_loaded, msa_ids_loaded, _, _, _ = load_msa(
         fa_fpath, format="fasta", mapping=symmap,
     )
     msa_obj_length = len(msa_obj)
-    msa_orig_shape = msa_orig.shape
-    msa_ids_orig_length = len(msa_ids_orig)
+    msa_loaded_shape_pre = msa_loaded.shape
+    msa_ids_loaded_length_pre = len(msa_ids_loaded)
 
     msa, preprocessing_results = preprocess_msa(
-        msa_orig, msa_ids_orig, 
+        msa_loaded, msa_ids_loaded, 
         mapping=symmap, 
         gap_truncation_thresh=gap_truncation_thresh,
         sequence_gap_thresh=sequence_gap_thresh,
@@ -307,12 +307,168 @@ def test_preprocessing(
         msg = "msa_obj changed shape unexpectedly. "
         msg += f"Expected {msa_obj_length}. Got {len(msa_obj)}"
         errors.append(msg)
-    if msa_orig.shape != msa_orig_shape:
-        msg = "msa_orig changed shape unexpectedly. "
-        msg += f"Expected {msa_orig_shape}. Got {msa_orig.shape}"
+    if msa_loaded.shape != msa_loaded_shape_pre:
+        msg = "msa_loaded changed shape unexpectedly. "
+        msg += f"Expected {msa_loaded_shape_pre}. Got {msa_loaded.shape}"
         errors.append(msg)
-    if len(msa_ids_orig) != msa_ids_orig_length:
-        msg = "msa_ids_orig changed shape unexpectedly. "
-        msg += f"Expected {msa_ids_orig_length}. Got {len(msa_ids_orig)}"
+    if len(msa_ids_loaded) != msa_ids_loaded_length_pre:
+        msg = "msa_ids_loaded changed shape unexpectedly. "
+        msg += f"Expected {msa_ids_loaded_length_pre}. Got {len(msa_ids_loaded)}"
         errors.append(msg)
     assert not errors, "Errors occurred:\n{}".format("\n".join(errors))
+
+
+def test_filter_history_records_excluded_symbols_stage():
+    """When n_excluded_pre_load > 0, preprocess_msa prepends an
+    'excluded_symbols' stage immediately after 'initial' and the
+    'initial' bar reflects the pre-exclusion count."""
+    from mysca.preprocess import preprocess_msa
+    from mysca.mappings import SymMap
+
+    sym_map = SymMap("ACDEFGHIKLMNPQRSTVWY", "-")
+    rng = np.random.default_rng(0)
+    msa = rng.integers(0, 20, size=(8, 10), dtype=np.int_)
+    seqids = [f"seq_{i}" for i in range(8)]
+
+    _, results = preprocess_msa(
+        msa, seqids, mapping=sym_map,
+        gap_truncation_thresh=0.5,
+        sequence_gap_thresh=0.5,
+        sequence_similarity_thresh=0.99,
+        position_gap_thresh=0.5,
+        weight_computation_version="sparse",
+        n_excluded_pre_load=3,
+    )
+
+    fh = results["filter_history"]
+    assert fh[0]["stage"] == "initial"
+    assert fh[0]["n_sequences"] == 8 + 3, (
+        "initial bar must show pre-exclusion count when "
+        "n_excluded_pre_load > 0"
+    )
+    assert fh[1]["stage"] == "excluded_symbols"
+    assert fh[1]["n_sequences"] == 8
+    assert fh[1]["n_filtered"] == 3
+    assert fh[1]["axis"] == "sequences"
+    assert fh[1]["stat_values"] is None  # no distribution by design
+
+
+def test_strip_trailing_stops_unit():
+    """The trailing-stop-codon helper handles all the corner cases:
+    pure trailing, gaps between * and the C-terminus, multiple trailing
+    stops, internal *, and clean sequences."""
+    from mysca.io import _strip_trailing_stops
+    cases = [
+        # (in, expected_clean, n_replaced, has_internal)
+        ("ACDE*", "ACDE-", 1, False),
+        ("ACDE-*--", "ACDE----", 1, False),
+        ("AC*DE", "AC*DE", 0, True),
+        ("AC*DE-*--", "AC*DE----", 1, True),
+        ("ACDE", "ACDE", 0, False),
+        ("ACDE**", "ACDE--", 2, False),
+        ("ACDE**--", "ACDE----", 2, False),
+        ("", "", 0, False),
+    ]
+    for inp, exp_clean, exp_n, exp_internal in cases:
+        cleaned, n, internal = _strip_trailing_stops(inp)
+        assert cleaned == exp_clean, f"input={inp!r}: clean={cleaned!r}"
+        assert n == exp_n, f"input={inp!r}: n={n}"
+        assert internal == exp_internal, f"input={inp!r}: internal={internal}"
+
+
+def test_load_msa_strips_trailing_stop_and_drops_internal_stop(tmp_path):
+    """End-to-end: a FASTA mixing trailing-* and internal-* records
+    yields the right counts and post-load contents from load_msa."""
+    from mysca.io import load_msa
+    from mysca.mappings import SymMap
+
+    fa = tmp_path / "stops.faa"
+    # AlignIO requires equal-length records; pad with gaps. Six-column
+    # alignment exercising: clean, trailing-* at end, trailing-* with
+    # gap after, and internal-*.
+    fa.write_text(
+        ">clean\nACDE--\n"
+        ">trailing_at_end\nACDE-*\n"
+        ">trailing_with_gap_after\nACDE*-\n"
+        ">internal\nAC*DE-\n"
+    )
+    sym_map = SymMap("ACDE", "-")
+    msa_obj, _, msa_ids, _, n_excluded, n_internal_stop = load_msa(
+        str(fa), format="fasta", mapping=sym_map,
+    )
+    # 1 internal-stop sequence dropped; 0 excluded-symbol drops because
+    # trailing * was replaced by - before the alphabet check.
+    assert n_internal_stop == 1
+    assert n_excluded == 0
+    assert "internal" not in msa_ids
+    assert msa_ids == ["clean", "trailing_at_end", "trailing_with_gap_after"]
+    # Trailing * was replaced by - in the surviving sequences.
+    seqs = {rec.id: str(rec.seq) for rec in msa_obj}
+    assert seqs["trailing_at_end"] == "ACDE--"
+    assert seqs["trailing_with_gap_after"] == "ACDE--"
+
+
+def test_symmap_rejects_star():
+    """Stop codons must not be members of the alphabet."""
+    from mysca.mappings import SymMap
+    with pytest.raises(ValueError, match="stop codon"):
+        SymMap("ACDE*", "-")
+
+
+def test_filter_history_records_internal_stop_codon_stage():
+    """When n_internal_stop_pre_load > 0, preprocess_msa inserts an
+    'internal_stop_codon' stage between 'initial' and any
+    'excluded_symbols' stage."""
+    from mysca.preprocess import preprocess_msa
+    from mysca.mappings import SymMap
+
+    sym_map = SymMap("ACDEFGHIKLMNPQRSTVWY", "-")
+    rng = np.random.default_rng(2)
+    msa = rng.integers(0, 20, size=(5, 8), dtype=np.int_)
+    seqids = [f"seq_{i}" for i in range(5)]
+
+    _, results = preprocess_msa(
+        msa, seqids, mapping=sym_map,
+        gap_truncation_thresh=0.5,
+        sequence_gap_thresh=0.5,
+        sequence_similarity_thresh=0.99,
+        position_gap_thresh=0.5,
+        weight_computation_version="sparse",
+        n_excluded_pre_load=2,
+        n_internal_stop_pre_load=4,
+    )
+    fh = results["filter_history"]
+    stages = [s["stage"] for s in fh]
+    # initial first, then internal_stop_codon, then excluded_symbols.
+    assert stages[:3] == [
+        "initial", "internal_stop_codon", "excluded_symbols",
+    ]
+    assert fh[0]["n_sequences"] == 5 + 2 + 4
+    assert fh[1]["n_sequences"] == 5 + 2
+    assert fh[1]["n_filtered"] == 4
+    assert fh[2]["n_sequences"] == 5
+    assert fh[2]["n_filtered"] == 2
+
+
+def test_filter_history_omits_excluded_symbols_stage_when_none_dropped():
+    """No excluded-symbols stage is recorded when n_excluded_pre_load=0
+    (default), preserving the legacy filter_history shape."""
+    from mysca.preprocess import preprocess_msa
+    from mysca.mappings import SymMap
+
+    sym_map = SymMap("ACDEFGHIKLMNPQRSTVWY", "-")
+    rng = np.random.default_rng(1)
+    msa = rng.integers(0, 20, size=(6, 10), dtype=np.int_)
+    seqids = [f"seq_{i}" for i in range(6)]
+
+    _, results = preprocess_msa(
+        msa, seqids, mapping=sym_map,
+        gap_truncation_thresh=0.5,
+        sequence_gap_thresh=0.5,
+        sequence_similarity_thresh=0.99,
+        position_gap_thresh=0.5,
+        weight_computation_version="sparse",
+    )
+    stages = [s["stage"] for s in results["filter_history"]]
+    assert "excluded_symbols" not in stages
+    assert results["filter_history"][0]["n_sequences"] == 6

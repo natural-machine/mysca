@@ -21,6 +21,13 @@ class SymMap:
     ):
         self.aa_list = list(aa_syms)
         self.gapsym = gapsym
+        if "*" in self.aa_list:
+            raise ValueError(
+                "'*' (stop codon) cannot be a member of the alphabet. "
+                "Stop codons are handled by mysca.io.load_msa: trailing "
+                "'*' is replaced with gap, internal '*' causes the "
+                "sequence to be dropped."
+            )
         if not (0 <= gap_value <= len(self.aa_list)):
             raise ValueError(
                 f"gap_value must be in [0, {len(self.aa_list)}]; "

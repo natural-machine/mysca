@@ -119,7 +119,7 @@ def project_pdb(
 
     ``seq_id`` controls the FASTA header used for the project step.
     When it matches an entry in the preprocessing output's
-    ``msa_obj_orig``, projection short-circuits through the in-sample
+    ``msa_obj_loaded``, projection short-circuits through the in-sample
     path (no external aligner invoked). Otherwise the default
     ``mafft_add`` aligner is used.
     """

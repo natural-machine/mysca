@@ -47,7 +47,9 @@ def preprocess_msa(
         use_pbar: bool = False,
         verbosity: int = 1, 
         weight_computation_version: str = "sparse",
-        block_size: int = 1024
+        block_size: int = 1024,
+        n_excluded_pre_load: int = 0,
+        n_internal_stop_pre_load: int = 0,
 ):
     """Run preprocessing steps on a given MSA matrix.
 
@@ -74,7 +76,20 @@ def preprocess_msa(
         (str) weight_computation_version: String to identify which approach to use
             for computing sequence weights.
         (int) block_size: block size to use for computing sequence weights.
-    
+        (int) n_excluded_pre_load: count of input sequences dropped *before*
+            this call by ``mysca.io.load_msa`` because they contained excluded
+            symbols (non-canonical AAs by default). When > 0, the
+            ``"initial"`` filter_history stage's ``n_sequences`` is set to the
+            pre-exclusion count and an ``"excluded_symbols"`` stage is
+            inserted right after it. Defaults to 0 (no excluded-symbols
+            stage recorded).
+        (int) n_internal_stop_pre_load: count of input sequences dropped
+            *before* this call by ``mysca.io.load_msa`` because they
+            contained an internal stop codon (post-trailing-strip). When
+            > 0, an ``"internal_stop_codon"`` filter_history stage is
+            inserted between ``"initial"`` and ``"excluded_symbols"``
+            (matching the order of operations in ``load_msa``).
+
     Returns:
         (MultSeqAlignment) processed MSA.
         (dict[str, *]) dictionary mapping following keys to results:
@@ -115,19 +130,19 @@ def preprocess_msa(
     )
     logger.info("  position_gap_thresh γ_pos=%s", position_gap_thresh)
     
-    msa_orig = msa
-    msa = msa_orig.copy()
-    seqids_orig = seqids
-    seqids = seqids_orig.copy()
-    num_seqs, num_pos = msa_orig.shape
+    msa_loaded = msa
+    msa = msa_loaded.copy()
+    seqids_loaded = seqids
+    seqids = seqids_loaded.copy()
+    num_seqs, num_pos = msa_loaded.shape
 
-    if not isinstance(msa_orig, np.ndarray):
+    if not isinstance(msa_loaded, np.ndarray):
         raise RuntimeError(
-            f"Input MSA should be an NDArray. Got {type(msa_orig)}"
+            f"Input MSA should be an NDArray. Got {type(msa_loaded)}"
         )
-    if not isinstance(msa_orig[0,0], np.int_):
+    if not isinstance(msa_loaded[0,0], np.int_):
         raise RuntimeError(
-            f"Input MSA should be an NDArray of ints. Got {type(msa_orig[0,0])}"
+            f"Input MSA should be an NDArray of ints. Got {type(msa_loaded[0,0])}"
         )
 
     NUM_SYMS = len(mapping)
@@ -138,11 +153,21 @@ def preprocess_msa(
     retained_sequences = np.arange(num_seqs)
     retained_positions = np.arange(num_pos)
 
-    # Record dataset size and the pre-filter statistic at each stage
+    # Record dataset size and the pre-filter statistic at each stage.
+    # When load_msa dropped sequences before this call (due to internal
+    # stop codons or non-canonical / excluded symbols), the "initial"
+    # bar represents the raw input size and sibling stages show the
+    # drops in load_msa's actual order: internal_stop_codon first, then
+    # excluded_symbols. Both stages carry no stat_values — by design;
+    # the count alone is the useful signal, and
+    # plot_filter_distributions iterates only stages with stat_values.
+    n_excluded_pre_load = int(n_excluded_pre_load)
+    n_internal_stop_pre_load = int(n_internal_stop_pre_load)
+    n_initial = num_seqs + n_excluded_pre_load + n_internal_stop_pre_load
     filter_history = [{
         "stage": "initial",
         "label": "initial",
-        "n_sequences": num_seqs,
+        "n_sequences": n_initial,
         "n_positions": num_pos,
         "n_filtered": 0,
         "axis": None,
@@ -152,6 +177,37 @@ def preprocess_msa(
         "threshold_symbol": None,
         "filter_direction": None,
     }]
+    n_running = n_initial
+    if n_internal_stop_pre_load > 0:
+        n_running -= n_internal_stop_pre_load
+        filter_history.append({
+            "stage": "internal_stop_codon",
+            "label": "internal stop codon",
+            "n_sequences": n_running,
+            "n_positions": num_pos,
+            "n_filtered": n_internal_stop_pre_load,
+            "axis": "sequences",
+            "stat_name": None,
+            "stat_values": None,
+            "threshold": None,
+            "threshold_symbol": None,
+            "filter_direction": None,
+        })
+    if n_excluded_pre_load > 0:
+        n_running -= n_excluded_pre_load
+        filter_history.append({
+            "stage": "excluded_symbols",
+            "label": "excluded symbols",
+            "n_sequences": n_running,
+            "n_positions": num_pos,
+            "n_filtered": n_excluded_pre_load,
+            "axis": "sequences",
+            "stat_name": None,
+            "stat_values": None,
+            "threshold": None,
+            "threshold_symbol": None,
+            "filter_direction": None,
+        })
 
     # Constuct the boolean MSA matrix
     xmsa = onehot_without_gap(msa, NUM_SYMS, GAP)
@@ -191,7 +247,7 @@ def preprocess_msa(
     msa = msa[screen,:]  # keep rows with gap freq < sequence_gap_thresh
     xmsa = xmsa[screen,:,:]
     retained_sequences = retained_sequences[screen]
-    seqids = np.array([seqids_orig[i] for i in retained_sequences])
+    seqids = np.array([seqids_loaded[i] for i in retained_sequences])
     filter_history.append({
         "stage": "sequence_gap",
         "label": "sequence gap (γ_seq)",
@@ -231,7 +287,7 @@ def preprocess_msa(
         msa = msa[screen,:]  # keep rows with similarity >= reference_similarity_thresh
         xmsa = xmsa[screen,:,:]
         retained_sequences = retained_sequences[screen]
-        seqids = np.array([seqids_orig[i] for i in retained_sequences])
+        seqids = np.array([seqids_loaded[i] for i in retained_sequences])
         filter_history.append({
             "stage": "reference_similarity",
             "label": "reference similarity (Δ)",

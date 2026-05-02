@@ -157,7 +157,7 @@ def test_get_rawseq_indices_of_msa(
 
 def test_get_rawseq_indices_of_msa_treats_dot_as_gap():
     """Defensive: `.` is the Stockholm insert-column gap. Biopython
-    normalizes it on read, so msa_obj_orig never contains `.` in
+    normalizes it on read, so msa_obj_loaded never contains `.` in
     practice — but a hand-crafted MSA fed directly to this helper
     must still get correct raw-residue indexing."""
     msa_obj = msa_from_aligned_seqs([

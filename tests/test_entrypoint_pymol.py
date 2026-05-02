@@ -1116,7 +1116,7 @@ def test_sca_pymol_cli_smoke(tmp_path):
 
     prep = PreprocessingResults.load(prep_dir)
     seq_id = prep.retained_sequence_ids[0]
-    donor = next(r for r in prep.msa_obj_orig if r.id == seq_id)
+    donor = next(r for r in prep.msa_obj_loaded if r.id == seq_id)
     raw = str(donor.seq).replace("-", "")
     pdb_path = str(tmp_path / "target.pdb")
     _write_minimal_pdb(

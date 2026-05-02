@@ -38,7 +38,7 @@ COMMAND LINE ARGUMENTS:
         (unused by ``hmmalign``).
     --save_dataframe : also write ``seq_projections.tsv`` to outdir,
         with columns seq_id, aligned_sequence, raw_sequence, in_sample,
-        up_0..up_{n_components-1}. Requires pandas.
+        Up_0..Up_{n_components-1}. Requires pandas.
 
 -------------------------------------------------------------------------------
 OUTPUTS:
@@ -62,7 +62,7 @@ projection.log
 
 seq_projections.tsv (only when --save_dataframe)
     Tab-separated table: seq_id, aligned_sequence, raw_sequence,
-    in_sample, up_0..up_{n_components-1}.
+    in_sample, Up_0..Up_{n_components-1}.
 
 -------------------------------------------------------------------------------
 EXAMPLE USAGE:
@@ -172,7 +172,7 @@ def parse_args(args):
         "--save_dataframe", action="store_true",
         help="Also write seq_projections.tsv to outdir, with columns "
              "seq_id, aligned_sequence, raw_sequence, in_sample, "
-             "up_0..up_{n_components-1}. Requires pandas.",
+             "Up_0..Up_{n_components-1}. Requires pandas.",
     )
     parser.add_argument("-v", "--verbosity", type=int, default=1,
                         help="Verbosity level (0=warnings only).")

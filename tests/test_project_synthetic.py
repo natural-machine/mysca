@@ -112,7 +112,7 @@ def test_preprocessing_shape(prep_and_sca_dirs, expected):
     prep = PreprocessingResults.load(prep_dir)
     exp = expected["preprocessing"]
 
-    assert prep.msa_obj_orig.get_alignment_length() == exp["L_orig"]
+    assert prep.msa_obj_loaded.get_alignment_length() == exp["L_orig"]
     assert prep.msa.shape[1] == exp["L_proc"]
     assert prep.retained_positions.tolist() == exp["retained_positions"]
     assert sorted(map(str, prep.retained_sequence_ids)) == sorted(
@@ -134,7 +134,7 @@ def test_training_in_sample_mappings(prep_and_sca_dirs, expected, tmp_path):
     # and project them in-sample (should short-circuit alignment).
     in_fasta = tmp_path / "training_in_sample.fasta"
     with open(in_fasta, "w") as f:
-        for rec in prep.msa_obj_orig:
+        for rec in prep.msa_obj_loaded:
             raw = str(rec.seq).replace("-", "")
             f.write(f">{rec.id}\n{raw}\n")
 
@@ -532,7 +532,7 @@ def test_synthetic_ic_residues_per_seq_construction_matches_ground_truth(
     prep_dir, _ = prep_and_sca_dirs
     prep = PreprocessingResults.load(prep_dir)
 
-    rawseq_idxs = get_rawseq_indices_of_msa(prep.msa_obj_orig)
+    rawseq_idxs = get_rawseq_indices_of_msa(prep.msa_obj_loaded)
     retained_sequences = np.asarray(prep.retained_sequences, dtype=int)
     retained_positions = np.asarray(prep.retained_positions, dtype=int)
     rawseq_idxs = rawseq_idxs[retained_sequences, :][:, retained_positions]
@@ -544,7 +544,7 @@ def test_synthetic_ic_residues_per_seq_construction_matches_ground_truth(
 
     expected_map = expected["expected_ic_residues"]
     msa_ids_by_retained_idx = [
-        prep.msa_obj_orig[int(s)].id for s in retained_sequences
+        prep.msa_obj_loaded[int(s)].id for s in retained_sequences
     ]
     asserted_at_least_one = False
     for retained_idx, seqid in enumerate(msa_ids_by_retained_idx):
@@ -588,7 +588,7 @@ def test_training_ic_residues_against_synthetic_groups(
 
     in_fasta = tmp_path / "training_for_ic_test.fasta"
     with open(in_fasta, "w") as f:
-        for rec in prep.msa_obj_orig:
+        for rec in prep.msa_obj_loaded:
             raw = str(rec.seq).replace("-", "")
             f.write(f">{rec.id}\n{raw}\n")
 
@@ -760,7 +760,7 @@ def test_log_top_ic_summary_synthetic_clade_B_reference(
         kstar=2,
         evals_sca=np.array([2.5, 1.7, 0.4]),
         retained_positions=prep.retained_positions,
-        msa_obj_orig=prep.msa_obj_orig,
+        msa_obj_loaded=prep.msa_obj_loaded,
         reference_id="synth_clade_B_0",
         n_logged_comps=10,
     )
@@ -814,7 +814,7 @@ def test_log_top_ic_summary_synthetic_clade_A_reference(
         kstar=3,
         evals_sca=np.array([1.0, 0.6, 0.2]),
         retained_positions=prep.retained_positions,
-        msa_obj_orig=prep.msa_obj_orig,
+        msa_obj_loaded=prep.msa_obj_loaded,
         reference_id="synth_clade_A_0",
         n_logged_comps=10,
     )
@@ -867,7 +867,7 @@ def test_log_top_ic_summary_synthetic_log_alignment(
         kstar=2,
         evals_sca=np.array([2.5, 1.7, 0.4]),
         retained_positions=prep.retained_positions,
-        msa_obj_orig=prep.msa_obj_orig,
+        msa_obj_loaded=prep.msa_obj_loaded,
         reference_id="synth_clade_B_0",
         n_logged_comps=1,  # just IC 0 is enough for the alignment check
     )

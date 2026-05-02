@@ -159,6 +159,22 @@ sca-project \
 
 Records whose IDs are already in the reference MSA short-circuit the alignment step; the rest are aligned onto the reference MSA columns via MAFFT (default) or HMMER.
 
+To dump the per-sequence sequence-space scores (Uᵖ) for downstream analysis, pass `--save_dataframe`:
+
+```bash
+sca-project \
+    -i <new_sequences.fasta> \
+    --preprocessing <preprocessing-outdir> \
+    --scacore <core-outdir> \
+    -o <project-outdir> \
+    --save_dataframe
+# inspect:
+head -5 <project-outdir>/seq_projections.tsv
+# columns: seq_id  aligned_sequence  raw_sequence  in_sample  Up_0  Up_1  ...
+```
+
+This works for both pure out-of-sample input (every record gets aligned via `--aligner`) and mixed batches (in-sample IDs short-circuit; out-of-sample go through MAFFT or HMMER).
+
 **Inputs:** a FASTA of sequences to project, plus the upstream `sca-preprocess` and `sca-core` output directories.
 **Outputs (under `<project-outdir>`):** `projection.json` (per-sequence: `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col`, `ic_residues`, `ic_loadings`, `ic_processed_cols`, `in_sample`, `up_score` — the sequence's Uᵖ row of length `n_components`, or `null` when the source SCAResults lacks the eigendecomposition fields), `per_sequence/<seqid>_residues.tsv` (one row per IC residue), `projection_args.json`, `projection.log`. With `--save_dataframe`, also `seq_projections.tsv` (per-sequence Uᵖ scores in tabular form).
 
@@ -253,7 +269,7 @@ print(sca.info())         # printable field-by-field summary
 # in-sample (prep.msa_binary3d) and out-of-sample.
 up = sca.project_sequences(prep.msa_binary3d)   # (M, n_components)
 
-# Tabular view: seq_id, aligned_sequence, up_0, ..., up_{k-1}, plus
+# Tabular view: seq_id, aligned_sequence, Up_0, ..., Up_{k-1}, plus
 # any columns merged in from sca.sequence_metadata.
 df = sca.to_dataframe(prep)
 ```
@@ -281,7 +297,7 @@ for proj in result.projections:
 # Stacked Uᵖ matrix and a tabular view across all projected sequences.
 result.up_scores         # (M, n_components) np.ndarray
 result.to_dataframe()    # seq_id / aligned_sequence / raw_sequence /
-                         # in_sample / up_0 .. up_{k-1}
+                         # in_sample / Up_0 .. Up_{k-1}
 
 # Load a PDB and project it
 pdb = PDBStructure.from_file("1SHF.pdb", chain="A")

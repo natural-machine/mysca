@@ -65,6 +65,10 @@ msa_orig.fasta-aln
 filter_history.json
     Per-stage filter diagnostics (counts + threshold + stat distribution).
     Always persisted so `sca-plots` can replay the diagnostic plots later.
+    When `load_msa` performs pre-preprocessing drops, the corresponding
+    stages (``internal_stop_codon``, ``excluded_symbols``) appear at the
+    head of the list. Trailing stop codons (``*``) are silently replaced
+    with gap inside ``load_msa`` and do not produce their own stage.
 
 images/ (only when --plot is passed)
     filter_history.png, filter_distributions.png.
@@ -267,20 +271,21 @@ def main(args):
 
     # Load MSA
     logger.info("Loading MSA (%s) from: %s", args.input_format, msa_fpath)
-    msa_obj_orig, msa_orig, seqids_orig, sym_map = load_msa(
+    (msa_obj_loaded, msa_loaded, seqids_loaded, sym_map,
+     n_excluded, n_internal_stop) = load_msa(
         msa_fpath, format=args.input_format,
         mapping=sym_map,
     )
-    num_seq_orig, num_pos_orig = msa_orig.shape
+    num_seq_loaded, num_pos_loaded = msa_loaded.shape
 
     logger.info(
-        "Loaded MSA. shape: %s (sequences x positions)", msa_orig.shape
+        "Loaded MSA. shape: %s (sequences x positions)", msa_loaded.shape
     )
     logger.info("Symbols: %s", sym_map.aa_list)
 
     # Run preprocessing script
     msa, preprocessing_results = preprocess_msa(
-        msa_orig, seqids_orig,
+        msa_loaded, seqids_loaded,
         mapping=sym_map,
         gap_truncation_thresh=gap_truncation_thresh,
         sequence_gap_thresh=sequence_gap_thresh,
@@ -292,12 +297,14 @@ def main(args):
         verbosity=verbosity,
         weight_computation_version=weight_computation_version,
         block_size=block_size,
+        n_excluded_pre_load=n_excluded,
+        n_internal_stop_pre_load=n_internal_stop,
     )
 
     results = PreprocessingResults.from_preprocess_output(
         msa, preprocessing_results,
         sym_map=sym_map,
-        msa_obj_orig=msa_obj_orig,
+        msa_obj_loaded=msa_obj_loaded,
     )
     # Persist weight_method (resolved) and accelerator (raw) into the
     # args bundle for run-replay parity. Both are CLI-layer concerns and
