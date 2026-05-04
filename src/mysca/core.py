@@ -67,16 +67,17 @@ def run_sca(
     )
     ws_norm = ws / ws.sum()
     fi0 = 1 - np.sum(ws[:,None,None] * xmsa, axis=(0,2)) / ws.sum()
-    fi0_zero_mask = np.isclose(fi0, 0)
-    n_fi0_zero = int(np.sum(fi0_zero_mask))
+    n_fi0_zero = int(np.sum(np.isclose(fi0, 0)))
     if n_fi0_zero > 0:
-        logger.warning(
-            "%d position(s) have fi0 ≈ 0 (no observed gaps after weighting). "
-            "Downstream Di already guards the log(fi0/q0hat) term, but other "
-            "kernels consuming fi0 may produce -inf/NaN. Affected positions: "
-            "%s",
-            n_fi0_zero,
-            np.flatnonzero(fi0_zero_mask).tolist(),
+        # fi0 ≈ 0 just means "this column has effectively no gaps after
+        # weighting" — the normal state of any well-conserved column. The
+        # only fi0 consumer in run_sca is the Di term below (line ~108),
+        # which already guards the case via np.where(fi0 > 0, ..., 0)
+        # under errstate('ignore'). DEBUG-only diagnostic so a future
+        # NaN-chase has a breadcrumb without polluting healthy runs.
+        logger.debug(
+            "fi0 ≈ 0 at %d position(s) (well-conserved columns); "
+            "downstream Di guards this case.", n_fi0_zero,
         )
     fia = (1 - lam) * np.sum(ws_norm[:,None,None] * xmsa, axis=0) + lam / nsyms
 
