@@ -388,6 +388,18 @@ def project_sequences(
             f"No v_ica_normalized.npy in {sca_result_dir}; required for "
             "IC loadings."
         )
+    _missing_up = [
+        name for name in ("phi_ia", "fia", "evecs_sca", "evals_sca", "w_ica")
+        if getattr(sca, name, None) is None
+    ]
+    if _missing_up:
+        raise FileNotFoundError(
+            f"SCAResults at {sca_result_dir} is missing eigendecomposition / "
+            f"ICA fields required for sequence-space (Uᵖ) projection: "
+            f"{_missing_up}. Re-run sca-core (without --save_minimal, if it "
+            "was used) to repopulate these fields, or pin the calling code "
+            "to a release that does not require Uᵖ scoring."
+        )
 
     msa_obj_loaded = prep.msa_obj_loaded
     retained_positions = np.asarray(prep.retained_positions, dtype=int)
@@ -518,26 +530,21 @@ def project_sequences(
             ))
 
         # Sequence-space Uᵖ scores (Rivoire et al. Eqs. 14–15) for every
-        # projected sequence. Best-effort: skip silently if the source
-        # SCAResults lacks any of the eigendecomposition / ICA fields
-        # (older sca-core runs predate eigendecomp persistence) or the
-        # SymMap is unavailable.
+        # projected sequence. The eigendecomposition / ICA precheck above
+        # already guarantees `sca.project_sequences()` will succeed; the
+        # only remaining recoverable failure mode is a missing SymMap on
+        # the preprocessing bundle (legacy bundles), which we surface as
+        # a warning + None up_score rather than failing the whole run.
         sym_map = getattr(prep, "sym_map", None)
         aa_list = getattr(sym_map, "aa_list", None)
         if aa_list is not None:
-            try:
-                xmsa_new = _aligned_to_xmsa(
-                    [p.aligned_sequence for p in projections],
-                    retained_positions, aa_list,
-                )
-                up_all = sca.project_sequences(xmsa_new)
-            except (RuntimeError, AttributeError) as e:
-                logger.warning(
-                    "Skipping Uᵖ scores on projections: %s", e,
-                )
-            else:
-                for p, row in zip(projections, up_all):
-                    p.up_score = row
+            xmsa_new = _aligned_to_xmsa(
+                [p.aligned_sequence for p in projections],
+                retained_positions, aa_list,
+            )
+            up_all = sca.project_sequences(xmsa_new)
+            for p, row in zip(projections, up_all):
+                p.up_score = row
         else:
             logger.warning(
                 "PreprocessingResults.sym_map has no aa_list; skipping "

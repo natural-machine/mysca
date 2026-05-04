@@ -882,3 +882,41 @@ def test_log_top_ic_summary_synthetic_log_alignment(
         f"Label column misaligned across indented lines: "
         f"{list(zip(bracket_cols, indented))}"
     )
+
+
+# ---------------------------------------------------------------------- #
+# B8: project_sequences must fail-fast (not silently emit None up_score) #
+# when the SCAResults bundle is missing the eigendecomposition / ICA     #
+# fields required for Uᵖ scoring.                                        #
+# ---------------------------------------------------------------------- #
+
+
+def test_project_sequences_fails_fast_on_missing_eigendecomp(
+    prep_and_sca_dirs, tmp_path
+):
+    prep_dir, sca_dir = prep_and_sca_dirs
+
+    # Copy the synthetic sca_dir into a tmp location and remove the
+    # eigendecomposition bundle. The remaining IC outputs (ic_positions/,
+    # v_ica_normalized.npy) stay intact so the early "missing v_ica" /
+    # "missing ic_positions" guards don't fire first.
+    crippled_sca = tmp_path / "sca_no_eigendecomp"
+    shutil.copytree(sca_dir, crippled_sca)
+    eig = crippled_sca / "sca_eigendecomp.npz"
+    assert eig.exists(), "fixture invariant: eigendecomp file present pre-removal"
+    eig.unlink()
+
+    # Use the fixture's training MSA as the projection input — this would
+    # be a happy-path call against an intact sca_dir.
+    in_fasta = tmp_path / "in.fasta"
+    prep = PreprocessingResults.load(prep_dir)
+    with open(in_fasta, "w") as f:
+        rec = next(iter(prep.msa_obj_loaded))
+        f.write(f">{rec.id}\n{str(rec.seq).replace('-', '')}\n")
+
+    with pytest.raises(FileNotFoundError, match="evecs_sca|evals_sca"):
+        project_sequences(
+            str(in_fasta),
+            sca_result_dir=str(crippled_sca),
+            preproc_result_dir=prep_dir,
+        )

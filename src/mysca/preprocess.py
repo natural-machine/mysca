@@ -19,6 +19,24 @@ from mysca.helpers import iterblocks
 logger = logging.getLogger(__name__)
 
 
+def _check_msa_nonempty_after_filter(msa, stage):
+    """Raise a clear ValueError if a filter stage has zeroed the MSA.
+
+    `stage` is the just-appended filter_history entry; we use its
+    `label`, `threshold_symbol`, and `threshold` for the message.
+    """
+    n_seqs, n_pos = msa.shape
+    if n_seqs > 0 and n_pos > 0:
+        return
+    axis = "sequences" if n_seqs == 0 else "positions"
+    raise ValueError(
+        f"Preprocessing filter '{stage['label']}' "
+        f"({stage['threshold_symbol']}={stage['threshold']}) left "
+        f"zero {axis}; MSA shape is now {msa.shape}. "
+        f"Loosen this threshold or revisit upstream filtering."
+    )
+
+
 def onehot_without_gap(
         msa: NDArray[np.int_],
         num_syms: int,
@@ -239,6 +257,7 @@ def preprocess_msa(
     )
     logger.info("  MSA shape: %s (sequences x positions)", msa.shape)
     assert len(retained_positions) == msa.shape[1], "Mismatch"
+    _check_msa_nonempty_after_filter(msa, filter_history[-1])
 
     #~~~ Remove rows (i.e. sequences) with too many gaps
     logger.info("Removing sequences with too many gaps...")
@@ -267,10 +286,27 @@ def preprocess_msa(
     )
     logger.info("  MSA shape: %s (sequences x positions)", msa.shape)
     assert len(retained_sequences) == msa.shape[0], "Mismatch"
+    _check_msa_nonempty_after_filter(msa, filter_history[-1])
 
     #~~~ Compare with reference, if specified
     if reference_id:
-        ref_idx = np.where(seqids == reference_id)[0][0]
+        ref_matches = np.where(seqids == reference_id)[0]
+        if ref_matches.size == 0:
+            in_loaded = reference_id in seqids_loaded
+            stage_hint = (
+                "It was present in the input MSA but was dropped by an "
+                "earlier preprocessing filter "
+                "(internal_stop_codon, excluded_symbols, or sequence_gap)."
+                if in_loaded
+                else "It is not present in the input MSA."
+            )
+            raise ValueError(
+                f"Reference sequence ID {reference_id!r} not found in the "
+                f"MSA after early-stage filtering. {stage_hint} "
+                f"Pick a reference present in the post-filter MSA, or "
+                f"loosen --sequence_gap_thresh / --syms accordingly."
+            )
+        ref_idx = ref_matches[0]
         logger.info(
             "Found reference seq %s at position %d.", reference_id, ref_idx
         )
@@ -307,6 +343,7 @@ def preprocess_msa(
         )
         logger.info("  MSA shape: %s (sequences x positions)", msa.shape)
         assert len(retained_sequences) == msa.shape[0], "Mismatch"
+        _check_msa_nonempty_after_filter(msa, filter_history[-1])
     else:
         ref_results = {}
 
@@ -353,6 +390,7 @@ def preprocess_msa(
     )
     logger.info("  MSA shape: %s (sequences x positions)", msa.shape)
     assert len(retained_positions) == msa.shape[1], "Mismatch"
+    _check_msa_nonempty_after_filter(msa, filter_history[-1])
 
     #~~~ Re-compute sequence weights
     logger.info("Computing sequence weights (round 2)...")

@@ -472,3 +472,65 @@ def test_filter_history_omits_excluded_symbols_stage_when_none_dropped():
     stages = [s["stage"] for s in results["filter_history"]]
     assert "excluded_symbols" not in stages
     assert results["filter_history"][0]["n_sequences"] == 6
+
+
+# --------------------------------------------------------------------------- #
+# Defensive guards: missing reference ID, fully-emptied MSA after filtering.  #
+# --------------------------------------------------------------------------- #
+
+
+def test_missing_reference_id_raises_clear_error():
+    """B1: an unknown --reference must raise ValueError with the offending ID,
+    not an opaque IndexError."""
+    msa_obj, msa_loaded, msa_ids_loaded, _, _, _ = load_msa(
+        TEST_MSA4, format="fasta", mapping=SYMMAP2,
+    )
+    with pytest.raises(ValueError, match="not_a_real_id"):
+        preprocess_msa(
+            msa_loaded, msa_ids_loaded,
+            mapping=SYMMAP2,
+            gap_truncation_thresh=1.0,
+            sequence_gap_thresh=1.0,
+            reference_id="not_a_real_id",
+            reference_similarity_thresh=0.0,
+            sequence_similarity_thresh=1.0,
+            position_gap_thresh=1.0,
+        )
+
+
+def test_empty_msa_after_position_gap_filter_raises():
+    """B5: gap_truncation_thresh=0 drops every position; preprocessing must
+    raise rather than silently producing an empty MSA."""
+    msa_obj, msa_loaded, msa_ids_loaded, _, _, _ = load_msa(
+        TEST_MSA4, format="fasta", mapping=SYMMAP2,
+    )
+    with pytest.raises(ValueError, match="position gap"):
+        preprocess_msa(
+            msa_loaded, msa_ids_loaded,
+            mapping=SYMMAP2,
+            gap_truncation_thresh=0.0,
+            sequence_gap_thresh=1.0,
+            reference_id=None,
+            reference_similarity_thresh=0.0,
+            sequence_similarity_thresh=1.0,
+            position_gap_thresh=1.0,
+        )
+
+
+def test_empty_msa_after_sequence_gap_filter_raises():
+    """B5: sequence_gap_thresh=0 drops every sequence; preprocessing must
+    raise rather than silently producing an empty MSA."""
+    msa_obj, msa_loaded, msa_ids_loaded, _, _, _ = load_msa(
+        TEST_MSA4, format="fasta", mapping=SYMMAP2,
+    )
+    with pytest.raises(ValueError, match="sequence gap"):
+        preprocess_msa(
+            msa_loaded, msa_ids_loaded,
+            mapping=SYMMAP2,
+            gap_truncation_thresh=1.0,
+            sequence_gap_thresh=0.0,
+            reference_id=None,
+            reference_similarity_thresh=0.0,
+            sequence_similarity_thresh=1.0,
+            position_gap_thresh=1.0,
+        )
