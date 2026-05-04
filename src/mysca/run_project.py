@@ -49,7 +49,13 @@ projection.json
     residue_by_processed_col (length L_proc), ic_residues (per IC
     raw-residue indices), ic_loadings, ic_processed_cols, in_sample,
     up_score (length n_components — the sequence's Uᵖ row, or None
-    when the source SCAResults lacks the eigendecomposition fields).
+    when the source SCAResults lacks the eigendecomposition fields),
+    gap_fraction_per_ic (length n_components — fraction of each IC's
+    training-time support that is gapped or non-canonical in this
+    projection; 0.0 means full coverage),
+    informative_positions_per_ic (length n_components — count of
+    positions in each IC's support that contribute non-zero mass to
+    the Uᵖ math).
 
 per_sequence/<seqid>_residues.tsv
     One row per (IC, residue) pairing for readable inspection.
@@ -62,7 +68,9 @@ projection.log
 
 seq_projections.tsv (only when --save_dataframe)
     Tab-separated table: seq_id, aligned_sequence, raw_sequence,
-    in_sample, Up_0..Up_{n_components-1}.
+    in_sample, Up_0..Up_{n_components-1},
+    gap_frac_ic_0..gap_frac_ic_{n_components-1},
+    n_inform_ic_0..n_inform_ic_{n_components-1}.
 
 -------------------------------------------------------------------------------
 EXAMPLE USAGE:

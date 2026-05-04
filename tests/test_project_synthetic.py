@@ -920,3 +920,74 @@ def test_project_sequences_fails_fast_on_missing_eigendecomp(
             sca_result_dir=str(crippled_sca),
             preproc_result_dir=prep_dir,
         )
+
+
+# ---------------------------------------------------------------------- #
+# Step 5: per-IC projection quality metrics                              #
+# (gap_fraction_per_ic / informative_positions_per_ic).                  #
+# ---------------------------------------------------------------------- #
+
+
+def test_per_ic_quality_metrics_helper():
+    """Direct unit test of _per_ic_quality_metrics with a hand-built xmsa.
+
+    Two sequences, L_proc=5, D=4. IC 0 spans processed cols [0, 1, 2];
+    IC 1 spans [2, 3, 4]. Sequence 0 is fully informative (every row
+    one-hot). Sequence 1 has zero rows at processed cols 1 and 4
+    (gap / non-canonical convention).
+    """
+    from mysca.project.projection import _per_ic_quality_metrics
+
+    M, L, D = 2, 5, 4
+    xmsa = np.zeros((M, L, D), dtype=bool)
+    # seq 0: every column informative.
+    xmsa[0, np.arange(L), [0, 1, 2, 3, 0]] = True
+    # seq 1: cols 0, 2, 3 informative; cols 1, 4 stay all-zero.
+    xmsa[1, [0, 2, 3], [1, 2, 3]] = True
+
+    ic_positions = [np.array([0, 1, 2]), np.array([2, 3, 4])]
+    gap_frac, n_inform = _per_ic_quality_metrics(xmsa, ic_positions)
+
+    # Seq 0 is fully informative across both IC supports.
+    assert n_inform[0].tolist() == [3, 3]
+    np.testing.assert_allclose(gap_frac[0], [0.0, 0.0])
+
+    # Seq 1: IC 0 spans {0,1,2}, only 0 and 2 are informative → 2/3.
+    # IC 1 spans {2,3,4}, only 2 and 3 are informative → 2/3.
+    assert n_inform[1].tolist() == [2, 2]
+    np.testing.assert_allclose(gap_frac[1], [1 / 3, 1 / 3])
+
+
+def test_quality_metrics_in_sample_full_coverage(prep_and_sca_dirs, tmp_path):
+    """The synthetic in-sample sequences have no gaps at any retained
+    column, so every IC should report gap_frac = 0 and
+    n_inform = len(ic_positions[i])."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    sca = SCAResults.load(sca_dir)
+    prep = PreprocessingResults.load(prep_dir)
+
+    # Project all retained training sequences in-sample.
+    in_fasta = tmp_path / "in_sample.fasta"
+    with open(in_fasta, "w") as f:
+        for rec in prep.msa_obj_loaded:
+            raw = str(rec.seq).replace("-", "")
+            f.write(f">{rec.id}\n{raw}\n")
+
+    result = project_sequences(
+        str(in_fasta),
+        sca_result_dir=sca_dir,
+        preproc_result_dir=prep_dir,
+    )
+
+    expected_full = np.array([len(g) for g in sca.ic_positions])
+    for p in result.projections:
+        assert p.gap_fraction_per_ic is not None
+        assert p.informative_positions_per_ic is not None
+        assert p.gap_fraction_per_ic.shape == (sca.w_ica.shape[0],)
+        np.testing.assert_array_equal(
+            p.informative_positions_per_ic, expected_full,
+        )
+        np.testing.assert_allclose(
+            p.gap_fraction_per_ic,
+            np.zeros_like(p.gap_fraction_per_ic),
+        )

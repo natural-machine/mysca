@@ -481,16 +481,16 @@ Exactly one of `-i/--input_fpath` or (`--from_msa` + `--seq_id`) is required.
 | `--aligner` | `mafft_add` | Out-of-sample alignment method. `mafft_add` uses `mafft --add --keeplength`. `hmmalign` builds a profile HMM (`hmmbuild --hand --amino`) with every reference column as a match state, then aligns new sequences (`hmmalign --outformat afa`) and keeps only match columns. In-sample records bypass alignment entirely |
 | `--align_bin` | None | Explicit path to the alignment binary (default: resolve from PATH). For `--aligner hmmalign` this is `hmmalign`; `hmmbuild` is resolved from PATH |
 | `--align_threads` | 1 | Threads for the alignment tool (unused by `hmmalign`) |
-| `--save_dataframe` | off | Also write `seq_projections.tsv` with columns `seq_id`, `aligned_sequence`, `raw_sequence`, `in_sample`, `Up_0..Up_{n_components-1}`. Requires pandas |
+| `--save_dataframe` | off | Also write `seq_projections.tsv` with columns `seq_id`, `aligned_sequence`, `raw_sequence`, `in_sample`, `Up_0..Up_{n_components-1}`, `gap_frac_ic_0..gap_frac_ic_{n_components-1}`, `n_inform_ic_0..n_inform_ic_{n_components-1}`. Requires pandas |
 | `-v, --verbosity` | 1 | Verbosity level |
 
 ### Output
 
 Writes to the specified output directory:
 
-- `projection.json` — top-level result: per-sequence dicts containing `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col` (length `L_proc`), `ic_residues` (per-IC raw residue indices), `ic_loadings`, `ic_processed_cols`, `in_sample`, `up_score` (length `n_components` — the sequence's `Uᵖ` row, or `null` when the source SCAResults lacks the eigendecomposition fields)
+- `projection.json` — top-level result: per-sequence dicts containing `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col` (length `L_proc`), `ic_residues` (per-IC raw residue indices), `ic_loadings`, `ic_processed_cols`, `in_sample`, `up_score` (length `n_components` — the sequence's `Uᵖ` row, or `null` when the source SCAResults lacks the eigendecomposition fields), `gap_fraction_per_ic` (length `n_components` — per-IC fraction of the IC's training-time support that is gapped or non-canonical in this projection; `0.0` means full coverage), `informative_positions_per_ic` (length `n_components` — count of positions in each IC's support that contribute non-zero mass to the Uᵖ math). The two quality fields are inherited verbatim by `structure_projection.json` via the nested `sequence_projection`
 - `per_sequence/<seqid>_residues.tsv` — one row per (IC, residue) for readable inspection
-- `seq_projections.tsv` — only when `--save_dataframe`; tab-separated table with `seq_id`, `aligned_sequence`, `raw_sequence`, `in_sample`, `Up_0..Up_{n_components-1}` columns
+- `seq_projections.tsv` — only when `--save_dataframe`; tab-separated table with `seq_id`, `aligned_sequence`, `raw_sequence`, `in_sample`, `Up_0..Up_{n_components-1}`, `gap_frac_ic_0..gap_frac_ic_{n_components-1}`, `n_inform_ic_0..n_inform_ic_{n_components-1}` columns
 - `projection_args.json` — arguments used
 - `projection.log` — run log
 - `from_msa_input.fasta` — only when `--from_msa` is used: the materialized one-record FASTA actually fed to the projector

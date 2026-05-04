@@ -88,6 +88,26 @@ class SequenceProjection:
             "Rivoire et al. (2016) Eqs. 14–15. None when the source "
             "SCAResults lacks the required eigendecomposition fields."
         ),
+        "gap_fraction_per_ic": (
+            "1D float array of length n_components. Entry i is the "
+            "fraction of IC i's training-time support "
+            "(``sca.ic_positions[i]``) that is gapped or non-canonical "
+            "in this projection — i.e. positions that contribute zero "
+            "mass to the Uᵖ math. 0.0 means full coverage; 1.0 means "
+            "the projection has no informative residues at any of "
+            "IC i's defining positions. None when SCAResults lacks "
+            "ic_positions."
+        ),
+        "informative_positions_per_ic": (
+            "1D int array of length n_components. Entry i is the count "
+            "of positions in IC i's training-time support where this "
+            "projection contributes a non-zero one-hot row to xsi "
+            "(i.e. the position holds a canonical, non-gap residue). "
+            "Companion to gap_fraction_per_ic; gap_fraction_per_ic[i] "
+            "= 1 - informative_positions_per_ic[i] / "
+            "len(sca.ic_positions[i]). None when SCAResults lacks "
+            "ic_positions."
+        ),
     }
 
     def __init__(
@@ -102,6 +122,8 @@ class SequenceProjection:
         in_sample: bool,
         input_residue_indices: list[int],
         up_score: Optional[np.ndarray] = None,
+        gap_fraction_per_ic: Optional[np.ndarray] = None,
+        informative_positions_per_ic: Optional[np.ndarray] = None,
     ):
         self.seq_id = seq_id
         self.raw_sequence = raw_sequence
@@ -113,6 +135,8 @@ class SequenceProjection:
         self.in_sample = in_sample
         self.input_residue_indices = list(input_residue_indices)
         self.up_score = up_score
+        self.gap_fraction_per_ic = gap_fraction_per_ic
+        self.informative_positions_per_ic = informative_positions_per_ic
 
     def info(self) -> str:
         return _format_info_table(
@@ -143,6 +167,14 @@ class SequenceProjection:
             "up_score": (
                 self.up_score.tolist() if self.up_score is not None
                 else None
+            ),
+            "gap_fraction_per_ic": (
+                self.gap_fraction_per_ic.tolist()
+                if self.gap_fraction_per_ic is not None else None
+            ),
+            "informative_positions_per_ic": (
+                self.informative_positions_per_ic.tolist()
+                if self.informative_positions_per_ic is not None else None
             ),
         }
 
@@ -223,10 +255,13 @@ class ProjectionResult:
         return np.stack(rows, axis=0)
 
     def to_dataframe(self):
-        """Return a pandas DataFrame with seq_id, sequence, and Uᵖ columns.
+        """Return a pandas DataFrame with seq_id, sequence, Uᵖ, and
+        per-IC quality-metric columns.
 
         Columns: ``seq_id``, ``aligned_sequence``, ``raw_sequence``,
-        ``in_sample``, ``Up_0``, ``Up_1``, ..., ``Up_{n_components-1}``.
+        ``in_sample``, ``Up_0`` ... ``Up_{n_components-1}``,
+        ``gap_frac_ic_0`` ... ``gap_frac_ic_{n_components-1}``,
+        ``n_inform_ic_0`` ... ``n_inform_ic_{n_components-1}``.
 
         Raises ImportError if pandas is not installed; raises
         RuntimeError if up_score has not been populated on the
@@ -249,6 +284,12 @@ class ProjectionResult:
             }
             for k, v in enumerate(p.up_score):
                 row[f"Up_{k}"] = float(v)
+            if p.gap_fraction_per_ic is not None:
+                for k, v in enumerate(p.gap_fraction_per_ic):
+                    row[f"gap_frac_ic_{k}"] = float(v)
+            if p.informative_positions_per_ic is not None:
+                for k, v in enumerate(p.informative_positions_per_ic):
+                    row[f"n_inform_ic_{k}"] = int(v)
             rows.append(row)
         return pd.DataFrame(rows)
 
@@ -283,6 +324,49 @@ def _residue_indices_for_aligned(aligned_seq: str) -> np.ndarray:
         out[j] = idx
         idx += 1
     return out
+
+
+def _per_ic_quality_metrics(xmsa, ic_positions):
+    """Per-IC gap-fraction and informative-position counts for a batch
+    of projected sequences.
+
+    Parameters
+    ----------
+    xmsa : np.ndarray, shape (M, L_proc, D), bool/int
+        One-hot-encoded sequences in processed-MSA coordinates.
+        ``xmsa[m, j, :]`` is all-zero when sequence m has a gap or
+        non-canonical symbol at processed column j (the convention
+        established by ``_aligned_to_xmsa``).
+    ic_positions : sequence of np.ndarray
+        ``sca.ic_positions`` — for each IC, the processed-MSA column
+        indices that define the IC's training-time support.
+
+    Returns
+    -------
+    gap_fraction : np.ndarray, shape (M, n_components), float
+        ``1 - n_inform / n_full`` per (sequence, IC). 0.0 when the IC
+        has empty training support (defensive; should not occur).
+    n_inform : np.ndarray, shape (M, n_components), int
+        Count of positions in IC i's full training support where
+        sequence m contributes a non-zero one-hot row.
+    """
+    informative = xmsa.any(axis=-1)
+    ic_full_support = [np.asarray(g, dtype=int) for g in ic_positions]
+    n_full = np.array([g.size for g in ic_full_support], dtype=float)
+    M = informative.shape[0]
+    n_comp = len(ic_full_support)
+    n_inform = np.zeros((M, n_comp), dtype=int)
+    for i, g in enumerate(ic_full_support):
+        if g.size == 0:
+            continue
+        n_inform[:, i] = informative[:, g].sum(axis=1)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        gap_fraction = np.where(
+            n_full > 0,
+            1.0 - (n_inform / n_full),
+            0.0,
+        )
+    return gap_fraction.astype(float), n_inform
 
 
 def _aligned_to_xmsa(
@@ -543,12 +627,17 @@ def project_sequences(
                 retained_positions, aa_list,
             )
             up_all = sca.project_sequences(xmsa_new)
-            for p, row in zip(projections, up_all):
-                p.up_score = row
+            gap_frac_all, n_inform_all = _per_ic_quality_metrics(
+                xmsa_new, groups,
+            )
+            for m, p in enumerate(projections):
+                p.up_score = up_all[m]
+                p.gap_fraction_per_ic = gap_frac_all[m]
+                p.informative_positions_per_ic = n_inform_all[m]
         else:
             logger.warning(
                 "PreprocessingResults.sym_map has no aa_list; skipping "
-                "Uᵖ scores on projections.",
+                "Uᵖ scores and per-IC quality metrics on projections.",
             )
     finally:
         if workdir_ctx is not None:

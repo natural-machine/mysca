@@ -234,7 +234,16 @@ def test_projection_to_dataframe(prep_and_sca_dirs):
     n_comp = sca.w_ica.shape[0]
     for k in range(n_comp):
         assert f"Up_{k}" in df.columns
+        assert f"gap_frac_ic_{k}" in df.columns
+        assert f"n_inform_ic_{k}" in df.columns
     assert df["seq_id"].tolist() == retained_ids
+    # In-sample sequences with no gaps relative to themselves should
+    # have gap_frac_ic_*=0 across every IC.
+    for k in range(n_comp):
+        assert (df[f"gap_frac_ic_{k}"] == 0.0).all(), (
+            f"In-sample retained sequences expected to have full IC {k} "
+            f"coverage; got {df[f'gap_frac_ic_{k}'].tolist()}"
+        )
 
 
 # ---------------------------------------------------------------------- #
@@ -484,6 +493,15 @@ def test_sca_project_cli_writes_expected_artifacts(prep_and_sca_dirs, tmp_path):
     assert len(data["projections"]) == 2
     for p in data["projections"]:
         assert p["in_sample"] is True
+        # Step 5: per-IC quality metrics ride through projection.json.
+        assert "gap_fraction_per_ic" in p
+        assert "informative_positions_per_ic" in p
+        assert isinstance(p["gap_fraction_per_ic"], list)
+        assert isinstance(p["informative_positions_per_ic"], list)
+        assert len(p["gap_fraction_per_ic"]) == data["n_components"]
+        assert len(p["informative_positions_per_ic"]) == data["n_components"]
+        # In-sample retained sequences land at gap_frac=0 across all ICs.
+        assert all(v == 0.0 for v in p["gap_fraction_per_ic"])
 
 
 def test_sca_project_cli_sanitizes_seq_ids_with_slashes(

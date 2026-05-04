@@ -226,13 +226,16 @@ sca-project \
     --save_dataframe
 # inspect:
 head -5 <project-outdir>/seq_projections.tsv
-# columns: seq_id  aligned_sequence  raw_sequence  in_sample  Up_0  Up_1  ...
+# columns: seq_id  aligned_sequence  raw_sequence  in_sample
+#          Up_0 ... Up_{k-1}
+#          gap_frac_ic_0 ... gap_frac_ic_{k-1}
+#          n_inform_ic_0 ... n_inform_ic_{k-1}
 ```
 
 This works for both pure out-of-sample input (every record gets aligned via `--aligner`) and mixed batches (in-sample IDs short-circuit; out-of-sample go through MAFFT or HMMER).
 
 **Inputs:** a FASTA of sequences to project, plus the upstream `sca-preprocess` and `sca-core` output directories.
-**Outputs (under `<project-outdir>`):** `projection.json` (per-sequence: `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col`, `ic_residues`, `ic_loadings`, `ic_processed_cols`, `in_sample`, `up_score` — the sequence's Uᵖ row of length `n_components`, or `null` when the source SCAResults lacks the eigendecomposition fields), `per_sequence/<seqid>_residues.tsv` (one row per IC residue), `projection_args.json`, `projection.log`. With `--save_dataframe`, also `seq_projections.tsv` (per-sequence Uᵖ scores in tabular form).
+**Outputs (under `<project-outdir>`):** `projection.json` (per-sequence: `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col`, `ic_residues`, `ic_loadings`, `ic_processed_cols`, `in_sample`, `up_score` — the sequence's Uᵖ row of length `n_components`, or `null` when the source SCAResults lacks the eigendecomposition fields, `gap_fraction_per_ic` and `informative_positions_per_ic` — per-IC quality signals indicating how much of each IC's training-time support is gapped or non-canonical in this projection), `per_sequence/<seqid>_residues.tsv` (one row per IC residue), `projection_args.json`, `projection.log`. With `--save_dataframe`, also `seq_projections.tsv` (per-sequence Uᵖ scores plus the same per-IC quality columns in tabular form).
 
 ### Project a PDB structure
 
