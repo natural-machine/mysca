@@ -74,6 +74,62 @@ mysca ships seven CLI tools. The core pipeline chains the first three; the other
 
 Full per-flag documentation (including outputs of every CLI): [docs/cli_reference.md](docs/cli_reference.md).
 
+### Quickstart: end-to-end on the SH3 demo
+
+The fastest way to see the whole pipeline at work is to chain the core CLIs against the bundled SH3 alignment and PDBs (no clustering / prealignment needed since the MSA is already aligned):
+
+```bash
+cd demo/SH3
+OUT=out/quickstart
+REF='4837_jgi||3708||Equilibrative'
+
+sca-preprocess \
+    -i data/msas/SH3_demo_MSA_1.afa \
+    -o ${OUT}/preprocessing \
+    --reference "${REF}" \
+    --gap_truncation_thresh 0.4 --sequence_gap_thresh 0.2 \
+    --reference_similarity_thresh 0.2 \
+    --sequence_similarity_thresh 0.8 --position_gap_thresh 0.2
+
+sca-core \
+    -i ${OUT}/preprocessing \
+    -o ${OUT}/scacore \
+    --regularization 0.03 --n_components 10 --seed 42
+
+sca-project \
+    --from_msa ${OUT}/preprocessing/msa_orig.fasta-aln \
+    --seq_id "${REF}" \
+    --preprocessing ${OUT}/preprocessing \
+    --scacore ${OUT}/scacore \
+    -o ${OUT}/project
+
+sca-structure \
+    --seq_map data/structures.tsv \
+    --preprocessing ${OUT}/preprocessing \
+    --scacore ${OUT}/scacore \
+    -o ${OUT}/structure
+
+# Optional: render IC groups on the PDB (needs pymol-open-source).
+sca-pymol --structure ${OUT}/structure --groups 0 1 --views \
+    -o ${OUT}/pymol
+```
+
+Each stage writes a self-contained output directory; the next stage takes that directory as input. Per-stage flag details are in [docs/cli_reference.md](docs/cli_reference.md), and the full demo (including the `sca-prealign` path from raw sequences) lives at [demo/SH3/](demo/SH3/) — see the **Demo** section below.
+
+#### Demo prerequisites
+
+| Step | External tool | Required for | Install |
+|---|---|---|---|
+| `sca-preprocess`, `sca-core`, `sca-project` (in-sample) | — | core path | (none beyond the conda env) |
+| `sca-prealign` (raw-FASTA path) | `mafft` (default) or `clustalo` | aligning unaligned input | `conda install -c bioconda mafft` |
+| `sca-project --aligner mafft_add` | `mafft` | out-of-sample alignment | `conda install -c bioconda mafft` |
+| `sca-project --aligner hmmalign` | `hmmer` | profile-HMM alignment | `conda install -c bioconda hmmer` |
+| `sca-prealign --cluster mmseqs2` | `mmseqs2` | redundancy reduction | `conda install -c bioconda mmseqs2` |
+| `sca-pymol` | `pymol-open-source` | structure rendering | `conda install -c conda-forge pymol-open-source` |
+| `sca-pymol --format mp4` | `imageio-ffmpeg` | MP4 animation output | `pip install -e '.[mp4]'` |
+
+The full SH3 demo (`./run_demo_SH3.sh`) skips PyMOL steps automatically when `pymol-open-source` isn't importable, so a minimal install still exercises everything from preprocessing through `sca-structure`.
+
 ### Preparing raw sequences (optional)
 
 If you start from unaligned sequences, `sca-prealign` will (optionally) cluster them to reduce redundancy and then align them into an MSA suitable for `sca-preprocess`.

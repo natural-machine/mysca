@@ -21,6 +21,11 @@ COMMAND LINE ARGUMENTS:
     --chain : Chain ID within --structure. Optional; defaults to the
         first chain.
     --seq_map : Path to a TSV mapping MSA seq IDs to PDB paths.
+        Two or three tab-separated columns per row:
+        ``seq_id<TAB>pdb_path[<TAB>chain]``. Lines starting with ``#``
+        and blank lines are ignored; relative ``pdb_path`` entries
+        resolve relative to the TSV's directory. Full format spec in
+        ``mysca.structure.mapping.SequencePdbMap.from_tsv``.
     --uniprot_ids : one or more UniProt accessions (space-separated).
     --pdb_dir : directory of pre-downloaded PDB files (required with
         --uniprot_ids unless --fetch is set, in which case it defaults

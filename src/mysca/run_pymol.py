@@ -60,7 +60,9 @@ COMMAND LINE ARGUMENTS:
         'mp4' / 'both' require the optional ``imageio-ffmpeg``
         dependency.
     --mode {spin,reveal} : animation mode. 'spin' (default) rotates;
-        'reveal' is a still-camera narrative animation.
+        'reveal' is a still-camera narrative animation. See the
+        "Reveal mode" section of `docs/cli_reference.md#sca-pymol`
+        for stage scheduling details and examples.
     --reveal_schedule {cumulative,sequential,custom} : how groups
         appear across stages in --mode reveal. Default cumulative.
     --reveal_custom STAGE [STAGE ...] : custom stage schedule when

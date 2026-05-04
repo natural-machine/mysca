@@ -199,7 +199,8 @@ class PreprocessingResults:
         "filter_history": (
             "List of per-stage filter diagnostics (counts, threshold, and "
             "the statistic distribution that fed the filter). Consumed "
-            "by sca-plots for filter-diagnostic figures."
+            "by sca-plots for filter-diagnostic figures. May be None for "
+            "legacy bundles that pre-date the filter-history persistence."
         ),
     }
 
@@ -434,6 +435,21 @@ class SCAResults:
             t_dists_info.json         : t-distribution fit parameters
             evals_shuff.npy           : bootstrap eigenvalues
             sca_matrix_sector_subset.npy
+
+        Conditional outputs:
+        seq_projections.tsv (only with --save_dataframe)
+            Per-retained-sequence Uᵖ table. Columns: `seq_id`,
+            `aligned_sequence`, `Up_0` ... `Up_{n_components-1}`, plus
+            any columns merged in from `sequence_metadata`.
+        sequence_metadata.tsv (only with --seq_metadata)
+            Verbatim copy of the user-supplied per-sequence metadata
+            TSV. Carries a `seq_id` column plus arbitrary user columns
+            (e.g. taxid, kingdom, phylum); merged into
+            `seq_projections.tsv` via left-join on `seq_id` when
+            `--save_dataframe` is also set.
+        images/ (only with --plot, the default)
+            Diagnostic plots (conservation, SCA matrix, spectrum, IC
+            scatters, sector subset, sequence-projection scatter, etc.).
     """
 
     FIELD_DESCRIPTIONS = {

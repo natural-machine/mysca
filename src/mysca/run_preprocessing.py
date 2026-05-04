@@ -16,6 +16,10 @@ Optional:
     --weight_method          {sparse, gpu}. When unset, resolved via
         --accelerator. Default-with-accelerator-none: 'sparse' (CPU
         sparse-CSR). Default-with-accelerator-gpu: 'gpu'.
+    --block_size             Row-block size for the pairwise sequence-
+        similarity computation inside `weight_method='sparse'`. Default
+        512. Smaller blocks cap peak memory; larger blocks amortize
+        per-block overhead.
 
 SCA parameters (see [1] for definitions):
     --gap_truncation_thresh   (τ; default 0.4) Remove columns with gap

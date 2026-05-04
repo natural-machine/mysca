@@ -368,8 +368,15 @@ def parse_args(args):
         "where its IC-projection is maximal (this was the previous "
         "default). --weak_assignment only applies under 'exclusive'.",
     )
-    sca_params.add_argument("--weak_assignment", type=int, nargs="*",
-                        default=[])
+    sca_params.add_argument(
+        "--weak_assignment", type=int, nargs="*", default=[],
+        help="IC indices to exclude from the `exclusive`-assignment "
+        "tie-break (variadic integers). Positions that clear the "
+        "t-distribution cutoff for a listed IC will not be claimed by "
+        "that IC under `--assignment exclusive` and remain available "
+        "for assignment to other ICs. Ignored under `--assignment "
+        "overlap`.",
+    )
 
     parser.add_argument("--sectors_for", type=str, default=None,
                         help="Which target sequences to expand into the "
