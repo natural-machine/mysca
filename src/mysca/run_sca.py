@@ -611,15 +611,16 @@ def main(args):
                 if "memory" in str(exc).lower() and chunk_size > 1:
                     new_chunk = max(1, chunk_size // 2)
                     logger.warning(
-                        "Batched bootstrap OOM at chunk_size=%d; "
-                        "retrying with chunk_size=%d.",
-                        chunk_size, new_chunk,
+                        "Batched bootstrap OOM at chunk_size=%d "
+                        "(%s: %s); retrying with chunk_size=%d.",
+                        chunk_size, type(exc).__name__, exc, new_chunk,
                     )
                     chunk_size = new_chunk
                     continue
                 logger.warning(
-                    "Batched bootstrap unavailable (%s); falling back "
-                    "to per-iter loop.", exc,
+                    "Batched bootstrap unavailable: %s: %s. "
+                    "Falling back to per-iter CPU loop.",
+                    type(exc).__name__, exc,
                 )
                 use_gpu_batch = False
                 break
@@ -1015,6 +1016,7 @@ def apply_ica(
         max_attempts,
 ):
     n_attempts = 0
+    last_delta = None
     while n_attempts < max_attempts:
         n_attempts += 1
         w_ica, ica_delta = run_ica(
@@ -1023,25 +1025,37 @@ def apply_ica(
             tol=tol,
             maxiter=maxiter,
         )
+        last_delta = ica_delta
         if w_ica is None:
+            new_maxiter = maxiter * 2
+            new_rho = rho / 2
             logger.warning(
-                "ICA did not converge with parameters rho=%.3g, tol=%.3g, "
-                "maxiter=%s. (Reached tol=%.3g)",
-                rho, tol, maxiter, ica_delta,
+                "ICA attempt %d/%d did not converge: achieved Δ=%.3g "
+                "vs. tol=%.3g (ratio %.2gx) with rho=%.3g, maxiter=%s. "
+                "Retrying with rho=%.3g, maxiter=%s.",
+                n_attempts, max_attempts, ica_delta, tol,
+                ica_delta / tol if tol > 0 else float("nan"),
+                rho, maxiter, new_rho, new_maxiter,
             )
-            maxiter *= 2
-            rho /= 2
+            maxiter = new_maxiter
+            rho = new_rho
         else:
             v_ica = sig_evecs_sca @ w_ica.T
             logger.info(
-                "ICA succeeded after %d attempts. (tol=%.2g)",
-                n_attempts, tol,
+                "ICA succeeded after %d attempts. (Δ=%.2g vs. tol=%.2g)",
+                n_attempts, ica_delta, tol,
             )
             break
 
     # Check success
     if w_ica is None:
-        raise RuntimeError(f"ICA failed to converge in {max_attempts} attempts.")
+        raise RuntimeError(
+            f"ICA failed to converge in {max_attempts} attempts. "
+            f"Final achieved Δ={last_delta:.3g} vs. tol={tol:.3g} "
+            f"(ratio {last_delta/tol if tol > 0 else float('nan'):.2g}x). "
+            f"Consider lowering --ica_rho, raising --ica_tol, or "
+            f"increasing --ica_max_attempts."
+        )
 
     # Normalize V and ensure positivity of maximum entry.
     v_ica_normalized = v_ica / np.sqrt(np.sum(np.square(v_ica), axis=0))

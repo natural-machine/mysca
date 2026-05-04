@@ -37,6 +37,23 @@ def _check_msa_nonempty_after_filter(msa, stage):
     )
 
 
+def _log_cumulative_retained(msa, filter_history, log):
+    """Log the running retained fraction (vs. initial counts) after a
+    filter stage. Cheap diagnostic for spotting accidental over-filtering.
+    """
+    initial = filter_history[0]
+    n_seq_init = initial["n_sequences"]
+    n_pos_init = initial["n_positions"]
+    n_seq, n_pos = msa.shape
+    seq_pct = (n_seq / n_seq_init * 100.0) if n_seq_init else float("nan")
+    pos_pct = (n_pos / n_pos_init * 100.0) if n_pos_init else float("nan")
+    log.info(
+        "  Cumulative retained: %d/%d sequences (%.1f%%), "
+        "%d/%d positions (%.1f%%).",
+        n_seq, n_seq_init, seq_pct, n_pos, n_pos_init, pos_pct,
+    )
+
+
 def onehot_without_gap(
         msa: NDArray[np.int_],
         num_syms: int,
@@ -258,6 +275,7 @@ def preprocess_msa(
     logger.info("  MSA shape: %s (sequences x positions)", msa.shape)
     assert len(retained_positions) == msa.shape[1], "Mismatch"
     _check_msa_nonempty_after_filter(msa, filter_history[-1])
+    _log_cumulative_retained(msa, filter_history, logger)
 
     #~~~ Remove rows (i.e. sequences) with too many gaps
     logger.info("Removing sequences with too many gaps...")
@@ -287,6 +305,7 @@ def preprocess_msa(
     logger.info("  MSA shape: %s (sequences x positions)", msa.shape)
     assert len(retained_sequences) == msa.shape[0], "Mismatch"
     _check_msa_nonempty_after_filter(msa, filter_history[-1])
+    _log_cumulative_retained(msa, filter_history, logger)
 
     #~~~ Compare with reference, if specified
     if reference_id:
@@ -344,6 +363,7 @@ def preprocess_msa(
         logger.info("  MSA shape: %s (sequences x positions)", msa.shape)
         assert len(retained_sequences) == msa.shape[0], "Mismatch"
         _check_msa_nonempty_after_filter(msa, filter_history[-1])
+        _log_cumulative_retained(msa, filter_history, logger)
     else:
         ref_results = {}
 
@@ -391,6 +411,7 @@ def preprocess_msa(
     logger.info("  MSA shape: %s (sequences x positions)", msa.shape)
     assert len(retained_positions) == msa.shape[1], "Mismatch"
     _check_msa_nonempty_after_filter(msa, filter_history[-1])
+    _log_cumulative_retained(msa, filter_history, logger)
 
     #~~~ Re-compute sequence weights
     logger.info("Computing sequence weights (round 2)...")

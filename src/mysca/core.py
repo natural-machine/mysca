@@ -61,11 +61,23 @@ def run_sca(
     nsyms = naas + 1
 
     # Compute positional conservation
+    logger.info(
+        "Frequency regularization: λ=%g, nsyms=%d (uniform pseudocount "
+        "λ/nsyms=%g per amino-acid).", lam, nsyms, lam / nsyms,
+    )
     ws_norm = ws / ws.sum()
     fi0 = 1 - np.sum(ws[:,None,None] * xmsa, axis=(0,2)) / ws.sum()
-    if np.any(np.isclose(fi0, 0)):
-        # TODO: handle this
-        logger.debug("0 value encountered in SCA calculation of fi0!")
+    fi0_zero_mask = np.isclose(fi0, 0)
+    n_fi0_zero = int(np.sum(fi0_zero_mask))
+    if n_fi0_zero > 0:
+        logger.warning(
+            "%d position(s) have fi0 ≈ 0 (no observed gaps after weighting). "
+            "Downstream Di already guards the log(fi0/q0hat) term, but other "
+            "kernels consuming fi0 may produce -inf/NaN. Affected positions: "
+            "%s",
+            n_fi0_zero,
+            np.flatnonzero(fi0_zero_mask).tolist(),
+        )
     fia = (1 - lam) * np.sum(ws_norm[:,None,None] * xmsa, axis=0) + lam / nsyms
 
     # Resolve fijab kernel. freq_method is the user-facing surface
