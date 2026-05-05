@@ -800,3 +800,103 @@ def test_in_sample_invariant():
     remove_dir(prep_dir)
     remove_dir(sca_dir)
     os.remove(in_fasta)
+
+
+# --------------------------------------------------------------------------- #
+# Step 6 / Deliverable B1: --seq_metadata in sca-project.                     #
+# --------------------------------------------------------------------------- #
+
+
+def test_sca_project_seq_metadata_round_trip(prep_and_sca_dirs, tmp_path):
+    """`sca-project --seq_metadata` should: (1) persist the TSV verbatim
+    to <outdir>/sequence_metadata.tsv and (2) merge non-`seq_id`
+    columns into seq_projections.tsv when --save_dataframe is set."""
+    pd = pytest.importorskip("pandas")
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    retained = list(prep.retained_sequence_ids)[:3]
+
+    # Build a tiny FASTA from three retained training sequences (in-sample).
+    in_fasta = tmp_path / "in.fasta"
+    lines = []
+    msa_obj = prep.msa_obj_loaded
+    by_id = {rec.id: rec for rec in msa_obj}
+    for sid in retained:
+        rec = by_id[sid]
+        lines.append(f">{sid}\n{str(rec.seq).replace('-', '')}")
+    in_fasta.write_text("\n".join(lines) + "\n")
+
+    # Metadata covers only 2 of the 3 retained sequences. The third
+    # should land with NaN in the merged TSV.
+    md_path = tmp_path / "metadata.tsv"
+    md_path.write_text(
+        "seq_id\tkingdom\ttaxid\n"
+        f"{retained[0]}\tEukaryota\t9606\n"
+        f"{retained[1]}\tBacteria\t562\n"
+    )
+
+    out_dir = str(tmp_path / "out")
+    args = project_parse_args([
+        "-i", str(in_fasta),
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", out_dir,
+        "--save_dataframe",
+        "--seq_metadata", str(md_path),
+        "-v", "0",
+    ])
+    project_main(args)
+
+    # (1) sequence_metadata.tsv is a verbatim copy.
+    persisted = pd.read_csv(
+        os.path.join(out_dir, "sequence_metadata.tsv"), sep="\t",
+    )
+    expected_md = pd.read_csv(md_path, sep="\t")
+    assert list(persisted.columns) == list(expected_md.columns)
+    assert persisted.equals(expected_md)
+
+    # (2) seq_projections.tsv carries the merged columns.
+    df = pd.read_csv(
+        os.path.join(out_dir, "seq_projections.tsv"), sep="\t",
+    )
+    assert "kingdom" in df.columns
+    assert "taxid" in df.columns
+    by_seq = df.set_index("seq_id")
+    assert by_seq.loc[retained[0], "kingdom"] == "Eukaryota"
+    assert int(by_seq.loc[retained[0], "taxid"]) == 9606
+    assert by_seq.loc[retained[1], "kingdom"] == "Bacteria"
+    # The third retained seq has no metadata row → NaN in merged columns.
+    assert pd.isna(by_seq.loc[retained[2], "kingdom"])
+
+    # (3) projection.json should NOT carry the metadata (TSV only).
+    with open(os.path.join(out_dir, "projection.json")) as f:
+        proj_json = json.load(f)
+    for p in proj_json["projections"]:
+        assert "kingdom" not in p
+        assert "taxid" not in p
+
+
+def test_sca_project_seq_metadata_missing_seq_id_column_raises(
+    prep_and_sca_dirs, tmp_path,
+):
+    """A metadata TSV without a `seq_id` column must error out with a
+    pointable ValueError rather than silently merging on garbage."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    rec = prep.msa_obj_loaded[0]
+    in_fasta = tmp_path / "in.fasta"
+    in_fasta.write_text(f">{rec.id}\n{str(rec.seq).replace('-', '')}\n")
+
+    bad_md = tmp_path / "no_seq_id.tsv"
+    bad_md.write_text("identifier\tkingdom\nfoo\tEukaryota\n")
+
+    args = project_parse_args([
+        "-i", str(in_fasta),
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", str(tmp_path / "out"),
+        "--seq_metadata", str(bad_md),
+        "-v", "0",
+    ])
+    with pytest.raises(ValueError, match="seq_id"):
+        project_main(args)

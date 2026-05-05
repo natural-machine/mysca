@@ -201,6 +201,15 @@ class ProjectionResult:
             "L_orig, length of the reference MSA that new sequences "
             "were aligned to."
         ),
+        "sequence_metadata": (
+            "Optional pandas DataFrame with a `seq_id` column plus any "
+            "user-supplied columns (e.g. taxid, kingdom, phylum). "
+            "Loaded from `--seq_metadata <tsv>`; persisted as "
+            "sequence_metadata.tsv next to projection.json and merged "
+            "into seq_projections.tsv via left-join on seq_id when "
+            "--save_dataframe is set. None when no metadata was "
+            "supplied."
+        ),
     }
 
     def __init__(
@@ -210,12 +219,14 @@ class ProjectionResult:
         n_components: int,
         n_retained_positions: int,
         original_length: int,
+        sequence_metadata=None,
     ):
         self.projections = projections
         self.args = args
         self.n_components = n_components
         self.n_retained_positions = n_retained_positions
         self.original_length = original_length
+        self.sequence_metadata = sequence_metadata
 
     def info(self) -> str:
         return _format_info_table(
@@ -261,7 +272,9 @@ class ProjectionResult:
         Columns: ``seq_id``, ``aligned_sequence``, ``raw_sequence``,
         ``in_sample``, ``Up_0`` ... ``Up_{n_components-1}``,
         ``gap_frac_ic_0`` ... ``gap_frac_ic_{n_components-1}``,
-        ``n_inform_ic_0`` ... ``n_inform_ic_{n_components-1}``.
+        ``n_inform_ic_0`` ... ``n_inform_ic_{n_components-1}``. When
+        ``sequence_metadata`` is set, its non-`seq_id` columns are
+        left-joined onto the result on `seq_id`.
 
         Raises ImportError if pandas is not installed; raises
         RuntimeError if up_score has not been populated on the
@@ -291,7 +304,10 @@ class ProjectionResult:
                 for k, v in enumerate(p.informative_positions_per_ic):
                     row[f"n_inform_ic_{k}"] = int(v)
             rows.append(row)
-        return pd.DataFrame(rows)
+        df = pd.DataFrame(rows)
+        if self.sequence_metadata is not None:
+            df = df.merge(self.sequence_metadata, on="seq_id", how="left")
+        return df
 
 
 # Gap chars recognized in an aligned sequence. `-` is the universal gap
@@ -430,6 +446,7 @@ def project_sequences(
     aligner: str = "mafft_add",
     workdir: Optional[str] = None,
     aligner_kwargs: Optional[dict] = None,
+    seq_metadata_path: Optional[str] = None,
 ) -> ProjectionResult:
     """Project one or more primary sequences onto an existing SCA result.
 
@@ -449,6 +466,11 @@ def project_sequences(
             cleaned up after the call.
         aligner_kwargs: Extra kwargs forwarded to the aligner callable
             (e.g. ``{"bin_path": "/usr/local/bin/mafft", "threads": 4}``).
+        seq_metadata_path: Optional path to a TSV with a `seq_id`
+            column plus arbitrary user-supplied columns. Loaded into
+            the returned ``ProjectionResult.sequence_metadata`` and
+            merged into ``to_dataframe()`` output via left-join on
+            ``seq_id``. Mirrors ``sca-core``'s ``--seq_metadata`` flag.
 
     Returns:
         ProjectionResult with one ``SequenceProjection`` per input record.
@@ -649,10 +671,30 @@ def project_sequences(
         "sequences_fpath": os.path.abspath(sequences_fpath),
         "aligner": aligner,
     }
+
+    sequence_metadata = None
+    if seq_metadata_path is not None:
+        import pandas as pd
+        sequence_metadata = pd.read_csv(seq_metadata_path, sep="\t")
+        if "seq_id" not in sequence_metadata.columns:
+            raise ValueError(
+                f"--seq_metadata TSV {seq_metadata_path!r} is missing "
+                f"required 'seq_id' column. Got columns: "
+                f"{list(sequence_metadata.columns)!r}"
+            )
+        args["seq_metadata_path"] = os.path.abspath(seq_metadata_path)
+        logger.info(
+            "Loaded sequence metadata: %d rows, %d cols (%s)",
+            len(sequence_metadata),
+            len(sequence_metadata.columns),
+            ", ".join(sequence_metadata.columns),
+        )
+
     return ProjectionResult(
         projections=projections,
         args=args,
         n_components=n_components,
         n_retained_positions=L_proc,
         original_length=L_orig,
+        sequence_metadata=sequence_metadata,
     )

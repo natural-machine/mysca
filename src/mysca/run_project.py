@@ -38,7 +38,13 @@ COMMAND LINE ARGUMENTS:
         (unused by ``hmmalign``).
     --save_dataframe : also write ``seq_projections.tsv`` to outdir,
         with columns seq_id, aligned_sequence, raw_sequence, in_sample,
-        Up_0..Up_{n_components-1}. Requires pandas.
+        Up_0..Up_{n_components-1}, gap_frac_ic_0..gap_frac_ic_{...},
+        n_inform_ic_0..n_inform_ic_{...}. Requires pandas.
+    --seq_metadata : Optional path to a TSV with a ``seq_id`` column
+        plus arbitrary user-supplied columns. Persisted alongside
+        projection outputs as ``sequence_metadata.tsv`` and merged into
+        ``seq_projections.tsv`` via left-join on ``seq_id`` when
+        ``--save_dataframe`` is set. Mirrors sca-core's ``--seq_metadata``.
 
 -------------------------------------------------------------------------------
 OUTPUTS:
@@ -70,7 +76,13 @@ seq_projections.tsv (only when --save_dataframe)
     Tab-separated table: seq_id, aligned_sequence, raw_sequence,
     in_sample, Up_0..Up_{n_components-1},
     gap_frac_ic_0..gap_frac_ic_{n_components-1},
-    n_inform_ic_0..n_inform_ic_{n_components-1}.
+    n_inform_ic_0..n_inform_ic_{n_components-1}. With
+    --seq_metadata, the metadata's non-`seq_id` columns are merged in
+    via left-join on `seq_id`.
+
+sequence_metadata.tsv (only when --seq_metadata is supplied)
+    Verbatim copy of the user-supplied per-sequence metadata TSV.
+    Carries a `seq_id` column plus arbitrary user columns.
 
 -------------------------------------------------------------------------------
 EXAMPLE USAGE:
@@ -180,7 +192,19 @@ def parse_args(args):
         "--save_dataframe", action="store_true",
         help="Also write seq_projections.tsv to outdir, with columns "
              "seq_id, aligned_sequence, raw_sequence, in_sample, "
-             "Up_0..Up_{n_components-1}. Requires pandas.",
+             "Up_0..Up_{n_components-1}, "
+             "gap_frac_ic_0..gap_frac_ic_{n_components-1}, "
+             "n_inform_ic_0..n_inform_ic_{n_components-1}. "
+             "Requires pandas.",
+    )
+    parser.add_argument(
+        "--seq_metadata", type=str, default=None, metavar="TSV",
+        help="Optional path to a TSV with a 'seq_id' column plus any "
+             "number of additional columns (e.g. taxid, kingdom, "
+             "phylum). Persisted alongside projection outputs as "
+             "sequence_metadata.tsv and merged into seq_projections.tsv "
+             "via left-join on seq_id when --save_dataframe is set. "
+             "Mirrors sca-core's --seq_metadata.",
     )
     parser.add_argument("-v", "--verbosity", type=int, default=1,
                         help="Verbosity level (0=warnings only).")
@@ -262,7 +286,13 @@ def main(args):
         aligner=args.aligner,
         workdir=os.path.join(outdir, "_align_workdir"),
         aligner_kwargs=aligner_kwargs,
+        seq_metadata_path=args.seq_metadata,
     )
+
+    if result.sequence_metadata is not None:
+        md_path = os.path.join(outdir, "sequence_metadata.tsv")
+        result.sequence_metadata.to_csv(md_path, sep="\t", index=False)
+        logger.info("Wrote sequence metadata to %s", md_path)
 
     with open(os.path.join(outdir, PROJECT_RESULTS_FNAME), "w") as f:
         json.dump(result.to_dict(), f, indent=2)
