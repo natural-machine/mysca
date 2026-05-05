@@ -493,7 +493,7 @@ def test_sca_project_cli_writes_expected_artifacts(prep_and_sca_dirs, tmp_path):
     assert len(data["projections"]) == 2
     for p in data["projections"]:
         assert p["in_sample"] is True
-        # Step 5: per-IC quality metrics ride through projection.json.
+        # Per-IC quality metrics ride through projection.json.
         assert "gap_fraction_per_ic" in p
         assert "informative_positions_per_ic" in p
         assert isinstance(p["gap_fraction_per_ic"], list)
@@ -803,7 +803,8 @@ def test_in_sample_invariant():
 
 
 # --------------------------------------------------------------------------- #
-# Step 6 / Deliverable B1: --seq_metadata in sca-project.                     #
+# --seq_metadata sidecar TSV in sca-project: persistence + merge into          #
+# seq_projections.tsv via left-join on seq_id; missing-column error parity.   #
 # --------------------------------------------------------------------------- #
 
 

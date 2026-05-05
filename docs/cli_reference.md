@@ -564,6 +564,7 @@ Exactly one of `-s/--structure`, `--seq_map`, or `--uniprot_ids` is required.
 | `--aligner` | `mafft_add` | Out-of-sample alignment method (inherits from `sca-project`) |
 | `--align_bin` | None | Explicit path to the alignment binary |
 | `--align_threads` | 1 | Threads for the alignment tool |
+| `--seq_metadata` | None | Optional path to a TSV with a `seq_id` column plus any user-supplied columns. Forwarded to every underlying sca-project call (one shared metadata table across all PDBs in batch mode) and persisted once at the structure outdir as `sequence_metadata.tsv`. Mirrors sca-project's `--seq_metadata` |
 | `-v, --verbosity` | 1 | Verbosity level |
 
 ### `--seq_map` TSV format
@@ -580,10 +581,11 @@ Lines starting with `#` and blank lines are ignored. Relative `pdb_path` entries
 
 Writes to the specified output directory:
 
-- `structure_projection.json` — list of per-structure dicts. Each includes `structure_id`, `chain_id`, the full raw-residue-coordinate `sequence_projection` (as per `sca-project`), and `ic_pdb_residues` (per-IC list of PDB residue numbers)
+- `structure_projection.json` — list of per-structure dicts. Each includes `structure_id`, `chain_id`, the full raw-residue-coordinate `sequence_projection` (as per `sca-project`), and `ic_pdb_residues` (per-IC list of PDB residue numbers). Per-sequence metadata is **not** carried in this JSON; it lives in the sibling `sequence_metadata.tsv` (one shared file for the whole batch) when `--seq_metadata` is supplied
 - `per_structure/<structure_id>_ic_residues.tsv` — one row per (IC, residue) including both raw residue index and PDB residue number
 - `structure_args.json` — arguments used
 - `structure.log` — run log
+- `sequence_metadata.tsv` — only when `--seq_metadata` is supplied; verbatim copy of the user-supplied metadata TSV. One file covers every PDB in batch mode
 
 ### SIFTS lookup
 

@@ -51,6 +51,12 @@ COMMAND LINE ARGUMENTS:
     --aligner : Out-of-sample alignment method (default 'mafft_add').
     --align_bin : Explicit path to the alignment binary.
     --align_threads : Threads for the alignment tool.
+    --seq_metadata : Optional TSV with a ``seq_id`` column plus
+        arbitrary user columns. Forwarded to the underlying
+        sca-project call so each per-PDB ``ProjectionResult`` carries
+        ``sequence_metadata``; persisted once in the structure outdir
+        as ``sequence_metadata.tsv``. Mirrors sca-project's
+        ``--seq_metadata``.
 
 -------------------------------------------------------------------------------
 OUTPUTS:
@@ -70,6 +76,11 @@ structure_args.json
 
 structure.log
     Run log.
+
+sequence_metadata.tsv (only when --seq_metadata is supplied)
+    Verbatim copy of the user-supplied per-sequence metadata TSV. Not
+    inlined into structure_projection.json; lives in this sibling file
+    so a single TSV covers every PDB in batch mode.
 
 -------------------------------------------------------------------------------
 EXAMPLE USAGE:
@@ -219,6 +230,16 @@ def parse_args(args):
         "--align_threads", type=int, default=1,
         help="Threads for the alignment tool.",
     )
+    parser.add_argument(
+        "--seq_metadata", type=str, default=None, metavar="TSV",
+        help="Optional path to a TSV with a 'seq_id' column plus any "
+             "user-supplied columns (e.g. taxid, kingdom, phylum). "
+             "Forwarded to the underlying sca-project call so the "
+             "metadata rides on every per-PDB ProjectionResult; "
+             "persisted once at the structure outdir as "
+             "sequence_metadata.tsv. Mirrors sca-project's "
+             "--seq_metadata.",
+    )
     parser.add_argument("-v", "--verbosity", type=int, default=1,
                         help="Verbosity level (0=warnings only).")
 
@@ -296,6 +317,12 @@ def main(args):
     with open(os.path.join(outdir, STRUCTURE_ARGS_FNAME), "w") as f:
         json.dump(vars(args), f, indent=2, sort_keys=True)
 
+    if args.seq_metadata is not None:
+        import shutil
+        md_dest = os.path.join(outdir, "sequence_metadata.tsv")
+        shutil.copyfile(args.seq_metadata, md_dest)
+        logger.info("Copied sequence metadata to %s", md_dest)
+
     aligner_kwargs = {
         "bin_path": args.align_bin,
         "threads": args.align_threads,
@@ -316,6 +343,7 @@ def main(args):
             aligner=args.aligner,
             aligner_kwargs=aligner_kwargs,
             workdir=os.path.join(outdir, "_align_workdir"),
+            seq_metadata_path=args.seq_metadata,
         )
         projections.append(proj)
         _write_per_structure_tsv(outdir, proj)
@@ -367,6 +395,7 @@ def main(args):
             aligner=args.aligner,
             aligner_kwargs=aligner_kwargs,
             workdir=os.path.join(outdir, "_align_workdir"),
+            seq_metadata_path=args.seq_metadata,
         )
         projections.append(proj)
         _write_per_structure_tsv(outdir, proj)

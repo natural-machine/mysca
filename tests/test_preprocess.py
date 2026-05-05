@@ -537,8 +537,8 @@ def test_empty_msa_after_sequence_gap_filter_raises():
 
 
 # --------------------------------------------------------------------------- #
-# Step 6 / Deliverable A: descriptions thread through filters and survive     #
-# the npz round-trip; legacy bundles without the new key still load.          #
+# FASTA header descriptions thread through filters and survive the npz        #
+# round-trip; legacy bundles without the new key still load.                  #
 # --------------------------------------------------------------------------- #
 
 

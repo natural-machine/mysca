@@ -923,8 +923,8 @@ def test_project_sequences_fails_fast_on_missing_eigendecomp(
 
 
 # ---------------------------------------------------------------------- #
-# Step 5: per-IC projection quality metrics                              #
-# (gap_fraction_per_ic / informative_positions_per_ic).                  #
+# Per-IC projection quality metrics: gap_fraction_per_ic and             #
+# informative_positions_per_ic on SequenceProjection.                    #
 # ---------------------------------------------------------------------- #
 
 

@@ -62,7 +62,7 @@ def test_load_msa(fa_fpath, msa_shape_exp, symmap, expect_context):
 
 
 # --------------------------------------------------------------------------- #
-# Step 6 / Deliverable A: FASTA header description preservation.              #
+# FASTA header description preservation.                                      #
 # --------------------------------------------------------------------------- #
 
 

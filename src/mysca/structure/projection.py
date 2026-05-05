@@ -114,6 +114,7 @@ def project_pdb(
     aligner: str = "mafft_add",
     workdir: Optional[str] = None,
     aligner_kwargs: Optional[dict] = None,
+    seq_metadata_path: Optional[str] = None,
 ) -> PdbProjection:
     """Project a PDB structure's primary sequence onto an SCA result.
 
@@ -122,6 +123,10 @@ def project_pdb(
     ``msa_obj_loaded``, projection short-circuits through the in-sample
     path (no external aligner invoked). Otherwise the default
     ``mafft_add`` aligner is used.
+
+    ``seq_metadata_path``, when supplied, is forwarded to the underlying
+    ``project_sequences`` call so the resulting ``ProjectionResult``
+    carries ``sequence_metadata`` (parity with sca-project).
     """
     header = seq_id or pdb.structure_id
     if workdir is None:
@@ -143,6 +148,7 @@ def project_pdb(
             aligner=aligner,
             workdir=active_workdir,
             aligner_kwargs=aligner_kwargs,
+            seq_metadata_path=seq_metadata_path,
         )
     finally:
         if ctx is not None:
