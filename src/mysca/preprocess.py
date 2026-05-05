@@ -262,16 +262,11 @@ def preprocess_msa(
             "filter_direction": None,
         })
 
-    # Constuct the boolean MSA matrix
-    xmsa = onehot_without_gap(msa, NUM_SYMS, GAP)
-    xmsa = xmsa.astype(np.int16)
-
     #~~~ Remove columns (i.e. positions) with too many gaps
     logger.info("Removing positions with too many gaps...")
     gapfreqs = np.sum(msa == GAP, axis=0) / msa.shape[0]
     screen = gapfreqs < gap_truncation_thresh
     msa = msa[:,screen]  # keep columns with gap freq < gap_truncation_thresh
-    xmsa = xmsa[:,screen,:]
     retained_positions = retained_positions[screen]
     filter_history.append({
         "stage": "position_gap",
@@ -300,7 +295,6 @@ def preprocess_msa(
     gapfreqs = np.sum(msa == GAP, axis=1) / msa.shape[1]
     screen = gapfreqs < sequence_gap_thresh
     msa = msa[screen,:]  # keep rows with gap freq < sequence_gap_thresh
-    xmsa = xmsa[screen,:,:]
     retained_sequences = retained_sequences[screen]
     seqids = np.array([seqids_loaded[i] for i in retained_sequences])
     if descriptions_loaded is not None:
@@ -362,7 +356,6 @@ def preprocess_msa(
         logger.info("Removing sequences too dissimilar from reference...")
         screen = ref_similarity >= reference_similarity_thresh
         msa = msa[screen,:]  # keep rows with similarity >= reference_similarity_thresh
-        xmsa = xmsa[screen,:,:]
         retained_sequences = retained_sequences[screen]
         seqids = np.array([seqids_loaded[i] for i in retained_sequences])
         if descriptions_loaded is not None:
@@ -403,8 +396,7 @@ def preprocess_msa(
 
     ws = compute_weights(
         version=weight_computation_version,
-        msa=msa, 
-        xmsa=xmsa, 
+        msa=msa,
         seqsim_thresh=sequence_similarity_thresh,
         block_size=block_size,
         use_pbar=use_pbar,
@@ -417,7 +409,6 @@ def preprocess_msa(
     fi0 = np.sum(ws[:,None] * (msa == GAP), axis=0) / ws.sum()
     screen = fi0 < position_gap_thresh
     msa = msa[:,screen]
-    xmsa = xmsa[:,screen,:]
     retained_positions = retained_positions[screen]
     filter_history.append({
         "stage": "position_weighted_gap",
@@ -446,16 +437,17 @@ def preprocess_msa(
 
     ws = compute_weights(
         version=weight_computation_version,
-        msa=msa, 
-        xmsa=xmsa, 
+        msa=msa,
         seqsim_thresh=sequence_similarity_thresh,
         block_size=block_size,
         use_pbar=use_pbar,
         gap=GAP,
         num_aas=NUM_AAS
     )
-    
+
     logger.info("Effective sample size (sum of weights): %s", ws.sum())
+
+    xmsa = onehot_without_gap(msa, NUM_SYMS, GAP)
 
     preprocessing_results = {
         "msa_binary3d": xmsa.astype(int),
