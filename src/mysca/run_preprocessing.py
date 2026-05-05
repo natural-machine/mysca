@@ -275,8 +275,8 @@ def main(args):
 
     # Load MSA
     logger.info("Loading MSA (%s) from: %s", args.input_format, msa_fpath)
-    (msa_obj_loaded, msa_loaded, seqids_loaded, sym_map,
-     n_excluded, n_internal_stop) = load_msa(
+    (msa_obj_loaded, msa_loaded, seqids_loaded, descriptions_loaded,
+     sym_map, n_excluded, n_internal_stop) = load_msa(
         msa_fpath, format=args.input_format,
         mapping=sym_map,
     )
@@ -303,6 +303,7 @@ def main(args):
         block_size=block_size,
         n_excluded_pre_load=n_excluded,
         n_internal_stop_pre_load=n_internal_stop,
+        seq_descriptions=descriptions_loaded,
     )
 
     results = PreprocessingResults.from_preprocess_output(

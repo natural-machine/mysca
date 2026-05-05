@@ -250,7 +250,7 @@ def test_preprocessing(
         gap_value=gap_value,
     )
 
-    msa_obj, msa_loaded, msa_ids_loaded, _, _, _ = load_msa(
+    msa_obj, msa_loaded, msa_ids_loaded, _, _, _, _ = load_msa(
         fa_fpath, format="fasta", mapping=symmap,
     )
     msa_obj_length = len(msa_obj)
@@ -393,7 +393,7 @@ def test_load_msa_strips_trailing_stop_and_drops_internal_stop(tmp_path):
         ">internal\nAC*DE-\n"
     )
     sym_map = SymMap("ACDE", "-")
-    msa_obj, _, msa_ids, _, n_excluded, n_internal_stop = load_msa(
+    msa_obj, _, msa_ids, _, _, n_excluded, n_internal_stop = load_msa(
         str(fa), format="fasta", mapping=sym_map,
     )
     # 1 internal-stop sequence dropped; 0 excluded-symbol drops because
@@ -482,7 +482,7 @@ def test_filter_history_omits_excluded_symbols_stage_when_none_dropped():
 def test_missing_reference_id_raises_clear_error():
     """B1: an unknown --reference must raise ValueError with the offending ID,
     not an opaque IndexError."""
-    msa_obj, msa_loaded, msa_ids_loaded, _, _, _ = load_msa(
+    msa_obj, msa_loaded, msa_ids_loaded, _, _, _, _ = load_msa(
         TEST_MSA4, format="fasta", mapping=SYMMAP2,
     )
     with pytest.raises(ValueError, match="not_a_real_id"):
@@ -501,7 +501,7 @@ def test_missing_reference_id_raises_clear_error():
 def test_empty_msa_after_position_gap_filter_raises():
     """B5: gap_truncation_thresh=0 drops every position; preprocessing must
     raise rather than silently producing an empty MSA."""
-    msa_obj, msa_loaded, msa_ids_loaded, _, _, _ = load_msa(
+    msa_obj, msa_loaded, msa_ids_loaded, _, _, _, _ = load_msa(
         TEST_MSA4, format="fasta", mapping=SYMMAP2,
     )
     with pytest.raises(ValueError, match="position gap"):
@@ -520,7 +520,7 @@ def test_empty_msa_after_position_gap_filter_raises():
 def test_empty_msa_after_sequence_gap_filter_raises():
     """B5: sequence_gap_thresh=0 drops every sequence; preprocessing must
     raise rather than silently producing an empty MSA."""
-    msa_obj, msa_loaded, msa_ids_loaded, _, _, _ = load_msa(
+    msa_obj, msa_loaded, msa_ids_loaded, _, _, _, _ = load_msa(
         TEST_MSA4, format="fasta", mapping=SYMMAP2,
     )
     with pytest.raises(ValueError, match="sequence gap"):
@@ -534,3 +534,114 @@ def test_empty_msa_after_sequence_gap_filter_raises():
             sequence_similarity_thresh=1.0,
             position_gap_thresh=1.0,
         )
+
+
+# --------------------------------------------------------------------------- #
+# Step 6 / Deliverable A: descriptions thread through filters and survive     #
+# the npz round-trip; legacy bundles without the new key still load.          #
+# --------------------------------------------------------------------------- #
+
+
+def test_preprocessing_preserves_descriptions_through_filters(tmp_path):
+    """`seq_descriptions` parallel to `seqids` survives every filter stage,
+    including a sequence-gap drop and a reference-similarity drop."""
+    fa = tmp_path / "filtered.fasta"
+    fa.write_text(
+        ">keepA OS=Species A\nACDEF\n"
+        ">keepB OS=Species B\nACDEF\n"
+        ">drop_for_gaps too gappy\n--D--\n"
+        ">far_from_ref species Z\nFEDCA\n"
+    )
+    sym_map = SymMap("ACDEF", "-")
+    _, msa_loaded, msa_ids, msa_descriptions, _, _, _ = load_msa(
+        str(fa), format="fasta", mapping=sym_map,
+    )
+
+    # Filter: drop the third sequence via sequence_gap, drop the fourth
+    # via reference-similarity to "keepA".
+    _, results = preprocess_msa(
+        msa_loaded, list(msa_ids),
+        mapping=sym_map,
+        gap_truncation_thresh=1.0,
+        sequence_gap_thresh=0.5,
+        reference_id="keepA",
+        reference_similarity_thresh=0.5,
+        sequence_similarity_thresh=1.0,
+        position_gap_thresh=1.0,
+        seq_descriptions=list(msa_descriptions),
+    )
+
+    retained_ids = list(results["retained_sequence_ids"])
+    retained_descs = results["retained_sequence_descriptions"]
+    assert retained_ids == ["keepA", "keepB"]
+    assert retained_descs == ["OS=Species A", "OS=Species B"]
+    # Confirm None contract: if no descriptions are passed, the output
+    # carries None (back-compat).
+    _, results_no_desc = preprocess_msa(
+        msa_loaded, list(msa_ids),
+        mapping=sym_map,
+        gap_truncation_thresh=1.0,
+        sequence_gap_thresh=0.5,
+        reference_id="keepA",
+        reference_similarity_thresh=0.5,
+        sequence_similarity_thresh=1.0,
+        position_gap_thresh=1.0,
+    )
+    assert results_no_desc["retained_sequence_descriptions"] is None
+
+
+def test_preprocessing_results_descriptions_round_trip(tmp_path):
+    """PreprocessingResults.save() persists descriptions and load()
+    reads them back identically."""
+    from mysca.results import PreprocessingResults
+    fa = tmp_path / "rt.fasta"
+    fa.write_text(
+        ">a OS=A\nACDEF\n"
+        ">b OS=B\nACDEF\n"
+    )
+    sym_map = SymMap("ACDEF", "-")
+    _, msa_loaded, msa_ids, msa_descriptions, _, n_excl, n_int = load_msa(
+        str(fa), format="fasta", mapping=sym_map,
+    )
+    msa, results_dict = preprocess_msa(
+        msa_loaded, list(msa_ids),
+        mapping=sym_map,
+        gap_truncation_thresh=1.0,
+        sequence_gap_thresh=1.0,
+        reference_id=None,
+        reference_similarity_thresh=0.0,
+        sequence_similarity_thresh=1.0,
+        position_gap_thresh=1.0,
+        seq_descriptions=list(msa_descriptions),
+    )
+    results = PreprocessingResults.from_preprocess_output(
+        msa, results_dict, sym_map=sym_map,
+    )
+    assert results.retained_sequence_descriptions == ["OS=A", "OS=B"]
+
+    outdir = tmp_path / "out"
+    results.save(str(outdir))
+    reloaded = PreprocessingResults.load(str(outdir))
+    assert reloaded.retained_sequence_descriptions == ["OS=A", "OS=B"]
+
+
+def test_preprocessing_results_load_legacy_bundle_without_descriptions(tmp_path):
+    """Legacy bundles produced before description preservation lack the
+    `retained_sequence_descriptions` key; load() must default to None."""
+    from mysca.results import (
+        PreprocessingResults, PREPROCESSING_RESULTS_FNAME,
+    )
+    # Build a minimal results bundle the way pre-step-6 mysca did.
+    outdir = tmp_path / "legacy"
+    outdir.mkdir()
+    np.savez(
+        outdir / PREPROCESSING_RESULTS_FNAME,
+        msa=np.array([[0, 1], [1, 0]], dtype=int),
+        retained_sequences=np.array([0, 1]),
+        retained_positions=np.array([0, 1]),
+        retained_sequence_ids=np.array(["a", "b"]),
+        sequence_weights=np.array([1.0, 1.0]),
+        fi0_pretruncation=np.array([0.0, 0.0]),
+    )
+    reloaded = PreprocessingResults.load(str(outdir))
+    assert reloaded.retained_sequence_descriptions is None

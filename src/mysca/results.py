@@ -136,12 +136,17 @@ class PreprocessingResults:
 
     On-disk format (usable without mysca):
         preprocessing_results.npz
-            msa                   : int array (M x L), processed MSA
-            retained_sequences    : int array, indices into original MSA rows
-            retained_positions    : int array, indices into original MSA columns
-            retained_sequence_ids : str array, IDs of retained sequences
-            sequence_weights      : float array (M,)
-            fi0_pretruncation     : float array, gap freq before truncation
+            msa                            : int array (M x L), processed MSA
+            retained_sequences             : int array, indices into original MSA rows
+            retained_positions             : int array, indices into original MSA columns
+            retained_sequence_ids          : str array, IDs of retained sequences
+            retained_sequence_descriptions : str array (optional, may be
+                                             absent from legacy bundles), parallel
+                                             to retained_sequence_ids; carries the
+                                             trailing FASTA header description for
+                                             each retained sequence
+            sequence_weights               : float array (M,)
+            fi0_pretruncation              : float array, gap freq before truncation
         preprocessing_args.json   : dict of preprocessing parameters
         sym2int.json              : dict mapping symbols to integers
         msa_binary2d_sp.npz       : sparse CSR (M x 20L), one-hot MSA
@@ -175,6 +180,13 @@ class PreprocessingResults:
         "retained_sequence_ids": (
             "IDs (strings) of retained sequences, aligned to "
             "retained_sequences. Preserves input order."
+        ),
+        "retained_sequence_descriptions": (
+            "Trailing FASTA header descriptions (everything after the "
+            "first whitespace in each header), parallel to "
+            "retained_sequence_ids. Empty string when a header has no "
+            "trailing description. May be None for legacy bundles "
+            "that pre-date description preservation."
         ),
         "sequence_weights": (
             "Sampling weights per retained sequence (1D float array of "
@@ -228,12 +240,14 @@ class PreprocessingResults:
         sym_map=None,
         msa_obj_loaded=None,
         filter_history=None,
+        retained_sequence_descriptions=None,
     ):
         self.msa = msa
         self.msa_binary3d = msa_binary3d
         self.retained_sequences = retained_sequences
         self.retained_positions = retained_positions
         self.retained_sequence_ids = retained_sequence_ids
+        self.retained_sequence_descriptions = retained_sequence_descriptions
         self.sequence_weights = sequence_weights
         self.fi0_pretruncation = fi0_pretruncation
         self.args = args
@@ -266,20 +280,30 @@ class PreprocessingResults:
             sym_map=sym_map,
             msa_obj_loaded=msa_obj_loaded,
             filter_history=results_dict.get("filter_history"),
+            retained_sequence_descriptions=results_dict.get(
+                "retained_sequence_descriptions",
+            ),
         )
 
     def save(self, outdir):
         """Save all results to the given directory."""
         os.makedirs(outdir, exist_ok=True)
 
-        np.savez(
-            os.path.join(outdir, PREPROCESSING_RESULTS_FNAME),
+        npz_kwargs = dict(
             msa=self.msa,
             retained_sequences=self.retained_sequences,
             retained_positions=self.retained_positions,
             retained_sequence_ids=self.retained_sequence_ids,
             sequence_weights=self.sequence_weights,
             fi0_pretruncation=self.fi0_pretruncation,
+        )
+        if self.retained_sequence_descriptions is not None:
+            npz_kwargs["retained_sequence_descriptions"] = np.asarray(
+                self.retained_sequence_descriptions, dtype=object,
+            )
+        np.savez(
+            os.path.join(outdir, PREPROCESSING_RESULTS_FNAME),
+            **npz_kwargs,
         )
 
         with open(os.path.join(outdir, PREPROCESSING_ARGS_FNAME), "w") as f:
@@ -329,6 +353,11 @@ class PreprocessingResults:
         retained_sequence_ids = data["retained_sequence_ids"]
         sequence_weights = data["sequence_weights"]
         fi0_pretruncation = data["fi0_pretruncation"]
+        retained_sequence_descriptions = (
+            list(data["retained_sequence_descriptions"])
+            if "retained_sequence_descriptions" in data.files
+            else None
+        )
 
         # Load args
         args_path = os.path.join(dirpath, PREPROCESSING_ARGS_FNAME)
@@ -386,6 +415,7 @@ class PreprocessingResults:
             sym_map=sym_map,
             msa_obj_loaded=msa_obj_loaded,
             filter_history=filter_history,
+            retained_sequence_descriptions=retained_sequence_descriptions,
         )
 
 

@@ -69,22 +69,23 @@ def onehot_without_gap(
 
 
 def preprocess_msa(
-        msa: NDArray[np.int_], 
-        seqids: list[str], 
-        mapping: SymMap = DEFAULT_MAP, 
-        *, 
+        msa: NDArray[np.int_],
+        seqids: list[str],
+        mapping: SymMap = DEFAULT_MAP,
+        *,
         gap_truncation_thresh: float = 0.4,
-        sequence_gap_thresh: float = 0.2, 
+        sequence_gap_thresh: float = 0.2,
         reference_id: str = None,
         reference_similarity_thresh: float = 0.2,
         sequence_similarity_thresh: float = 0.8,
-        position_gap_thresh: float = 0.2, 
+        position_gap_thresh: float = 0.2,
         use_pbar: bool = False,
-        verbosity: int = 1, 
+        verbosity: int = 1,
         weight_computation_version: str = "sparse",
         block_size: int = 1024,
         n_excluded_pre_load: int = 0,
         n_internal_stop_pre_load: int = 0,
+        seq_descriptions: list[str] | None = None,
 ):
     """Run preprocessing steps on a given MSA matrix.
 
@@ -93,6 +94,14 @@ def preprocess_msa(
     Args:
         (NDArray[np.int_]) msa: MSA object.
         (list[str]) seqids: IDs of sequences in the MSA.
+        (list[str] | None) seq_descriptions: Optional FASTA header
+            descriptions parallel to ``seqids`` (everything after the
+            first whitespace in each header). When supplied, threaded
+            through the same filter chain as ``seqids`` so the surviving
+            descriptions land alongside ``retained_sequence_ids`` in the
+            returned dict under ``retained_sequence_descriptions``.
+            When ``None`` (the default), the returned dict's
+            ``retained_sequence_descriptions`` key is also ``None``.
         (SymMap) mapping: SymMap mapping symbols to integer values.
         (float) gap_truncation_thresh: Freq of gaps τ above which a position 
             (i.e. column) is removed for excessive gaps. Default 0.4.
@@ -169,6 +178,15 @@ def preprocess_msa(
     msa = msa_loaded.copy()
     seqids_loaded = seqids
     seqids = seqids_loaded.copy()
+    descriptions_loaded = (
+        list(seq_descriptions) if seq_descriptions is not None else None
+    )
+    if descriptions_loaded is not None and len(descriptions_loaded) != len(seqids_loaded):
+        raise ValueError(
+            f"seq_descriptions length {len(descriptions_loaded)} does not "
+            f"match seqids length {len(seqids_loaded)}; descriptions must "
+            "be parallel to IDs."
+        )
     num_seqs, num_pos = msa_loaded.shape
 
     if not isinstance(msa_loaded, np.ndarray):
@@ -285,6 +303,10 @@ def preprocess_msa(
     xmsa = xmsa[screen,:,:]
     retained_sequences = retained_sequences[screen]
     seqids = np.array([seqids_loaded[i] for i in retained_sequences])
+    if descriptions_loaded is not None:
+        descriptions = [descriptions_loaded[i] for i in retained_sequences]
+    else:
+        descriptions = None
     filter_history.append({
         "stage": "sequence_gap",
         "label": "sequence gap (γ_seq)",
@@ -343,6 +365,12 @@ def preprocess_msa(
         xmsa = xmsa[screen,:,:]
         retained_sequences = retained_sequences[screen]
         seqids = np.array([seqids_loaded[i] for i in retained_sequences])
+        if descriptions_loaded is not None:
+            descriptions = [
+                descriptions_loaded[i] for i in retained_sequences
+            ]
+        else:
+            descriptions = None
         filter_history.append({
             "stage": "reference_similarity",
             "label": "reference similarity (Δ)",
@@ -434,6 +462,7 @@ def preprocess_msa(
         "retained_sequences": retained_sequences,
         "retained_positions": retained_positions,
         "retained_sequence_ids": seqids,
+        "retained_sequence_descriptions": descriptions,
         "sequence_weights": ws,
         "fi0_pretruncation": fi0,
         "reference_results": ref_results,

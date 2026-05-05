@@ -55,7 +55,7 @@ def load_msa(
         format: str = "fasta",
         mapping: SymMap = None,
         verbosity: int = 2,
-) -> tuple[MultipleSeqAlignment, NDArray[np.int_], list, SymMap, int, int]:
+) -> tuple[MultipleSeqAlignment, NDArray[np.int_], list, list, SymMap, int, int]:
     """Load an MSA fasta file and return the MSA object, matrix, and IDs.
 
     Performs three filter steps on the input records, in order:
@@ -80,7 +80,11 @@ def load_msa(
     Returns:
         MultipleSeqAlignment: MSA object (post-filter).
         NDArray[int]: Matrix representation of the MSA.
-        list[str]: Retained sequence IDs.
+        list[str]: Retained sequence IDs (first whitespace-delimited
+            token of each FASTA header).
+        list[str]: Retained sequence header descriptions (everything
+            after the first whitespace, parallel to the IDs list; empty
+            string when a header has no trailing description).
         SymMap: Mapping from amino acids to index used to compute MSA matrix.
         int: Number of input sequences dropped at the excluded-symbol step.
         int: Number of input sequences dropped because they contained an
@@ -169,9 +173,21 @@ def load_msa(
         [mapping[aa] for aa in record.seq] for record in msa_obj
     ])
 
-    # Retrieve MSA sequence IDs.
+    # Retrieve MSA sequence IDs and header descriptions. Biopython stores
+    # the full header in `.description`; the trailing portion is
+    # everything after the id prefix (or the empty string when there's
+    # no whitespace in the header).
     msa_ids = [record.id for record in msa_obj]
-    return msa_obj, msa_matrix, msa_ids, mapping, n_removed, n_internal_stop
+    msa_descriptions = [
+        record.description[len(record.id):].lstrip()
+        if record.description and record.description.startswith(record.id)
+        else (record.description or "")
+        for record in msa_obj
+    ]
+    return (
+        msa_obj, msa_matrix, msa_ids, msa_descriptions,
+        mapping, n_removed, n_internal_stop,
+    )
 
 
 def load_pdb_structure(

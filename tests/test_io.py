@@ -34,7 +34,7 @@ SYMMAP1_EXC_X = SymMap("ACDEF", '-', "X")
 ])
 def test_load_msa(fa_fpath, msa_shape_exp, symmap, expect_context):
     with expect_context:
-        msa_obj, msa, msa_ids, _, _, _ = load_msa(
+        msa_obj, msa, msa_ids, _, _, _, _ = load_msa(
             fa_fpath, format="fasta",
             mapping=symmap
         )
@@ -59,5 +59,32 @@ def test_load_msa(fa_fpath, msa_shape_exp, symmap, expect_context):
             msg = f"Expected msa_obj length {msa_shape_exp[0]}. Got {len(msa_obj)}."
             errors.append(msg)
         assert not errors, "Errors occurred:\n{}".format("\n".join(errors))
+
+
+# --------------------------------------------------------------------------- #
+# Step 6 / Deliverable A: FASTA header description preservation.              #
+# --------------------------------------------------------------------------- #
+
+
+def test_load_msa_preserves_descriptions(tmp_path):
+    """The trailing portion of every FASTA header (everything after the
+    first whitespace) survives ``load_msa`` parallel to the IDs."""
+    fa = tmp_path / "headers.fasta"
+    fa.write_text(
+        ">seq_one OS=Homo sapiens OX=9606 GN=BRCA1\nACDE-\n"
+        ">seq_two [Mus musculus]\nACDEF\n"
+        ">seq_three\nACDEF\n"
+    )
+    sym_map = SymMap("ACDEF", "-")
+    _, _, msa_ids, msa_descriptions, _, _, _ = load_msa(
+        str(fa), format="fasta", mapping=sym_map,
+    )
+    assert msa_ids == ["seq_one", "seq_two", "seq_three"]
+    assert msa_descriptions == [
+        "OS=Homo sapiens OX=9606 GN=BRCA1",
+        "[Mus musculus]",
+        "",
+    ]
+    assert len(msa_ids) == len(msa_descriptions)
     
     
