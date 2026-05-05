@@ -60,6 +60,7 @@ from mysca.pl import (
     plot_sequence_similarity,
     plot_seq_projection_2d,
     plot_t_distributions,
+    resolve_color_values,
 )
 
 
@@ -330,12 +331,11 @@ def _replay_scacore(
                         list(sca.sequence_metadata.columns),
                     )
                 else:
-                    md_indexed = sca.sequence_metadata.set_index(
-                        "seq_id", drop=False,
+                    color_values = resolve_color_values(
+                        sca.sequence_metadata,
+                        list(prep.retained_sequence_ids),
+                        seq_proj_color_by,
                     )
-                    color_values = md_indexed[seq_proj_color_by].reindex(
-                        list(prep.retained_sequence_ids)
-                    ).to_numpy()
                     color_label = seq_proj_color_by
             plot_seq_projection_2d(
                 up_seq, (0, 1), imgdir,

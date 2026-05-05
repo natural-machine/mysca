@@ -6,6 +6,7 @@ computation lives in preprocess / core / run_sca. Every function closes
 its figure on the way out, so they are safe to call in a loop.
 """
 
+from mysca.pl._coloring import resolve_color_values
 from mysca.pl.plotting import (
     plot_conservation,
     plot_conservation_positional,
@@ -44,4 +45,5 @@ __all__ = [
     "plot_sequence_similarity",
     "plot_seq_projection_2d",
     "plot_t_distributions",
+    "resolve_color_values",
 ]

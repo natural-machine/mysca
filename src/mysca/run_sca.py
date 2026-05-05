@@ -213,6 +213,7 @@ from mysca.pl import (
     plot_sequence_similarity,
     plot_seq_projection_2d,
     plot_t_distributions,
+    resolve_color_values,
 )
 
 SCARUN_LOG_FNAME = "scarun.log"
@@ -968,7 +969,7 @@ def main(args):
                     list(results.sequence_metadata.columns),
                 )
             else:
-                color_values = _resolve_color_values(
+                color_values = resolve_color_values(
                     results.sequence_metadata,
                     list(prep.retained_sequence_ids),
                     SEQ_PROJ_COLOR_BY,
@@ -1296,16 +1297,6 @@ IC_AXES_2D = EV_AXES_2D
 IC_AXES_3D = EV_AXES_3D
 
 
-def _resolve_color_values(metadata_df, retained_sequence_ids, column):
-    """Look up metadata_df[column] aligned to retained_sequence_ids.
-
-    Returns a 1D array of length len(retained_sequence_ids). Sequences
-    absent from the metadata get None (categorical) or NaN (numeric),
-    handled by the plotter.
-    """
-    md_indexed = metadata_df.set_index("seq_id", drop=False)
-    series = md_indexed[column].reindex(retained_sequence_ids)
-    return series.to_numpy()
 
 
 def make_plots(

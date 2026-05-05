@@ -483,6 +483,9 @@ Exactly one of `-i/--input_fpath` or (`--from_msa` + `--seq_id`) is required.
 | `--align_threads` | 1 | Threads for the alignment tool (unused by `hmmalign`) |
 | `--save_dataframe` | off | Also write `seq_projections.tsv` with columns `seq_id`, `aligned_sequence`, `raw_sequence`, `in_sample`, `Up_0..Up_{n_components-1}`, `gap_frac_ic_0..gap_frac_ic_{n_components-1}`, `n_inform_ic_0..n_inform_ic_{n_components-1}`. When `--seq_metadata` is also supplied, the metadata's non-`seq_id` columns are merged in via left-join on `seq_id`. Requires pandas |
 | `--seq_metadata` | None | Optional path to a TSV with a `seq_id` column plus any user-supplied columns (e.g. taxid, kingdom, phylum). Persisted alongside projection outputs as `sequence_metadata.tsv` and merged into `seq_projections.tsv` via left-join on `seq_id` when `--save_dataframe` is also set. Mirrors `sca-core`'s `--seq_metadata` |
+| `--plot` / `--no-plot` | on | Write projection plots to `outdir/images/`. Default: on. Pass `--no-plot` to skip plot generation entirely (no `images/` directory is created). Mirrors `sca-core`'s `--plot`/`--no-plot` |
+| `--seq_proj_axes` | `0,1` | One or more `i,j` axis pairs (zero-indexed) for the sequence-projection scatter plot(s) — e.g. `--seq_proj_axes 0,1 0,2 1,2` produces three PNGs. Default: `0,1`. Pairs that exceed `n_components` are skipped with a warning |
+| `--seq_proj_color_by` | None | Optional column name in `--seq_metadata` to color the projection plot(s) by. Numeric columns get a colorbar; categorical columns get a legend. Mirrors `sca-core`'s `--seq_proj_color_by`; ignored with a warning when `--seq_metadata` is missing or the column is absent |
 | `-v, --verbosity` | 1 | Verbosity level |
 
 ### Output
@@ -496,6 +499,7 @@ Writes to the specified output directory:
 - `projection_args.json` — arguments used
 - `projection.log` — run log
 - `from_msa_input.fasta` — only when `--from_msa` is used: the materialized one-record FASTA actually fed to the projector
+- `images/` — only when `--plot` is on (the default); one `seq_proj_ic{i}v{j}[_by_<col>].png` per axis pair from `--seq_proj_axes`, plotting the per-sequence Uᵖ scores. Optionally colored by `--seq_proj_color_by`
 
 ### External Binaries
 

@@ -45,6 +45,18 @@ COMMAND LINE ARGUMENTS:
         projection outputs as ``sequence_metadata.tsv`` and merged into
         ``seq_projections.tsv`` via left-join on ``seq_id`` when
         ``--save_dataframe`` is set. Mirrors sca-core's ``--seq_metadata``.
+    --plot / --no-plot : write projection plots to ``outdir/images/``.
+        Default: on. Pass ``--no-plot`` to skip plot generation
+        entirely (no ``images/`` directory is created). Mirrors
+        sca-core's ``--plot``/``--no-plot``.
+    --seq_proj_axes : one or more ``i,j`` axis pairs (zero-indexed) for
+        the sequence-projection scatter plot(s). Default: ``0,1``.
+        Pairs that exceed ``n_components`` are skipped with a warning.
+    --seq_proj_color_by : Optional column name in ``--seq_metadata`` to
+        color the projection plot(s) by. Numeric → colorbar,
+        categorical → legend. Mirrors sca-core's
+        ``--seq_proj_color_by``; ignored with a warning when
+        ``--seq_metadata`` is missing or the column is absent.
 
 -------------------------------------------------------------------------------
 OUTPUTS:
@@ -80,6 +92,12 @@ seq_projections.tsv (only when --save_dataframe)
     --seq_metadata, the metadata's non-`seq_id` columns are merged in
     via left-join on `seq_id`.
 
+images/ (only when --plot, the default)
+    One ``seq_proj_ic{i}v{j}[_by_<col>].png`` per axis pair from
+    ``--seq_proj_axes`` (default ``0,1``), plotting the per-sequence
+    Uᵖ scores. Optionally colored by ``--seq_proj_color_by`` (numeric
+    column → colorbar, categorical → legend).
+
 sequence_metadata.tsv (only when --seq_metadata is supplied)
     Verbatim copy of the user-supplied per-sequence metadata TSV.
     Carries a `seq_id` column plus arbitrary user columns.
@@ -109,9 +127,11 @@ import os
 import re
 import sys
 
+import numpy as np
 from Bio import SeqIO
 
 from mysca.logging_config import configure_logging
+from mysca.pl import plot_seq_projection_2d, resolve_color_values
 from mysca.project import project_sequences, ALIGNERS
 
 
@@ -127,6 +147,102 @@ PROJECT_ARGS_FNAME = "projection_args.json"
 PER_SEQUENCE_DIRNAME = "per_sequence"
 
 logger = logging.getLogger("mysca.run_project")
+
+
+def _parse_axis_pair(token: str) -> tuple[int, int]:
+    """argparse type for ``--seq_proj_axes``: parse one ``i,j`` token."""
+    parts = token.split(",")
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError(
+            f"--seq_proj_axes expects 'i,j' tokens; got {token!r}"
+        )
+    try:
+        i, j = int(parts[0]), int(parts[1])
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"--seq_proj_axes expects integer indices; got {token!r}"
+        )
+    if i < 0 or j < 0 or i == j:
+        raise argparse.ArgumentTypeError(
+            f"--seq_proj_axes expects distinct non-negative indices; "
+            f"got {token!r}"
+        )
+    return (i, j)
+
+
+def _resolve_seq_proj_color(sequence_metadata, seq_ids, column):
+    """Mirror sca-core's argparse-warning paths for --seq_proj_color_by.
+
+    Returns (color_values, color_label) — both None when the column
+    can't be resolved (with a warning logged), or a numpy array + the
+    column name when it can.
+    """
+    if sequence_metadata is None:
+        logger.warning(
+            "--seq_proj_color_by=%r ignored: --seq_metadata not "
+            "supplied.", column,
+        )
+        return None, None
+    if column not in sequence_metadata.columns:
+        logger.warning(
+            "--seq_proj_color_by=%r ignored: column not found. "
+            "Available: %s",
+            column, list(sequence_metadata.columns),
+        )
+        return None, None
+    return resolve_color_values(sequence_metadata, seq_ids, column), column
+
+
+def _emit_seq_proj_plots(result, outdir, args):
+    """Render one PNG per ``--seq_proj_axes`` pair into ``<outdir>/images/``.
+
+    Skips silently with a warning if any projection lacks ``up_score``
+    (legacy sca-core bundles without the eigendecomposition fields).
+    """
+    if any(p.up_score is None for p in result.projections):
+        logger.warning(
+            "Skipping projection plots: up_score is None on some "
+            "projections (the source SCAResults likely lacks the "
+            "eigendecomposition fields)."
+        )
+        return
+
+    up = np.array(
+        [p.up_score for p in result.projections], dtype=float,
+    )
+    seq_ids = [p.seq_id for p in result.projections]
+    n_components = up.shape[1]
+
+    color_values, color_label = None, None
+    if args.seq_proj_color_by is not None:
+        color_values, color_label = _resolve_seq_proj_color(
+            result.sequence_metadata, seq_ids, args.seq_proj_color_by,
+        )
+
+    imgdir = os.path.join(outdir, "images")
+    os.makedirs(imgdir, exist_ok=True)
+    n_emitted = 0
+    for axi, axj in args.seq_proj_axes:
+        if axi >= n_components or axj >= n_components:
+            logger.warning(
+                "Skipping seq_proj plot (%d, %d): only n_components=%d "
+                "ICs available.", axi, axj, n_components,
+            )
+            continue
+        plot_seq_projection_2d(
+            up, (axi, axj), imgdir,
+            color_values=color_values, color_label=color_label,
+        )
+        n_emitted += 1
+    if n_emitted == 0:
+        logger.warning(
+            "No projection plots emitted (every requested axis pair "
+            "exceeded n_components=%d).", n_components,
+        )
+    else:
+        logger.info(
+            "Wrote %d projection plot(s) to %s", n_emitted, imgdir,
+        )
 
 
 def parse_args(args):
@@ -205,6 +321,28 @@ def parse_args(args):
              "sequence_metadata.tsv and merged into seq_projections.tsv "
              "via left-join on seq_id when --save_dataframe is set. "
              "Mirrors sca-core's --seq_metadata.",
+    )
+    parser.add_argument(
+        "--plot", default=True, action=argparse.BooleanOptionalAction,
+        help="Write projection plots to outdir/images/ "
+             "(seq_proj_ic{i}v{j}[_by_<col>].png, one per axis pair from "
+             "--seq_proj_axes). Default: on. Pass --no-plot to skip plot "
+             "generation entirely (no images/ directory is created).",
+    )
+    parser.add_argument(
+        "--seq_proj_axes", type=_parse_axis_pair, nargs="+",
+        default=[(0, 1)], metavar="I,J",
+        help="One or more 'i,j' axis pairs (zero-indexed) for the "
+             "sequence-projection scatter plot(s). Default: '0,1'. "
+             "Pairs that exceed n_components are skipped with a warning.",
+    )
+    parser.add_argument(
+        "--seq_proj_color_by", type=str, default=None, metavar="COLUMN",
+        help="Optional column name in --seq_metadata to color the "
+             "seq_proj_ic*.png plot(s) by. Numeric columns get a "
+             "colorbar; categorical columns get a legend. Mirrors "
+             "sca-core's --seq_proj_color_by; ignored with a warning "
+             "when --seq_metadata is missing or the column is absent.",
     )
     parser.add_argument("-v", "--verbosity", type=int, default=1,
                         help="Verbosity level (0=warnings only).")
@@ -319,6 +457,9 @@ def main(args):
         df_path = os.path.join(outdir, "seq_projections.tsv")
         df.to_csv(df_path, sep="\t", index=False)
         logger.info("Wrote sequence projection DataFrame to %s", df_path)
+
+    if args.plot:
+        _emit_seq_proj_plots(result, outdir, args)
 
     n_in = sum(1 for p in result.projections if p.in_sample)
     n_out = len(result.projections) - n_in

@@ -901,3 +901,162 @@ def test_sca_project_seq_metadata_missing_seq_id_column_raises(
     ])
     with pytest.raises(ValueError, match="seq_id"):
         project_main(args)
+
+
+# --------------------------------------------------------------------------- #
+# sca-project projection plot output: --plot/--no-plot, --seq_proj_axes,      #
+# --seq_proj_color_by behavior; missing-metadata warning path.                #
+# --------------------------------------------------------------------------- #
+
+
+def _build_in_sample_fasta(prep, tmp_path, n=3, name="in.fasta"):
+    """Helper: write the first `n` retained-MSA sequences as ungapped
+    primary FASTA records — the in-sample projection short-circuit."""
+    fa = tmp_path / name
+    by_id = {rec.id: rec for rec in prep.msa_obj_loaded}
+    seq_ids = list(prep.retained_sequence_ids)[:n]
+    fa.write_text("\n".join(
+        f">{sid}\n{str(by_id[sid].seq).replace('-', '')}"
+        for sid in seq_ids
+    ) + "\n")
+    return str(fa), seq_ids
+
+
+def test_sca_project_emits_seq_proj_png_by_default(
+    prep_and_sca_dirs, tmp_path,
+):
+    """A bare `sca-project` run produces images/seq_proj_ic0v1.png."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    in_fasta, _ = _build_in_sample_fasta(prep, tmp_path)
+    out_dir = str(tmp_path / "out")
+    project_main(project_parse_args([
+        "-i", in_fasta,
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", out_dir,
+        "-v", "0",
+    ]))
+    png = os.path.join(out_dir, "images", "seq_proj_ic0v1.png")
+    assert os.path.isfile(png)
+
+
+def test_sca_project_no_plot_skips_images(prep_and_sca_dirs, tmp_path):
+    """`--no-plot` suppresses the entire images/ directory."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    in_fasta, _ = _build_in_sample_fasta(prep, tmp_path)
+    out_dir = str(tmp_path / "out")
+    project_main(project_parse_args([
+        "-i", in_fasta,
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", out_dir,
+        "--no-plot",
+        "-v", "0",
+    ]))
+    img_dir = os.path.join(out_dir, "images")
+    assert (
+        not os.path.isdir(img_dir)
+        or len(os.listdir(img_dir)) == 0
+    )
+
+
+def test_sca_project_seq_proj_axes_renders_all_in_range_pairs(
+    prep_and_sca_dirs, tmp_path,
+):
+    """Every in-range axis pair gets a PNG; out-of-range pairs are
+    silently skipped (with a warning) without aborting the others."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    sca = SCAResults.load(sca_dir)
+    n_components = sca.w_ica.shape[0]
+    assert n_components >= 2  # fixture invariant
+
+    in_fasta, _ = _build_in_sample_fasta(prep, tmp_path)
+    out_dir = str(tmp_path / "out")
+    # Mix in-range, in-range, and a definitely-out-of-range pair.
+    project_main(project_parse_args([
+        "-i", in_fasta,
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", out_dir,
+        "--seq_proj_axes", "0,1", "0,2",
+        f"{n_components},{n_components + 1}",
+        "-v", "0",
+    ]))
+    img_dir = os.path.join(out_dir, "images")
+    assert os.path.isfile(os.path.join(img_dir, "seq_proj_ic0v1.png"))
+    if n_components >= 3:
+        assert os.path.isfile(
+            os.path.join(img_dir, "seq_proj_ic0v2.png"),
+        )
+    # Out-of-range pair must NOT produce a file.
+    out_of_range_png = os.path.join(
+        img_dir, f"seq_proj_ic{n_components}v{n_components + 1}.png",
+    )
+    assert not os.path.isfile(out_of_range_png)
+
+
+def test_sca_project_seq_proj_color_by_emits_named_png(
+    prep_and_sca_dirs, tmp_path,
+):
+    """--seq_proj_color_by produces an *_by_<col>.png filename."""
+    pytest.importorskip("pandas")
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    in_fasta, seq_ids = _build_in_sample_fasta(prep, tmp_path)
+
+    md = tmp_path / "md.tsv"
+    md.write_text(
+        "seq_id\tkingdom\n"
+        + "".join(
+            f"{sid}\t{'Eukaryota' if i % 2 == 0 else 'Bacteria'}\n"
+            for i, sid in enumerate(seq_ids)
+        )
+    )
+
+    out_dir = str(tmp_path / "out")
+    project_main(project_parse_args([
+        "-i", in_fasta,
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", out_dir,
+        "--seq_metadata", str(md),
+        "--seq_proj_color_by", "kingdom",
+        "-v", "0",
+    ]))
+    assert os.path.isfile(
+        os.path.join(out_dir, "images", "seq_proj_ic0v1_by_kingdom.png"),
+    )
+
+
+def test_sca_project_seq_proj_color_by_warns_without_metadata(
+    prep_and_sca_dirs, tmp_path,
+):
+    """--seq_proj_color_by without --seq_metadata: warn and still emit
+    the uncolored plot."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    in_fasta, _ = _build_in_sample_fasta(prep, tmp_path)
+    out_dir = str(tmp_path / "out")
+    project_main(project_parse_args([
+        "-i", in_fasta,
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", out_dir,
+        "--seq_proj_color_by", "kingdom",
+        "-v", "1",
+    ]))
+    # The warning is written to projection.log by configure_logging.
+    with open(os.path.join(out_dir, "projection.log")) as f:
+        log_contents = f.read()
+    assert "--seq_metadata not supplied" in log_contents
+    # Uncolored plot still produced (no _by_<col> suffix).
+    assert os.path.isfile(
+        os.path.join(out_dir, "images", "seq_proj_ic0v1.png"),
+    )
+    # And no colored variant.
+    assert not os.path.isfile(
+        os.path.join(out_dir, "images", "seq_proj_ic0v1_by_kingdom.png"),
+    )
