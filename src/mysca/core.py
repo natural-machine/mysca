@@ -369,9 +369,12 @@ def _compute_fijab_gpu(xmsa, ws_norm, lam, nsyms, *, precision="fp64"):
     Cij_corr/eigvalsh use), or ``fp16`` (highest throughput on TF32 /
     half-precision tensor cores; ~10⁻³ relative precision —
     numerically risky for downstream eigvalsh on small eigenvalues,
-    treat as preview-only).
+    treat as preview-only). MPS does not support fp64; on Apple
+    Silicon, fp64 is auto-downgraded to fp32 with a WARNING.
     """
-    from mysca._acceleration import detect_device, resolve_torch_dtype
+    from mysca._acceleration import (
+        adapt_dtype_for_device, detect_device, resolve_torch_dtype,
+    )
     import torch
 
     device = detect_device()
@@ -382,7 +385,9 @@ def _compute_fijab_gpu(xmsa, ws_norm, lam, nsyms, *, precision="fp64"):
         )
         return _compute_fijab_v3(xmsa, ws_norm, lam, nsyms)
 
-    dtype = resolve_torch_dtype(precision)
+    dtype = adapt_dtype_for_device(
+        resolve_torch_dtype(precision), device, kind="fijab",
+    )
 
     npos = xmsa.shape[1]
     xf = torch.as_tensor(np.asarray(xmsa, dtype=np.float64),
@@ -398,9 +403,10 @@ def _compute_fijab_gpu(xmsa, ws_norm, lam, nsyms, *, precision="fp64"):
                            device=device)
     fijab = torch.where(diag[:, :, None, None],
                         fijab + reg_diag, fijab + reg_off)
-    # Always return float64 to the caller — downstream pipeline assumes
-    # fp64 for Cij_corr / eigvalsh / bootstrap.
-    return fijab.to(torch.float64).cpu().numpy()
+    # Move to CPU before promoting back to float64 — MPS doesn't support
+    # fp64, so a `.to(float64)` while still on-device would crash there.
+    # Downstream pipeline assumes fp64 for Cij_corr / eigvalsh / bootstrap.
+    return fijab.cpu().to(torch.float64).numpy()
 
 
 def _compute_eigvalsh_bootstrap_gpu(
@@ -421,7 +427,9 @@ def _compute_eigvalsh_bootstrap_gpu(
         RuntimeError: when no GPU is detected. Caller is expected to
             fall back to the per-iter CPU path.
     """
-    from mysca._acceleration import detect_device, resolve_torch_dtype
+    from mysca._acceleration import (
+        adapt_dtype_for_device, detect_device, resolve_torch_dtype,
+    )
     import torch
 
     device = detect_device()
@@ -431,10 +439,14 @@ def _compute_eigvalsh_bootstrap_gpu(
             "_compute_eigvalsh_bootstrap_gpu cannot run."
         )
 
-    dtype = resolve_torch_dtype(precision)
+    dtype = adapt_dtype_for_device(
+        resolve_torch_dtype(precision), device, kind="bootstrap",
+    )
     # eigvalsh requires fp32+ on most backends and is numerically
     # treacherous in fp16; promote to fp32 for the eigendecomposition
     # while keeping the cheap fijab/Cij_corr ops in the chosen dtype.
+    # On MPS, eig_dtype additionally cannot exceed fp32 (already
+    # enforced by adapt_dtype_for_device above).
     eig_dtype = torch.float32 if dtype == torch.float16 else dtype
 
     B, nseq, npos, naas = xmsa_batch.shape
@@ -481,6 +493,7 @@ def _compute_eigvalsh_bootstrap_gpu(
     # and unsupported on most backends.
     evals_asc = torch.linalg.eigvalsh(Cij_corr.to(eig_dtype))  # (B, P)
     evals_desc = torch.flip(evals_asc, dims=[-1])
-    # Always return float64 to the caller for consistent downstream
-    # numerics (kstar selection, cutoff comparisons).
-    return evals_desc.to(torch.float64).cpu().numpy()
+    # Move to CPU before promoting to float64 — MPS doesn't support
+    # fp64, so `.to(float64)` on-device would crash there. Downstream
+    # numerics (kstar selection, cutoff comparisons) expect fp64.
+    return evals_desc.cpu().to(torch.float64).numpy()

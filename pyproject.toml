@@ -32,12 +32,6 @@ dependencies = [
 dev = [
   "pytest",
 ]
-pymol = [
-  # pymol-open-source has no PyPI wheel for linux-aarch64, and the
-  # conda-forge build registers in site-packages as `pymol` (not
-  # `pymol-open-source`), so pip's resolver can never satisfy this extra.
-  # Install via: `conda install -c conda-forge pymol-open-source`.
-]
 mp4 = [
   "imageio-ffmpeg",
 ]
@@ -45,6 +39,12 @@ prealign = [
   # External binaries (mafft, mmseqs2) are not pip-installable; install via
   # `conda install -c bioconda mafft mmseqs2` or ensure they are on PATH.
 ]
+# Note: pymol-open-source is now a required runtime dependency for
+# `sca-pymol`, but it is not pip-installable on every platform and the
+# conda-forge build registers as `pymol` in site-packages. Install via
+# `conda install -c conda-forge pymol-open-source` (also pinned in
+# environment.yml). `sca-pymol` will raise ImportError with an install
+# hint if it is missing.
 
 [tool.setuptools.dynamic]
 version = {attr = "mysca.__version__"}

@@ -59,6 +59,39 @@ def resolve_torch_dtype(precision):
         )
 
 
+def adapt_dtype_for_device(dtype, device, *, kind="compute"):
+    """Adapt a torch dtype to what the given device actually supports.
+
+    Apple's Metal Performance Shaders (MPS) backend does not support
+    float64 — kernels silently fail or raise opaque errors when fp64
+    tensors land on the device. To keep the CPU-default fp64 setting
+    from crashing macOS users, downgrade fp64 → fp32 on MPS and emit a
+    WARNING so the user knows the precision is reduced.
+
+    Args:
+        dtype: a torch.dtype.
+        device: a torch.device.
+        kind: short label describing what dtype is for, e.g.
+            ``"compute"`` or ``"eigvalsh"``. Surfaces in the WARNING
+            log so the user can see which kernel was downgraded.
+
+    Returns:
+        A torch.dtype safe to use on `device`.
+    """
+    import torch
+    if device.type == "mps" and dtype == torch.float64:
+        logger.warning(
+            "MPS backend does not support float64; downgrading %s "
+            "dtype from fp64 to fp32. fp32 gives ~7-decimal precision "
+            "(adequate for routine analysis); rerun on CPU or with "
+            "--precision fp32 for predictable behavior, or run on a "
+            "CUDA device to retain fp64.",
+            kind,
+        )
+        return torch.float32
+    return dtype
+
+
 def resolve_numpy_dtype(precision):
     """Map a precision string to a numpy floating-point dtype."""
     import numpy as np

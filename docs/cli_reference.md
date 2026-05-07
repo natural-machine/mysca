@@ -82,7 +82,7 @@ Writes to the specified output directory:
 
 ### External Binaries
 
-The aligner binary (`mafft` or `clustalo`, depending on `--align`) and `mmseqs` (when `--cluster mmseqs2`) must be resolvable on `PATH` — the CLI checks up front and raises `FileNotFoundError` immediately if a required tool is missing. Install e.g. via `conda install -c bioconda mafft mmseqs2 clustalo`, or pass explicit paths with `--align_bin` / `--cluster_bin`.
+The aligner binary (`mafft` or `clustalo`, depending on `--align`) and `mmseqs` (when `--cluster mmseqs2`) must be resolvable on `PATH` — the CLI checks up front and raises `FileNotFoundError` immediately if a required tool is missing. Install e.g. via `conda install -c conda-forge -c bioconda mafft mmseqs2 clustalo`, or pass explicit paths with `--align_bin` / `--cluster_bin`.
 
 ---
 
@@ -120,7 +120,7 @@ sca-preprocess -i <input-msa> -o <output-dir> [options]
 |----------|---------|-------------|
 | `-v, --verbosity` | 1 | Verbosity level |
 | `--pbar` | off | Enable progress bar |
-| `--plot` | off | Emit `filter_history.png` and `filter_distributions.png` to `outdir/images/` |
+| `--plot` / `--no-plot` | on | Emit `filter_history.png` and `filter_distributions.png` to `outdir/images/`. Default: on. Pass `--no-plot` to skip plot generation entirely (no `images/` directory is created) |
 | `--input_format` | `fasta` | Format of the input MSA file. Choices: `fasta`, `stockholm`. Never inferred from the filename |
 | `--syms` | `default` | Symbol alphabet. `default` → standard 20 amino acids; `none` → disable excluded-symbol filtering and auto-detect; any other string is treated as an explicit character set |
 | `--gapsym` | `-` | Gap symbol in the input MSA |
@@ -140,7 +140,7 @@ Writes to the specified output directory:
 - `msa_orig.fasta-aln` — original MSA (written before any filtering)
 - `filter_history.json` — per-stage filter diagnostics (counts + threshold + stat distribution); always persisted so `sca-plots` can replay plots later. When `load_msa` performed pre-preprocessing drops, an `internal_stop_codon` stage and/or an `excluded_symbols` stage appears at the head of the list. Trailing `*` stop codons are silently replaced with gap inside `load_msa` and do not produce their own stage
 - `preprocessing.log` — run log
-- `images/` — only when `--plot` is passed (`filter_history.png`, `filter_distributions.png`)
+- `images/` — written by default (`filter_history.png`, `filter_distributions.png`); pass `--no-plot` to skip
 
 ---
 
@@ -219,7 +219,7 @@ Writes to the specified output directory:
 
 Render SCA sectors on 3D protein structures using PyMOL. Consumes `sca-structure` output directly — the per-structure `ic_pdb_residues` list carries authoritative PDB residue numbers (via `PDBStructure.residue_ids`), and `pdb_path` tells `sca-pymol` which file to load. Protein-specific annotations (cofactors, iron-sulfur clusters, ligands, etc.) are supplied by a user Python file via `--features_py`.
 
-Requires the optional `pymol-open-source` dependency (`conda install -c conda-forge pymol-open-source`).
+Requires `pymol-open-source` (pinned in `environment.yml`; for pip-only installs, run `conda install -c conda-forge pymol-open-source`).
 
 ### Usage
 
@@ -503,7 +503,7 @@ Writes to the specified output directory:
 
 ### External Binaries
 
-`mafft` (for the default `mafft_add` aligner) must be resolvable via PATH or via `--align_bin`. For `--aligner hmmalign`, both `hmmbuild` and `hmmalign` must be on PATH (install via `conda install -c bioconda hmmer`). In-sample projection does not invoke any external binary.
+`mafft` (for the default `mafft_add` aligner) must be resolvable via PATH or via `--align_bin`. For `--aligner hmmalign`, both `hmmbuild` and `hmmalign` must be on PATH (install via `conda install -c conda-forge -c bioconda hmmer`). In-sample projection does not invoke any external binary.
 
 ---
 

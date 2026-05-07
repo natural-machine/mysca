@@ -403,6 +403,49 @@ def test_resolve_torch_dtype_choices():
         resolve_torch_dtype("bf16")
 
 
+def test_adapt_dtype_for_device_downgrades_fp64_on_mps(caplog):
+    """MPS doesn't support float64 — adapt_dtype_for_device must
+    downgrade fp64 to fp32 on MPS and emit a WARNING. Other dtypes /
+    devices pass through unchanged."""
+    pytest.importorskip("torch")
+    import logging
+    import torch
+    from mysca._acceleration import adapt_dtype_for_device
+
+    mps = torch.device("mps")
+    cuda = torch.device("cuda")
+    cpu = torch.device("cpu")
+
+    # configure_logging() in upstream entrypoints sets propagate=False on
+    # the mysca package logger so library handlers don't double-emit; if
+    # any prior test in the session triggered that, caplog (attached to
+    # root) cannot see records from mysca._acceleration. Force-propagate
+    # for the duration of the assertion.
+    mysca_logger = logging.getLogger("mysca")
+    prev_propagate = mysca_logger.propagate
+    mysca_logger.propagate = True
+    try:
+        with caplog.at_level("WARNING", logger="mysca._acceleration"):
+            out = adapt_dtype_for_device(torch.float64, mps, kind="fijab")
+    finally:
+        mysca_logger.propagate = prev_propagate
+
+    assert out is torch.float32
+    assert any(
+        "MPS backend does not support float64" in r.getMessage()
+        and "fijab" in r.getMessage()
+        for r in caplog.records
+    )
+
+    # fp32 / fp16 on MPS pass through.
+    assert adapt_dtype_for_device(torch.float32, mps) is torch.float32
+    assert adapt_dtype_for_device(torch.float16, mps) is torch.float16
+
+    # CUDA / CPU keep fp64.
+    assert adapt_dtype_for_device(torch.float64, cuda) is torch.float64
+    assert adapt_dtype_for_device(torch.float64, cpu) is torch.float64
+
+
 def test_compute_fijab_gpu_precision_match():
     """The fp32 GPU kernel must agree with the fp64 GPU kernel within
     ~1e-5 relative tolerance. Skips when no GPU is available (the

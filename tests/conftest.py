@@ -4,9 +4,18 @@
 
 import pytest
 import shutil
+import warnings
 
 DATDIR = "tests/_data"  # data directory for all tests.
 TMPDIR = "tests/_tmp"  # output directory for all tests.
+
+OPTIONAL_TOOLS = (
+    ("mafft", "sca-prealign --align mafft / sca-project --aligner mafft_add"),
+    ("hmmbuild", "sca-project --aligner hmmalign (hmmer)"),
+    ("hmmalign", "sca-project --aligner hmmalign (hmmer)"),
+    ("mmseqs", "sca-prealign --cluster mmseqs2"),
+    ("clustalo", "sca-prealign --align clustalo"),
+)
 
 def remove_dir(dir:str):
     """Helper function to remove a directory recursively."""
@@ -33,6 +42,27 @@ def pytest_addoption(parser):
 def pytest_configure(config):
     config.addinivalue_line("markers", "benchmark: mark test as benchmarking")
     config.addinivalue_line("markers", "use_gpu: mark test as GPU specific")
+
+    missing = [(name, why) for name, why in OPTIONAL_TOOLS
+               if shutil.which(name) is None]
+    try:
+        import pymol  # noqa: F401
+        pymol_missing = False
+    except ImportError:
+        pymol_missing = True
+    if pymol_missing:
+        missing.append(("pymol-open-source", "sca-pymol rendering"))
+
+    if missing:
+        lines = [
+            f"  - {name} (gates: {why})" for name, why in missing
+        ]
+        warnings.warn(
+            "Optional mysca dependencies not found in this environment; "
+            "tests that require them will be skipped:\n" + "\n".join(lines),
+            UserWarning,
+            stacklevel=2,
+        )
 
 def pytest_collection_modifyitems(config, items):
     benchmark_flag_given = False

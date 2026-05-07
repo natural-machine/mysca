@@ -106,6 +106,9 @@ def test_replay_preprocessing_emits_all_plots():
     prep_args.msa_fpath = f"{DATDIR}/{prep_args.msa_fpath}"
     prep_args.outdir = prep_dir
     prep_args.verbosity = 0
+    # sca-preprocess plots by default — disable so we can verify that the
+    # subsequent sca-plots replay creates the images/ directory itself.
+    prep_args.plot = False
     prep_main(prep_args)
 
     assert not os.path.isdir(os.path.join(prep_dir, "images"))

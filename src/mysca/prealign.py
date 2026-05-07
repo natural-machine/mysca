@@ -38,7 +38,7 @@ def _resolve_bin(binary_name: str, override: str | None = None) -> str:
         raise FileNotFoundError(
             f"Required binary {candidate!r} not found on PATH. "
             f"Make it available on PATH (e.g. via "
-            f"`conda install -c bioconda {binary_name}`) or pass an explicit "
+            f"`conda install -c conda-forge -c bioconda {binary_name}`) or pass an explicit "
             f"path via the corresponding --*_bin CLI flag."
         )
     logger.info("Resolved %s binary to %s", binary_name, resolved)

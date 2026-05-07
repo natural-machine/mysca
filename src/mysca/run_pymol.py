@@ -332,14 +332,22 @@ def _load_projections(structure_dir: str) -> list[dict]:
 
 def _require_cmd():
     """Import pymol lazily so argparse / features-loader tests can run
-    in environments without pymol-open-source installed."""
+    in environments without pymol-open-source installed.
+
+    `pymol-open-source` is a required runtime dependency declared in
+    ``environment.yml``, but it is not pip-installable on every platform
+    so we still raise a clear ImportError with an install hint rather
+    than letting an opaque module-not-found error escape.
+    """
     try:
         from pymol import cmd  # noqa: F401
     except ImportError as exc:  # pragma: no cover
         raise ImportError(
-            "sca-pymol requires the optional pymol-open-source "
-            "dependency. Install via `conda install -c conda-forge "
-            "pymol-open-source` or equivalent."
+            "sca-pymol requires pymol-open-source, which was not found "
+            "in the active Python environment. It is not pip-installable "
+            "on every platform; install via "
+            "`conda install -c conda-forge pymol-open-source` (already "
+            "pinned in environment.yml)."
         ) from exc
     return cmd
 

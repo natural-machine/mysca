@@ -9,52 +9,68 @@ Based on:
 
 ## Setup
 
-Create a conda environment:
+### Installation
+
+We recommend installing `mysca` in a dedicated conda environment.
+
+#### From a local clone (editable, for development)
+
+Clone the repo, create the environment, and install the package in editable mode:
 
 ```bash
-# Local project environment
+git clone https://github.com/natural-machine/mysca.git
+cd mysca
+
+# Local project environment (./env) — or use `-n mysca-env` for a global env.
 conda env create -p ./env -f environment.yml
 conda activate ./env
-```
 
-```bash
-# Global environment
-conda env create -n mysca-env -f environment.yml
-conda activate mysca-env
-```
-
-Then install the package:
-
-```bash
 python -m pip install -e '.[dev]'
+
+# To include all optional dependencies:
+# python -m pip install -e '.[dev,mp4]'
 ```
 
 Verify the installation:
 
 ```bash
-pytest tests
+python -m pytest tests
 ```
 
-### Optional external binaries
+#### Directly from GitHub (no clone)
 
-Several CLIs shell out to external tools. Install what you need via bioconda:
+If you don't need an editable checkout, install the latest `main` straight from GitHub. Fetch `environment.yml` over HTTPS to build the conda env, then `pip install` the package from the same remote:
 
 ```bash
-conda install -c bioconda mafft     # sca-prealign --align mafft (default);
-                                    # sca-project --aligner mafft_add (default)
-conda install -c bioconda clustalo  # sca-prealign --align clustalo
-conda install -c bioconda hmmer     # sca-project --aligner hmmalign
-                                    #   (provides hmmbuild + hmmalign)
-conda install -c bioconda mmseqs2   # sca-prealign --cluster mmseqs2
+conda env create -p ./env \
+    -f https://raw.githubusercontent.com/natural-machine/mysca/main/environment.yml
+conda activate ./env
+
+python -m pip install 'git+https://github.com/natural-machine/mysca.git'
 ```
 
-`environment.yml` lists these as commented-out entries — uncomment whichever you use. Every CLI checks for its binaries up-front and raises `FileNotFoundError` with a clear message if a required tool is missing. In-sample projection and PDB loading require no external binary.
+Pin a specific version with `@<tag-or-sha>`, e.g. `git+https://github.com/natural-machine/mysca.git@v0.1.2`.
+
+### Optional alignment packages
+
+Several CLIs require external alignment tools that must be available from the command line. 
+If not already available, these can be installed via conda:
+
+```bash
+conda install -c conda-forge mafft                # sca-prealign --align mafft (default);
+                                                  # sca-project --aligner mafft_add (default)
+conda install -c conda-forge clustalo             # sca-prealign --align clustalo
+conda install -c conda-forge -c bioconda hmmer    # sca-project --aligner hmmalign
+                                                  #   (provides hmmbuild + hmmalign)
+conda install -c conda-forge -c bioconda mmseqs2  # sca-prealign --cluster mmseqs2
+```
 
 ### Optional Python extras
 
-Three pip extras are declared in `pyproject.toml`. `[pymol]` and `[prealign]` are documented placeholders — they install nothing but validate the spelling. The actual binaries must be installed via conda (see "Optional external binaries" above for `prealign`; for PyMOL, `conda install -c conda-forge pymol-open-source`). Only `[mp4]` ships a real pip dependency.
+Two pip extras are declared in `pyproject.toml`:
 
 ```bash
+pip install -e '.[dev]'     # pytest — required for `pytest tests`
 pip install -e '.[mp4]'     # imageio-ffmpeg — sca-pymol --format mp4 / both
 ```
 
@@ -62,90 +78,42 @@ The `[mp4]` extra ships a bundled ffmpeg via `imageio-ffmpeg` and is only needed
 
 ## Usage
 
-mysca ships seven CLI tools. The core pipeline chains the first three; the others are opt-in for projection, visualization, and plot replay:
+`mysca` ships a number of CLI tools. The core pipeline preprocesses an MSA and then runs statistical coupling analysis (steps 1 and 2, below). A preparatory tool is also available to first construct an MSA from a set of sequences, using external alignment tools (step 0, below). `mysca` also provides entrypoints for sequence and structure projection, PyMOL rendering, and plot replay.
 
-1. **`sca-prealign`** — (optional) cluster and align raw (unaligned) sequences.
-2. **`sca-preprocess`** — filter and weight an aligned MSA.
-3. **`sca-core`** — run SCA, identify significant components, and assign sectors.
-4. **`sca-project`** — project primary amino-acid sequences (in- or out-of-sample) onto an existing SCA result.
-5. **`sca-structure`** — lift `sca-project` onto a PDB structure; IC memberships are expressed in the PDB's own residue numbering.
-6. **`sca-pymol`** — render sectors on a structure via PyMOL, with user-supplied protein-specific annotations loaded from a Python file.
-7. **`sca-plots`** — regenerate diagnostic figures from any of the persisted output directories without rerunning the pipeline.
+0. **`sca-prealign`** — cluster and align raw (unaligned) sequences.
+1. **`sca-preprocess`** — filter and weight an MSA.
+2. **`sca-core`** — run SCA, identify significant components, and associate (processed) MSA positions to components.
+3. **`sca-project`** — project primary amino-acid sequences (in- or out-of-sample) onto an existing SCA result.
+4. **`sca-structure`** — lift `sca-project` onto a PDB structure; IC memberships are expressed in the structure's own residue numbering.
+5. **`sca-pymol`** — render "sectors" on a structure via PyMOL, with user-supplied protein-specific annotations loaded from a Python file.
+6. **`sca-plots`** — regenerate diagnostic figures from any of the persisted output directories without rerunning the pipeline.
 
 Full per-flag documentation (including outputs of every CLI): [docs/cli_reference.md](docs/cli_reference.md).
 
-### Quickstart: end-to-end on the SH3 demo
-
-The fastest way to see the whole pipeline at work is to chain the core CLIs against the bundled SH3 alignment and PDBs (no clustering / prealignment needed since the MSA is already aligned):
-
-```bash
-cd demo/SH3
-OUT=out/quickstart
-REF='4837_jgi||3708||Equilibrative'
-
-sca-preprocess \
-    -i data/msas/SH3_demo_MSA_1.afa \
-    -o ${OUT}/preprocessing \
-    --reference "${REF}" \
-    --gap_truncation_thresh 0.4 --sequence_gap_thresh 0.2 \
-    --reference_similarity_thresh 0.2 \
-    --sequence_similarity_thresh 0.8 --position_gap_thresh 0.2
-
-sca-core \
-    -i ${OUT}/preprocessing \
-    -o ${OUT}/scacore \
-    --regularization 0.03 --n_components 10 --seed 42
-
-sca-project \
-    --from_msa ${OUT}/preprocessing/msa_orig.fasta-aln \
-    --seq_id "${REF}" \
-    --preprocessing ${OUT}/preprocessing \
-    --scacore ${OUT}/scacore \
-    -o ${OUT}/project
-
-sca-structure \
-    --seq_map data/structures.tsv \
-    --preprocessing ${OUT}/preprocessing \
-    --scacore ${OUT}/scacore \
-    -o ${OUT}/structure
-
-# Optional: render IC groups on the PDB (needs pymol-open-source).
-sca-pymol --structure ${OUT}/structure --groups 0 1 --views \
-    -o ${OUT}/pymol
-```
-
-Each stage writes a self-contained output directory; the next stage takes that directory as input. Per-stage flag details are in [docs/cli_reference.md](docs/cli_reference.md), and the full demo (including the `sca-prealign` path from raw sequences) lives at [demo/SH3/](demo/SH3/) — see the **Demo** section below.
-
-#### Demo prerequisites
-
-| Step | External tool | Required for | Install |
-|---|---|---|---|
-| `sca-preprocess`, `sca-core`, `sca-project` (in-sample) | — | core path | (none beyond the conda env) |
-| `sca-prealign` (raw-FASTA path) | `mafft` (default) or `clustalo` | aligning unaligned input | `conda install -c bioconda mafft` |
-| `sca-project --aligner mafft_add` | `mafft` | out-of-sample alignment | `conda install -c bioconda mafft` |
-| `sca-project --aligner hmmalign` | `hmmer` | profile-HMM alignment | `conda install -c bioconda hmmer` |
-| `sca-prealign --cluster mmseqs2` | `mmseqs2` | redundancy reduction | `conda install -c bioconda mmseqs2` |
-| `sca-pymol` | `pymol-open-source` | structure rendering | `conda install -c conda-forge pymol-open-source` |
-| `sca-pymol --format mp4` | `imageio-ffmpeg` | MP4 animation output | `pip install -e '.[mp4]'` |
-
-The full SH3 demo (`./run_demo_SH3.sh`) skips PyMOL steps automatically when `pymol-open-source` isn't importable, so a minimal install still exercises everything from preprocessing through `sca-structure`.
-
-### Preparing raw sequences (optional)
+### Preparing raw sequences
 
 If you start from unaligned sequences, `sca-prealign` will (optionally) cluster them to reduce redundancy and then align them into an MSA suitable for `sca-preprocess`.
 
 ```bash
+# with pre-clustering:
 sca-prealign -i <raw.fasta> -o <prealign-outdir>
-# or with pre-clustering:
+
+# with pre-clustering:
 sca-prealign -i <raw.fasta> -o <prealign-outdir> \
     --cluster mmseqs2 --cluster_min_seq_id 0.9
-# or with Clustal Omega instead of MAFFT:
+
+# with Clustal Omega instead of MAFFT:
 sca-prealign -i <raw.fasta> -o <prealign-outdir> \
     --align clustalo --align_args guidetree_out=true output_order=tree-order
 ```
 
-**Inputs:** raw (unaligned) FASTA file.
-**Outputs (under `<prealign-outdir>`):** `aligned.fasta` (or `aligned.sto` when `--output_format stockholm`), `clustered.fasta` if `--cluster` is used, `filter_history.json` (per-stage sequence counts, replayable via `sca-plots --prealign`), `prealign_args.json`, `prealign.log`.
+**Inputs:** raw sequences (unaligned) FASTA file.
+**Outputs (under `<prealign-outdir>`):** 
+- `aligned.fasta` (or `aligned.sto` when `--output_format stockholm`)
+- `clustered.fasta` if `--cluster` is used
+- `filter_history.json` (per-stage sequence counts, replayable via `sca-plots --prealign`)
+- `prealign_args.json`
+- `prealign.log`.
 
 Aligned output feeds directly into `sca-preprocess -i` (with matching `--input_format` when Stockholm).
 
@@ -161,15 +129,25 @@ sca-preprocess \
     --reference_similarity_thresh 0.2 \
     --sequence_similarity_thresh 0.8 \
     --position_gap_thresh 0.2
+
+# Optional extras: 
+# --accelerator gpu : enable pytorch acceleration on available GPU
 ```
 
-**Inputs:** an aligned MSA (FASTA or Stockholm; pass `--input_format stockholm` for the latter — never inferred from filename).
-**Outputs (under `<preprocessing-outdir>`):** `preprocessing_results.npz` (filtered MSA + retained indices + sequence weights + pre-truncation gap frequencies), `msa_binary2d_sp.npz` (sparse one-hot MSA), `sym2int.json`, `msa_orig.fasta-aln` (the unfiltered original MSA), `filter_history.json`, `preprocessing_args.json`, `preprocessing.log`. With `--plot`, also `images/filter_history.png` + `images/filter_distributions.png`.
+**Inputs:** an aligned MSA (FASTA or Stockholm; pass `--input_format stockholm` for the latter).
 
-Key options:
+**Outputs (under `<preprocessing-outdir>`):**
+- `preprocessing_results.npz` (filtered MSA + retained indices + sequence weights + pre-truncation gap frequencies)
+- `msa_binary2d_sp.npz` (sparse one-hot MSA)
+- `sym2int.json`
+- `msa_orig.fasta-aln` (the unfiltered original MSA)
+- `filter_history.json`
+- `preprocessing_args.json`
+- `preprocessing.log`
+- `images/filter_history.png` + `images/filter_distributions.png` (on by default; pass `--no-plot` to skip)
 
-- `--weight_method` — algorithm for sequence weighting (`sparse` default, or `gpu` for torch acceleration)
-- `--plot` — emit `filter_history.png` + `filter_distributions.png` to `<outdir>/images/`
+**Extra arguments:**
+- `--accelerator gpu` — enables torch acceleration on an available GPU device.
 
 ### SCA Core
 
@@ -178,17 +156,27 @@ sca-core \
     -i <preprocessing-outdir> \
     -o <core-outdir> \
     --regularization 0.03 \
-    --seed 42
+    --seed 0
 ```
 
-**Inputs:** an `sca-preprocess` output directory.
-**Outputs (under `<core-outdir>`):** `scarun_results.npz` (`Dia`, `conservation`, `sca_matrix`, `phi_ia`, `fi0`, `fia`, `Cij_raw`; plus `Cijab_raw`/`fijab` with `--save_all`), `sca_eigendecomp.npz`, `ic_positions/ic_<i>_msaproc.npy` + `ic_<i>_msaorig.npy` + `ic_<i>_loadings.npy` (per-IC high-load positions in both MSA coord spaces, plus loadings), `ic_residues_per_seq.npz` and `ic_loadings_per_seq.npz` (per-target raw-residue indices and loadings, keyed `ic_<i>_<seqid>`), `sca_results/` (ICA + bootstrap byproducts, scalar text files), `scarun_args.json`, `scarun.log`, and `images/` (conservation, SCA matrix, spectrum, dendrogram, t-distributions, EV/IC scatter sweeps, sector subset, and `seq_proj_ic0v1.png` — sequences projected onto the first two ICs). Optionally `seq_projections.tsv` (`--save_dataframe`) and `sequence_metadata.tsv` (`--seq_metadata`).
+**Inputs:** a `sca-preprocess` output directory.
 
-Key options:
+**Outputs (under `<core-outdir>`):**
+- `scarun_results.npz` (`Dia`, `conservation`, `sca_matrix`, `phi_ia`, `fi0`, `fia`, `Cij_raw`; plus `Cijab_raw`/`fijab` with `--save_all`)
+- `sca_eigendecomp.npz`
+- `ic_positions/ic_<i>_msaproc.npy` + `ic_<i>_msaorig.npy` + `ic_<i>_loadings.npy` (per-IC high-load positions in both MSA coord spaces, plus loadings)
+- `ic_residues_per_seq.npz` and `ic_loadings_per_seq.npz` (per-target raw-residue indices and loadings, keyed `ic_<i>_<seqid>`)
+- `sca_results/` (ICA + bootstrap byproducts, scalar text files)
+- `scarun_args.json`
+- `scarun.log`
+- `images/` (conservation, SCA matrix, spectrum, dendrogram, t-distributions, EV/IC scatter sweeps, sector subset, and `seq_proj_ic0v1.png` — sequences projected onto the first two ICs)
+- `seq_projections.tsv` (only with `--save_dataframe`)
+- `sequence_metadata.tsv` (only with `--seq_metadata`)
 
+**Extra arguments:**
 - `--n_boot` — number of bootstrap iterations (default 10; `0` reuses an existing bootstrap; `-1` skips bootstrapping entirely)
 - `--kstar` — override the bootstrap-derived number of significant components
-- `--n_components` — number of ICs to compute (integer or `all`; default `kstar`)
+- `--n_components` — number of ICs to compute (integer, `kstar`, or `all`; default `kstar`)
 - `--pstar` — percentile threshold for sector assignment (default 95)
 - `--assignment overlap|exclusive` — how a residue that clears multiple ICs' cutoffs is placed
 - `--sectors_for` — which target sequences expand into the per-seq output files (default reference only; `all` or a text file of IDs)
@@ -197,12 +185,12 @@ Key options:
 - `--seq_metadata <tsv>` — optional per-sequence metadata TSV (`seq_id` column + arbitrary others); persisted alongside results and merged into `seq_projections.tsv`
 - `--seq_proj_color_by <column>` — color the `seq_proj_ic0v1.png` plot by a metadata column (numeric → colorbar, categorical → legend)
 - `--accelerator {none,gpu}` — flips per-step kernel defaults to GPU variants when set to `gpu`
-- `--precision {fp64,fp32,fp16}` — GPU compute precision for `fijab` / eigvalsh-bootstrap kernels (default `fp64`; ignored on CPU)
+- `--precision {fp64,fp32,fp16}` — GPU compute precision for `fijab` / eigvalsh-bootstrap kernels (default `fp64`; ignored on CPU). Apple MPS does not support fp64; on macOS, fp64 is auto-downgraded to fp32 with a warning.
 - `--use_jax` — DEPRECATED alias for `--freq_method=jax`
 
 ### Project a sequence
 
-Given an SCA result, project a new amino-acid sequence (in- or out-of-sample) and read off which residues fall into each IC group:
+Given a SCA result, project a new amino-acid sequence (in- or out-of-sample) and read off which residues fall into each IC group:
 
 ```bash
 sca-project \
@@ -235,11 +223,21 @@ head -5 <project-outdir>/seq_projections.tsv
 This works for both pure out-of-sample input (every record gets aligned via `--aligner`) and mixed batches (in-sample IDs short-circuit; out-of-sample go through MAFFT or HMMER).
 
 **Inputs:** a FASTA of sequences to project, plus the upstream `sca-preprocess` and `sca-core` output directories.
-**Outputs (under `<project-outdir>`):** `projection.json` (per-sequence: `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col`, `ic_residues`, `ic_loadings`, `ic_processed_cols`, `in_sample`, `up_score` — the sequence's Uᵖ row of length `n_components`, or `null` when the source SCAResults lacks the eigendecomposition fields, `gap_fraction_per_ic` and `informative_positions_per_ic` — per-IC quality signals indicating how much of each IC's training-time support is gapped or non-canonical in this projection), `per_sequence/<seqid>_residues.tsv` (one row per IC residue), `projection_args.json`, `projection.log`, `images/seq_proj_ic*.png` (sequence-projection scatter plots; one per axis pair from `--seq_proj_axes`, optionally colored by `--seq_proj_color_by` against any `--seq_metadata` column — pass `--no-plot` to skip). With `--save_dataframe`, also `seq_projections.tsv` (per-sequence Uᵖ scores plus the same per-IC quality columns in tabular form). With `--seq_metadata <tsv>`, the metadata is persisted as `sequence_metadata.tsv` and merged into `seq_projections.tsv` via left-join on `seq_id`.
+
+**Outputs (under `<project-outdir>`):**
+- `projection.json` (per-sequence: `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col`, `ic_residues`, `ic_loadings`, `ic_processed_cols`, `in_sample`, `up_score` — the sequence's Uᵖ row of length `n_components`, or `null` when the source SCAResults lacks the eigendecomposition fields; plus `gap_fraction_per_ic` and `informative_positions_per_ic` — per-IC quality signals indicating how much of each IC's training-time support is gapped or non-canonical in this projection)
+- `per_sequence/<seqid>_residues.tsv` (one row per IC residue)
+- `projection_args.json`
+- `projection.log`
+- `images/seq_proj_ic*.png` (sequence-projection scatter plots; one per axis pair from `--seq_proj_axes`, optionally colored by `--seq_proj_color_by` against any `--seq_metadata` column — pass `--no-plot` to skip)
+- `seq_projections.tsv` (only with `--save_dataframe`; per-sequence Uᵖ scores plus the same per-IC quality columns in tabular form)
+- `sequence_metadata.tsv` (only with `--seq_metadata <tsv>`; persisted alongside results and merged into `seq_projections.tsv` via left-join on `seq_id`)
+
+<!-- **Extra arguments:** -->
 
 ### Project a PDB structure
 
-`sca-structure` composes over `sca-project` to land IC memberships in the structure's own residue numbering:
+`sca-structure` composes over `sca-project` to associate residues in the structure to ICs:
 
 ```bash
 # Single PDB
@@ -264,10 +262,18 @@ sca-structure --uniprot_ids P06241 P12931 \
 
 Exactly one of `-s/--structure`, `--seq_map`, or `--uniprot_ids` is required. `--uniprot_ids` resolves accessions via EBI's SIFTS service (responses cached under `--cache_dir`, default `./.sifts_cache`); the resolved PDBs must already exist in `--pdb_dir` (SIFTS does not download structures).
 
-**Inputs:** one of (single PDB, seq_id → pdb_path TSV, UniProt ID list + `--pdb_dir`); plus the upstream `sca-preprocess` and `sca-core` directories.
-**Outputs (under `<structure-outdir>`):** `structure_projection.json` (per-structure: `structure_id`, `chain_id`, full `sequence_projection` from `sca-project`, `ic_pdb_residues` keyed by IC index, `pdb_path`), `per_structure/<structure_id>_ic_residues.tsv` (one row per IC residue, including raw + PDB residue numbers), `structure_args.json`, `structure.log`.
+**Inputs:** one of the following: single PDB, seq_id → pdb_path TSV, UniProt ID list + `--pdb_dir`; plus the upstream `sca-preprocess` and `sca-core` directories.
+
+**Outputs (under `<structure-outdir>`):**
+- `structure_projection.json` (per-structure: `structure_id`, `chain_id`, full `sequence_projection` from `sca-project`, `ic_pdb_residues` keyed by IC index, `pdb_path`)
+- `per_structure/<structure_id>_ic_residues.tsv` (one row per IC residue, including raw + PDB residue numbers)
+- `structure_args.json`
+- `structure.log`
 
 The library-level `mysca.structure.SequencePdbMap.from_sifts_for_uniprot_ids([...], pdb_dir="./pdbs")` resolves UniProt IDs to best-available PDBs via EBI's SIFTS service (cached locally) for users who don't want to hand-maintain the TSV.
+
+<!-- **Extra arguments:** -->
+
 
 ### PyMOL visualization
 
@@ -283,9 +289,20 @@ sca-pymol \
 ```
 
 **Inputs:** an `sca-structure` output directory (reads `structure_projection.json`).
-**Outputs (under `<pymol-outdir>`):** `<structure_id>_group<N>.png` (one per IC group; or `<structure_id>_groups_<idxs>.png` under `--multisector`), `views/` (with `--views`), per-frame PNGs in `frames/<basename>_frames/` and a `<basename>.gif` (or `.mp4`) per render under `--animate`, `pymol.log`. See the [CLI reference](docs/cli_reference.md#sca-pymol) for animation modes (`spin` / `reveal`) and ray-tracing knobs.
 
-Requires the optional `pymol-open-source` dependency (`conda install -c conda-forge pymol-open-source`); MP4 output additionally requires `imageio-ffmpeg` (`pip install -e '.[mp4]'`).
+**Outputs (under `<pymol-outdir>`):**
+- `<structure_id>_group<N>.png` (one per IC group; or `<structure_id>_groups_<idxs>.png` under `--multisector`)
+- `views/` (only with `--views`)
+- `frames/<basename>_frames/` per-frame PNGs and a `<basename>.gif` (or `.mp4`) per render (only with `--animate`)
+- `pymol.log`
+
+**Extra arguments:**
+
+See the [CLI reference](docs/cli_reference.md#sca-pymol) for animation modes (`spin` / `reveal`) and ray-tracing knobs.
+
+**Notes:**
+
+MP4 output requires `imageio-ffmpeg` (`pip install -e '.[mp4]'`).
 
 Protein-specific annotations (cofactors, ligands, iron-sulfur clusters, etc.) are user-supplied as a Python file with callables of signature `fn(struct, cmd, *, color=None, context=None)`. A worked example lives at [`demo/pymol_features/narg_1q16.py`](demo/pymol_features/narg_1q16.py).
 
@@ -300,7 +317,9 @@ sca-plots --scacore <core-outdir> --preprocessing <preprocessing-outdir>
 ```
 
 **Inputs:** any combination of `--prealign`, `--preprocessing`, `--scacore` directories from prior runs. At least one must be passed.
-**Outputs:** plots written into each stage's own `images/` subdirectory by default, or all into `--imgdir DIR` when given.
+**Outputs:**
+- plots written into each stage's own `images/` subdirectory by default
+- all plots written into `--imgdir DIR` when that flag is given (overrides per-stage `images/`)
 
 Each flag is opt-in. When `--scacore` and `--preprocessing` are both given, all plot variants (including the positional conservation plot) are produced.
 
@@ -377,7 +396,7 @@ cd demo
 ./run_demo_SH3.sh
 ```
 
-The demo covers both entry points (preformed MSA and raw FASTA) and walks through preprocessing, SCA core, primary-sequence projection (with both `mafft_add` and `hmmalign` backends), PDB-level projection (against 1SHF chain A), a plot-replay step, and a PyMOL rendering step. See `demo/SH3/scripts/` for the individual steps (`step0_*` through `step7_*`). `step7_pymol.sh` skips automatically when `pymol-open-source` isn't installed; install it via `conda install -c conda-forge pymol-open-source` to exercise the full pipeline. `demo/pymol_features/narg_1q16.py` is a reference example of a user features file — it isn't invoked by the default SH3 demo since the 1SHF structure has no NarG cofactors.
+The demo covers both entry points (preformed MSA and raw FASTA) and walks through preprocessing, SCA core, primary-sequence projection (with both `mafft_add` and `hmmalign` backends), PDB-level projection (against 1SHF chain A), a plot-replay step, and a PyMOL rendering step. See `demo/SH3/scripts/` for the individual steps.
 
 ## References
 

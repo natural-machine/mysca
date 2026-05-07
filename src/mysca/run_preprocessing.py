@@ -74,7 +74,7 @@ filter_history.json
     head of the list. Trailing stop codons (``*``) are silently replaced
     with gap inside ``load_msa`` and do not produce their own stage.
 
-images/ (only when --plot is passed)
+images/ (default: on; pass --no-plot to skip)
     filter_history.png, filter_distributions.png.
 
 -------------------------------------------------------------------------------
@@ -126,9 +126,12 @@ def parse_args(args):
                         help="Verbosity level (0=warnings only).")
     parser.add_argument("--pbar", action="store_true",
                         help="Enable tqdm progress bars.")
-    parser.add_argument("--plot", action="store_true",
-                        help="Emit filter_history.png and "
-                        "filter_distributions.png to outdir/images/.")
+    parser.add_argument(
+        "--plot", default=True, action=argparse.BooleanOptionalAction,
+        help="Emit filter_history.png and filter_distributions.png to "
+             "outdir/images/. Default: on. Pass --no-plot to skip plot "
+             "generation entirely (no images/ directory is created).",
+    )
 
     parser.add_argument(
         "--input_format", type=str, default="fasta",

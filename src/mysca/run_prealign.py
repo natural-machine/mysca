@@ -39,6 +39,8 @@ COMMAND LINE ARGUMENTS:
 
     Per-aligner --align_args keys:
         clustalo:
+            seqtype={protein, dna, rna}
+                                      input alphabet (default: protein)
             guidetree_out=true        write guide tree to
                                       <outdir>/guidetree.dnd
             output_order={tree-order, input-order}
@@ -130,10 +132,25 @@ def parse_args(args):
         choices=["none"] + sorted(CLUSTERERS),
         help="Clustering method (or 'none' to skip). Default 'none'.",
     )
-    cluster.add_argument("--cluster_min_seq_id", type=float, default=0.9)
-    cluster.add_argument("--cluster_coverage", type=float, default=0.8)
-    cluster.add_argument("--cluster_cov_mode", type=int, default=1)
-    cluster.add_argument("--cluster_threads", type=int, default=1)
+    cluster.add_argument(
+        "--cluster_min_seq_id", type=float, default=0.9,
+        help="Minimum sequence identity for cluster membership (mmseqs2 "
+             "--min-seq-id). Default 0.9.",
+    )
+    cluster.add_argument(
+        "--cluster_coverage", type=float, default=0.8,
+        help="Minimum coverage between query and cluster representative "
+             "(mmseqs2 -c). Default 0.8.",
+    )
+    cluster.add_argument(
+        "--cluster_cov_mode", type=int, default=1,
+        help="mmseqs2 coverage mode (--cov-mode). Default 1 (target "
+             "coverage).",
+    )
+    cluster.add_argument(
+        "--cluster_threads", type=int, default=1,
+        help="Threads for the clustering tool. Default 1.",
+    )
     cluster.add_argument("--cluster_bin", type=str, default=None,
                          help="Explicit path to the clustering binary.")
 

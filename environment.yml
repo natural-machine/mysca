@@ -20,9 +20,12 @@ dependencies:
   - pytorch
   - torchvision
   - torchaudio
-  # Optional external aligners (bioconda). Uncomment whichever you need
-  # to exercise the out-of-sample paths in `sca-project` and
-  # `sca-structure`, and the raw-FASTA path in `sca-prealign`.
+  - pymol-open-source
+  # Optional external aligners. Uncomment whichever you need to
+  # exercise the out-of-sample paths in `sca-project` and
+  # `sca-structure`, and the raw-FASTA path in `sca-prealign`. The
+  # `channels:` block above already lists conda-forge + bioconda, so
+  # `conda env create` resolves these without extra `-c` flags.
   #   - mafft    # sca-prealign; sca-project --aligner mafft_add (default)
   #   - hmmer    # sca-project --aligner hmmalign (provides hmmbuild + hmmalign)
   #   - mmseqs2  # sca-prealign --cluster mmseqs2
