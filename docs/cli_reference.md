@@ -194,7 +194,7 @@ sca-core -i <preprocessing-dir> -o <output-dir> [options]
 | `--nodendro` | off | Skip dendrogram and sequence-similarity plots |
 | `--plot / --no-plot` | on | Write diagnostic plots to `outdir/images/`. Default: on. Pass `--no-plot` to skip plot generation entirely (no `images/` directory is created) |
 | `--load_data` | "" | Path to a previous SCA output directory to load precomputed data (skips recomputation) |
-| `--sector_cmap` | `default` | Sector colormap for the SCA-matrix sector-subset plot. Choices: `none`, `default` |
+| `--sector_colors` | `default` | Sector palette for the SCA-matrix sector-subset plot. Accepts: `default` (built-in 20-color palette), `none` (skip per-sector coloring), a comma-separated list of hex / named colors (e.g. `"#e377c2,#f62727,red"`), a path to a `.json` array or one-color-per-line text file, or the name of a registered matplotlib colormap (e.g. `tab10`, `Set1`) |
 | `-v, --verbosity` | 1 | Verbosity level |
 | `--pbar` | off | Enable progress bar |
 
@@ -240,6 +240,7 @@ sca-pymol --structure <structure-out-dir> \
     [--mode {spin,reveal}] \
     [--reveal_schedule {cumulative,sequential,custom}] \
     [--reveal_custom STAGE [STAGE ...]] \
+    [--sector_colors SPEC] \
     -o <outdir> [-v N]
 ```
 
@@ -273,6 +274,7 @@ sca-pymol --structure <structure-out-dir> \
 | `--mode` | `spin` | Animation mode: `spin` (default — rotating camera, all selected groups lit) or `reveal` (still camera, narrative walk through stages of which groups are visible — see below) |
 | `--reveal_schedule` | `cumulative` | Stage schedule for `--mode reveal`: `cumulative` (groups stack one at a time), `sequential` (one group at a time, swapped out as the next appears), or `custom` (use `--reveal_custom`) |
 | `--reveal_custom` | None | Custom reveal stages (used with `--reveal_schedule custom`). Each STAGE is a comma-separated list of IC group indices visible in that stage; stages are space-separated. Example: `--reveal_custom "1" "1,2" "1,3" "2,3"` |
+| `--sector_colors` | `default` | Sector palette. Accepts `default` (built-in 20-color palette), a comma-separated list of hex / named colors, a path to a `.json` array or one-color-per-line text file, or the name of a registered matplotlib colormap (e.g. `tab10`, `Set1`). `none` is rejected — sca-pymol always needs colors |
 | `-v, --verbosity` | 1 | Verbosity level |
 
 ### Output
@@ -418,7 +420,8 @@ Regenerate diagnostic plots from persisted results, without rerunning the pipeli
 ### Usage
 
 ```bash
-sca-plots [--prealign DIR] [--preprocessing DIR] [--scacore DIR] [--imgdir DIR] [-v N]
+sca-plots [--prealign DIR] [--preprocessing DIR] [--scacore DIR] [--imgdir DIR] \
+    [--seq_proj_color_by COLUMN] [--sector_colors SPEC] [-v N]
 ```
 
 ### Arguments
@@ -430,6 +433,7 @@ sca-plots [--prealign DIR] [--preprocessing DIR] [--scacore DIR] [--imgdir DIR] 
 | `--scacore` | None | SCA core output directory. Regenerates `plot_conservation`, `plot_sca_matrix`, `plot_sca_spectrum`, `plot_sca_spectrum_vs_null`, `plot_dendrogram`, `plot_t_distributions`, `plot_data_2d`/`3d` (EV + IC sweeps), `plot_sca_matrix_sector_subset`. With `--preprocessing` also given, adds `plot_conservation_top`, `plot_conservation_positional`, and `plot_seq_projection_2d` (the latter needs `msa_binary3d`) |
 | `--imgdir` | None | Output directory for all plots. When omitted, plots go into each stage's own `images/` subdirectory |
 | `--seq_proj_color_by` | None | Color the `seq_proj_ic*.png` plot by this column of `sequence_metadata.tsv` (loaded from `--scacore`). Numeric columns get a colorbar; categorical columns get a legend |
+| `--sector_colors` | `default` | Sector palette for the SCA-matrix sector-subset plot. Accepts: `default` (built-in 20-color palette), `none` (skip per-sector coloring), a comma-separated list of hex / named colors, a path to a `.json` array or one-color-per-line text file, or the name of a registered matplotlib colormap (e.g. `tab10`, `Set1`) |
 | `-v, --verbosity` | 1 | Verbosity level |
 
 ### Notes

@@ -104,8 +104,15 @@ Optional:
     --plot / --no-plot    : write diagnostic plots to outdir/images/.
                             Default: on. Pass --no-plot to skip plot
                             generation entirely (no images/ dir created).
-    --sector_cmap         : {"default", "none"} sector palette for the
-                            sector-subset plot.
+    --sector_colors       : sector palette for the sector-subset plot.
+                            Accepts: "default" (built-in 20-color
+                            palette), "none" (skip per-sector
+                            coloring), a comma-separated list of hex /
+                            named colors (e.g.
+                            "#e377c2,#f62727,red"), a path to a .json
+                            array or one-color-per-line text file, or
+                            the name of a registered matplotlib
+                            colormap (e.g. "tab10", "Set1").
     --pbar                : tqdm progress bars for bootstrap iterations.
     -v --verbosity        : 0=warnings only; higher = more detail.
 
@@ -206,7 +213,7 @@ from mysca.helpers import get_rawseq_scores_in_groups
 from mysca.helpers import get_group_rawseq_positions_by_entry
 from mysca.helpers import get_group_rawseq_scores_by_entry
 from mysca.helpers import get_rawseq_indices_of_msa
-from mysca.constants import SECTOR_COLORS, DEFAULT_BACKGROUND_FREQ
+from mysca.constants import DEFAULT_BACKGROUND_FREQ, resolve_sector_colors
 from mysca.core import (
     FREQ_METHOD_CHOICES,
     _resolve_freq_method,
@@ -351,8 +358,15 @@ def parse_args(args):
     )
     parser.add_argument("--load_data", type=str, default="",
                         help="SCA directory to load precomputed data.")
-    parser.add_argument("--sector_cmap", type=str, default="default",
-                        choices=["none", "default"])
+    parser.add_argument(
+        "--sector_colors", type=str, default="default", metavar="SPEC",
+        help="Sector palette for the sector-subset plot. SPEC accepts: "
+        "'default' (built-in 20-color palette), 'none' (skip "
+        "per-sector coloring), a comma-separated list of hex / named "
+        "colors, a path to a .json or text file, or the name of a "
+        "registered matplotlib colormap (e.g. 'tab10', 'Set1'). "
+        "Default: 'default'.",
+    )
     
     sca_params = parser.add_argument_group("SCA parameters")
     sca_params.add_argument("--regularization", type=float, default=0.03,
@@ -466,7 +480,7 @@ def main(args):
     SAVE_DATAFRAME = args.save_dataframe
     SEQ_METADATA_PATH = args.seq_metadata
     SEQ_PROJ_COLOR_BY = args.seq_proj_color_by
-    sector_cmap = args.sector_cmap
+    sector_color_set = resolve_sector_colors(args.sector_colors)
     assignment_method = args.assignment
     weak_assignment = args.weak_assignment
     sectors_for = args.sectors_for
@@ -518,12 +532,6 @@ def main(args):
     else:
         msg = f"Cannot handle given argument for background: {background_freq}"
         raise RuntimeError(msg)
-
-    # Predefined colors for the sectors
-    sector_color_set = {
-        "default": SECTOR_COLORS,
-        "none": None,
-    }[sector_cmap]
 
     # Load preprocessed data
     if not os.path.isdir(indir):

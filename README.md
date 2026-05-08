@@ -184,6 +184,7 @@ sca-core \
 - `--save_dataframe` — also write `seq_projections.tsv` (per-sequence Uᵖ scores) for every retained sequence
 - `--seq_metadata <tsv>` — optional per-sequence metadata TSV (`seq_id` column + arbitrary others); persisted alongside results and merged into `seq_projections.tsv`
 - `--seq_proj_color_by <column>` — color the `seq_proj_ic0v1.png` plot by a metadata column (numeric → colorbar, categorical → legend)
+- `--sector_colors <SPEC>` — sector palette for the SCA-matrix sector-subset plot. Accepts `default` (built-in 20-color palette), `none` (skip per-sector coloring), a comma-separated list of hex / named colors, a path to a `.json` array or one-color-per-line text file, or a registered matplotlib colormap name (e.g. `tab10`, `Set1`)
 - `--accelerator {none,gpu}` — flips per-step kernel defaults to GPU variants when set to `gpu`
 - `--precision {fp64,fp32,fp16}` — GPU compute precision for `fijab` / eigvalsh-bootstrap kernels (default `fp64`; ignored on CPU). Apple MPS does not support fp64; on macOS, fp64 is auto-downgraded to fp32 with a warning.
 - `--use_jax` — DEPRECATED alias for `--freq_method=jax`

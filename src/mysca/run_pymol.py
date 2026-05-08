@@ -68,6 +68,11 @@ COMMAND LINE ARGUMENTS:
     --reveal_custom STAGE [STAGE ...] : custom stage schedule when
         --reveal_schedule custom. Each STAGE is a comma-separated
         list of IC group indices visible in that stage.
+    --sector_colors SPEC : sector palette. Accepts 'default' (built-in
+        20-color palette), a comma-separated list of hex / named
+        colors, a path to a .json or one-color-per-line text file, or
+        the name of a registered matplotlib colormap (e.g. 'tab10',
+        'Set1'). Default: 'default'.
 
 -------------------------------------------------------------------------------
 EXAMPLE USAGE:
@@ -96,7 +101,7 @@ from typing import Callable, Iterable
 
 import numpy as np
 
-from mysca.constants import SECTOR_COLORS
+from mysca.constants import resolve_sector_colors
 from mysca.logging_config import configure_logging
 
 # pymol, imageio, and PIL are deferred imports (see _require_cmd /
@@ -117,7 +122,6 @@ logger = logging.getLogger("mysca.run_pymol")
 DEFAULT_STRUCT_COLOR = "gray70"
 DEFAULT_STRUCT_STYLE = "sticks"
 DEFAULT_STRUCT_ALPHA = 0.5
-DEFAULT_SECTOR_COLORS = SECTOR_COLORS
 DEFAULT_SECTOR_STYLE = "spheres"
 DEFAULT_BG_COLOR = "white"
 
@@ -261,11 +265,25 @@ def parse_args(args):
         "Example: --reveal_custom \"1\" \"1,2\" \"1,3\" \"2,3\".",
     )
     parser.add_argument(
+        "--sector_colors", type=str, default="default", metavar="SPEC",
+        help="Sector palette. SPEC accepts: 'default' (built-in "
+        "20-color palette), a comma-separated list of hex / named "
+        "colors, a path to a .json or text file, or the name of a "
+        "registered matplotlib colormap (e.g. 'tab10', 'Set1'). "
+        "'none' is rejected here — sca-pymol always needs colors. "
+        "Default: 'default'.",
+    )
+    parser.add_argument(
         "-v", "--verbosity", type=int, default=1,
         help="Verbosity level (0=warnings only).",
     )
 
     parsed = parser.parse_args(args)
+    if parsed.sector_colors == "none":
+        parser.error(
+            "--sector_colors=none is not supported by sca-pymol; "
+            "sectors must have a palette to render."
+        )
     if parsed.features and not parsed.features_py:
         parser.error("--features requires --features_py.")
     if parsed.reveal_custom and parsed.reveal_schedule != "custom":
@@ -411,7 +429,8 @@ def main(args):
             len(feature_fns), args.features_py,
         )
 
-    sector_colors = [_hex2color(x) for x in DEFAULT_SECTOR_COLORS]
+    palette = resolve_sector_colors(args.sector_colors)
+    sector_colors = [_hex2color(x) for x in palette]
     cmd = _require_cmd()
 
     custom_reveal = (

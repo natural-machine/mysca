@@ -27,7 +27,8 @@ Per-stage, plots are written into ``{stage_dir}/images/`` by default, or into
                          on or after commit HEAD), plot_sca_spectrum,
                          plot_sca_spectrum_vs_null, plot_dendrogram,
                          plot_t_distributions, plot_data_2d/3d (EV + IC
-                         sweeps), plot_sca_matrix_sector_subset,
+                         sweeps), plot_sca_matrix_sector_subset
+                         (palette controlled by --sector_colors),
                          plot_seq_projection_2d (requires --preprocessing
                          for msa_binary3d; optionally colored by
                          --seq_proj_color_by COLUMN of
@@ -40,6 +41,7 @@ import logging
 import os
 import sys
 
+from mysca.constants import resolve_sector_colors
 from mysca.logging_config import configure_logging
 from mysca.results import PreprocessingResults, SCAResults
 from mysca.pl import (
@@ -123,6 +125,15 @@ def parse_args(args):
         "sequence_metadata.tsv (loaded from --scacore). Numeric "
         "columns get a colorbar; categorical columns get a legend.",
     )
+    parser.add_argument(
+        "--sector_colors", type=str, default="default", metavar="SPEC",
+        help="Sector palette for the sector-subset plot. SPEC accepts: "
+        "'default' (built-in 20-color palette), 'none' (skip "
+        "per-sector coloring), a comma-separated list of hex / named "
+        "colors, a path to a .json or text file, or the name of a "
+        "registered matplotlib colormap (e.g. 'tab10', 'Set1'). "
+        "Default: 'default'.",
+    )
     parser.add_argument("-v", "--verbosity", type=int, default=1)
 
     parsed = parser.parse_args(args)
@@ -184,6 +195,7 @@ def _replay_scacore(
         stage_dir, imgdir_override, *,
         preproc_dir=None,
         seq_proj_color_by=None,
+        sector_colors=None,
 ):
     if not os.path.isdir(stage_dir):
         raise FileNotFoundError(f"SCA core directory not found: {stage_dir}")
@@ -294,10 +306,9 @@ def _replay_scacore(
         )
 
     if sca.sca_matrix_sector_subset is not None:
-        from mysca.constants import SECTOR_COLORS
         plot_sca_matrix_sector_subset(
             sca.sca_matrix_sector_subset, sca.ic_positions,
-            SECTOR_COLORS, imgdir,
+            sector_colors, imgdir,
         )
     else:
         logger.warning(
@@ -375,9 +386,11 @@ def main(args):
     if args.preprocessing:
         _replay_preprocessing(args.preprocessing, args.imgdir)
     if args.scacore:
+        sector_colors = resolve_sector_colors(args.sector_colors)
         _replay_scacore(
             args.scacore, args.imgdir, preproc_dir=args.preprocessing,
             seq_proj_color_by=args.seq_proj_color_by,
+            sector_colors=sector_colors,
         )
 
     logger.info("sca-plots done.")
