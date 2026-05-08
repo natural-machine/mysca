@@ -108,6 +108,34 @@ class SequenceProjection:
             "len(sca.ic_positions[i]). None when SCAResults lacks "
             "ic_positions."
         ),
+        "align_target": (
+            "Which reference MSA the aligner used for this projection. "
+            "'original' = the unfiltered MSA loaded from "
+            "msa_orig.fasta-aln (length L_orig); 'processed' = the "
+            "post-preprocessing MSA (length L_proc, sliced from "
+            "msa_obj_loaded by retained_sequences and "
+            "retained_positions). The choice affects "
+            "len(aligned_sequence) and the derivation of "
+            "residue_by_processed_col, but NOT the meaning of "
+            "ic_residues / ic_loadings / ic_processed_cols (which are "
+            "anchored in processed-MSA / raw-residue coordinates "
+            "regardless)."
+        ),
+        "n_input_residues_dropped": (
+            "Count of residues in the user-provided input sequence that "
+            "did not survive alignment (i.e. did not land in any "
+            "reference column). Equals len(input) - len(raw_sequence). "
+            "Always 0 for in-sample records; can be nonzero for "
+            "out-of-sample inputs longer than the reference, or under "
+            "--align_target processed where the reference is narrower."
+        ),
+        "input_coverage_fraction": (
+            "Fraction of the user-provided input that survived "
+            "alignment, len(raw_sequence) / max(1, len(input)). 1.0 "
+            "means every input residue landed in a reference column. "
+            "Below 0.95 triggers a per-record WARNING in the "
+            "projection log."
+        ),
     }
 
     def __init__(
@@ -124,6 +152,9 @@ class SequenceProjection:
         up_score: Optional[np.ndarray] = None,
         gap_fraction_per_ic: Optional[np.ndarray] = None,
         informative_positions_per_ic: Optional[np.ndarray] = None,
+        align_target: str = "original",
+        n_input_residues_dropped: int = 0,
+        input_coverage_fraction: float = 1.0,
     ):
         self.seq_id = seq_id
         self.raw_sequence = raw_sequence
@@ -137,6 +168,9 @@ class SequenceProjection:
         self.up_score = up_score
         self.gap_fraction_per_ic = gap_fraction_per_ic
         self.informative_positions_per_ic = informative_positions_per_ic
+        self.align_target = align_target
+        self.n_input_residues_dropped = int(n_input_residues_dropped)
+        self.input_coverage_fraction = float(input_coverage_fraction)
 
     def info(self) -> str:
         return _format_info_table(
@@ -176,6 +210,9 @@ class SequenceProjection:
                 self.informative_positions_per_ic.tolist()
                 if self.informative_positions_per_ic is not None else None
             ),
+            "align_target": self.align_target,
+            "n_input_residues_dropped": int(self.n_input_residues_dropped),
+            "input_coverage_fraction": float(self.input_coverage_fraction),
         }
 
 
@@ -389,6 +426,8 @@ def _aligned_to_xmsa(
     aligned_seqs: Sequence[str],
     retained_positions: np.ndarray,
     aa_list: Sequence[str],
+    *,
+    aligned_in_processed_coords: bool = False,
 ) -> np.ndarray:
     """Convert column-aligned sequences to a one-hot tensor in
     processed-MSA coordinates.
@@ -396,6 +435,24 @@ def _aligned_to_xmsa(
     Output shape (M, L_proc, D), bool. Gap, missing, and non-canonical
     symbols at any processed column produce an all-zero row, matching
     the ``onehot_without_gap`` convention used by ``preprocess_msa``.
+
+    Parameters
+    ----------
+    aligned_seqs
+        Column-aligned sequences. Length per sequence is L_orig when
+        ``aligned_in_processed_coords=False`` (default), else L_proc.
+    retained_positions
+        Maps processed column j → original column ``retained_positions[j]``.
+        Used to pick the right column from each aligned sequence under
+        the default (original-coords) mode. Its length sets L_proc in
+        either mode.
+    aa_list
+        Canonical alphabet (no gap).
+    aligned_in_processed_coords
+        Set to True when the aligned sequences are already in processed-
+        MSA coordinates (e.g. ``--align_target processed``). In that
+        case we index the j-th column directly instead of indirecting
+        through ``retained_positions``.
     """
     aa_to_col = {c: i for i, c in enumerate(aa_list)}
     D = len(aa_list)
@@ -404,10 +461,51 @@ def _aligned_to_xmsa(
     out = np.zeros((M, L_proc, D), dtype=bool)
     for m, aligned in enumerate(aligned_seqs):
         for j, pos in enumerate(retained_positions):
-            col = aa_to_col.get(aligned[pos])
+            char = aligned[j] if aligned_in_processed_coords else aligned[pos]
+            col = aa_to_col.get(char)
             if col is not None:
                 out[m, j, col] = True
     return out
+
+
+ALIGN_TARGET_CHOICES = ("original", "processed")
+PROCESSED_REFERENCE_FNAME = "processed_reference.fasta-aln"
+COVERAGE_WARN_THRESHOLD = 0.95
+
+
+def _build_processed_reference_msa(
+        msa_obj_loaded: MultipleSeqAlignment,
+        retained_sequences: np.ndarray,
+        retained_positions: np.ndarray,
+        outdir: Optional[str] = None,
+) -> MultipleSeqAlignment:
+    """Build a character-space ``MultipleSeqAlignment`` of length L_proc
+    from the unfiltered loaded MSA, sliced by ``retained_sequences`` rows
+    and ``retained_positions`` columns. Optionally write the materialized
+    reference to ``<outdir>/processed_reference.fasta-aln`` for transparency.
+
+    The aligners only require ``MultipleSeqAlignment.get_alignment_length()``
+    + FASTA-serializable records, both of which work on the sliced view.
+    """
+    rows = list(msa_obj_loaded)
+    sliced_records = []
+    for src_idx in retained_sequences:
+        rec = rows[int(src_idx)]
+        seq_chars = str(rec.seq)
+        sliced_seq = "".join(seq_chars[int(c)] for c in retained_positions)
+        sliced_records.append(
+            SeqRecord(Seq(sliced_seq), id=rec.id, description=rec.description)
+        )
+    sliced = MultipleSeqAlignment(sliced_records)
+    if outdir is not None:
+        os.makedirs(outdir, exist_ok=True)
+        out_path = os.path.join(outdir, PROCESSED_REFERENCE_FNAME)
+        SeqIO.write(sliced_records, out_path, "fasta")
+        logger.info(
+            "Materialized processed reference MSA (%d rows x %d cols) at %s",
+            len(sliced_records), len(retained_positions), out_path,
+        )
+    return sliced
 
 
 def _recover_input_indices(input_raw: str, kept_raw: str) -> list[int]:
@@ -444,6 +542,7 @@ def project_sequences(
     sca_result_dir: str,
     preproc_result_dir: str,
     aligner: str = "mafft_add",
+    align_target: str = "original",
     workdir: Optional[str] = None,
     aligner_kwargs: Optional[dict] = None,
     seq_metadata_path: Optional[str] = None,
@@ -461,6 +560,14 @@ def project_sequences(
             (read via ``PreprocessingResults.load``).
         aligner: Registered entry in ``project.alignment.ALIGNERS``.
             Default ``"mafft_add"``.
+        align_target: Which reference MSA to align against. ``"original"``
+            (default) uses the unfiltered loaded MSA (length L_orig);
+            ``"processed"`` uses the post-preprocessing MSA (length
+            L_proc, sliced from msa_obj_loaded by retained_sequences and
+            retained_positions). ``"processed"`` typically yields a
+            denser, higher-quality reference but more aggressively clips
+            input residues that exceed the reference column count;
+            inspect ``input_coverage_fraction`` per record to detect.
         workdir: Working directory for intermediate alignment files.
             Created if missing. When ``None``, a temp dir is used and
             cleaned up after the call.
@@ -475,6 +582,11 @@ def project_sequences(
     Returns:
         ProjectionResult with one ``SequenceProjection`` per input record.
     """
+    if align_target not in ALIGN_TARGET_CHOICES:
+        raise ValueError(
+            f"Unknown align_target {align_target!r}. "
+            f"Choices: {ALIGN_TARGET_CHOICES}"
+        )
     prep = PreprocessingResults.load(preproc_result_dir)
     sca = SCAResults.load(sca_result_dir)
 
@@ -509,11 +621,13 @@ def project_sequences(
 
     msa_obj_loaded = prep.msa_obj_loaded
     retained_positions = np.asarray(prep.retained_positions, dtype=int)
+    retained_sequences = np.asarray(prep.retained_sequences, dtype=int)
     groups = sca.ic_positions
     v_ica = sca.v_ica
     n_components = len(groups)
     L_orig = msa_obj_loaded.get_alignment_length()
     L_proc = len(retained_positions)
+    expected_aligned_len = L_orig if align_target == "original" else L_proc
 
     # Parse input sequences. We keep records in input order and decide
     # per-record whether to in-sample-short-circuit or queue for
@@ -550,11 +664,18 @@ def project_sequences(
             else:
                 os.makedirs(workdir, exist_ok=True)
                 active_workdir = workdir
+            if align_target == "processed":
+                active_ref = _build_processed_reference_msa(
+                    msa_obj_loaded, retained_sequences, retained_positions,
+                    outdir=active_workdir,
+                )
+            else:
+                active_ref = msa_obj_loaded
             new_fasta = os.path.join(active_workdir, "new_input.fasta")
             with open(new_fasta, "w") as fout:
                 SeqIO.write(needs_align, fout, "fasta")
             info = align_to_msa(
-                new_fasta, msa_obj_loaded, active_workdir,
+                new_fasta, active_ref, active_workdir,
                 method=aligner,
                 **(aligner_kwargs or {}),
             )
@@ -564,15 +685,30 @@ def project_sequences(
                     aligned_by_id[rec.id] = str(rec.seq)
 
         projections = []
+        low_coverage_records: list[tuple[str, int, float]] = []
         for rec, is_in_sample in zip(input_records, per_record_in_sample):
+            input_raw = _gapless(str(rec.seq))
+            input_len = len(input_raw)
             if is_in_sample:
-                aligned_seq = str(
-                    msa_obj_loaded[ids_in_msa[rec.id]].seq
-                )
+                row_seq = str(msa_obj_loaded[ids_in_msa[rec.id]].seq)
+                if align_target == "processed":
+                    # Slice the loaded row down to the L_proc processed
+                    # columns. No aligner invocation; no residue clipping
+                    # beyond what preprocessing already discarded.
+                    aligned_seq = "".join(
+                        row_seq[int(c)] for c in retained_positions
+                    )
+                else:
+                    aligned_seq = row_seq
                 raw = _gapless(aligned_seq)
                 # In-sample: raw came from the MSA row, so its indices
-                # trivially match the input. There's nothing to recover.
-                input_residue_indices = list(range(len(raw)))
+                # trivially match the input order. Recover indices via
+                # subsequence walk (handles align_target=processed where
+                # the slice may drop some of the original input residues
+                # that landed on truncated columns).
+                input_residue_indices = _recover_input_indices(
+                    input_raw, raw,
+                ) if input_raw != raw else list(range(len(raw)))
             else:
                 aligned_seq = aligned_by_id.get(rec.id)
                 if aligned_seq is None:
@@ -597,15 +733,20 @@ def project_sequences(
                 # input_residue_indices with pdb.residue_ids to handle
                 # the common case where a PDB's primary sequence is
                 # slightly longer than what fits the MSA columns.
-                input_raw = _gapless(str(rec.seq))
                 input_residue_indices = _recover_input_indices(input_raw, raw)
-            if len(aligned_seq) != L_orig:
+            if len(aligned_seq) != expected_aligned_len:
                 raise RuntimeError(
                     f"Aligned sequence for {rec.id!r} has length "
-                    f"{len(aligned_seq)}; expected {L_orig}"
+                    f"{len(aligned_seq)}; expected {expected_aligned_len} "
+                    f"(align_target={align_target!r})"
                 )
             resi_by_orig = _residue_indices_for_aligned(aligned_seq)
-            resi_by_proc = resi_by_orig[retained_positions]
+            if align_target == "processed":
+                # aligned_seq is already in processed-MSA column space;
+                # no further slicing by retained_positions is needed.
+                resi_by_proc = resi_by_orig
+            else:
+                resi_by_proc = resi_by_orig[retained_positions]
 
             ic_residues = []
             ic_loadings = []
@@ -623,6 +764,24 @@ def project_sequences(
                 ic_loadings.append(v_ica[g[keep], i])
                 ic_processed_cols.append(g[keep])
 
+            n_dropped = max(0, input_len - len(raw))
+            coverage = (len(raw) / input_len) if input_len > 0 else 1.0
+            if n_dropped > 0 and coverage < COVERAGE_WARN_THRESHOLD:
+                logger.warning(
+                    "Low alignment coverage for %r: %d/%d input residues "
+                    "retained (coverage=%.3f). Input is longer than the "
+                    "reference, so the aligner clipped residues that "
+                    "didn't fall in any reference column.",
+                    rec.id, len(raw), input_len, coverage,
+                )
+                low_coverage_records.append((rec.id, n_dropped, coverage))
+            elif n_dropped > 0:
+                logger.info(
+                    "Alignment dropped %d/%d residues from %r "
+                    "(coverage=%.3f).",
+                    n_dropped, input_len, rec.id, coverage,
+                )
+
             projections.append(SequenceProjection(
                 seq_id=rec.id,
                 raw_sequence=raw,
@@ -633,7 +792,22 @@ def project_sequences(
                 ic_processed_cols=ic_processed_cols,
                 in_sample=is_in_sample,
                 input_residue_indices=input_residue_indices,
+                align_target=align_target,
+                n_input_residues_dropped=n_dropped,
+                input_coverage_fraction=coverage,
             ))
+
+        if low_coverage_records:
+            logger.warning(
+                "%d/%d projections fell below coverage=%.2f. Affected "
+                "seq_ids (up to 10): %s",
+                len(low_coverage_records), len(projections),
+                COVERAGE_WARN_THRESHOLD,
+                ", ".join(
+                    f"{sid}({cov:.2f})"
+                    for sid, _, cov in low_coverage_records[:10]
+                ),
+            )
 
         # Sequence-space Uᵖ scores (Rivoire et al. Eqs. 14–15) for every
         # projected sequence. The eigendecomposition / ICA precheck above
@@ -647,6 +821,7 @@ def project_sequences(
             xmsa_new = _aligned_to_xmsa(
                 [p.aligned_sequence for p in projections],
                 retained_positions, aa_list,
+                aligned_in_processed_coords=(align_target == "processed"),
             )
             up_all = sca.project_sequences(xmsa_new)
             gap_frac_all, n_inform_all = _per_ic_quality_metrics(
@@ -670,6 +845,7 @@ def project_sequences(
         "preproc_result_dir": os.path.abspath(preproc_result_dir),
         "sequences_fpath": os.path.abspath(sequences_fpath),
         "aligner": aligner,
+        "align_target": align_target,
     }
 
     sequence_metadata = None

@@ -8,17 +8,27 @@ summary + per-sequence detail under the output directory.
 -------------------------------------------------------------------------------
 COMMAND LINE ARGUMENTS:
 
-    -i --input_fpath : Path to an input FASTA. Each record is projected
-        independently. Records whose ID matches an entry in the reference
-        MSA (``msa_orig.fasta-aln`` under --preprocessing) are resolved
-        in-sample (no external alignment performed). Mutually exclusive
-        with ``--from_msa`` / ``--seq_id``.
+    -i --input_fpath : Path to an input FASTA, OR (when --raw is set) a
+        literal amino-acid sequence string. Each FASTA record is
+        projected independently. Records whose ID matches an entry in
+        the reference MSA (``msa_orig.fasta-aln`` under --preprocessing)
+        are resolved in-sample (no external alignment performed).
+        Mutually exclusive with ``--from_msa`` / ``--seq_id``.
+    --raw : Treat -i/--input_fpath as a literal amino-acid sequence
+        rather than a path. The string is uppercased and whitespace-
+        stripped; no alphabet validation is performed (non-canonical
+        characters are passed through to the projector, which may
+        emit its own WARNINGs via ``load_msa``). Empty or all-gap
+        inputs are rejected. Materialized as a one-record FASTA
+        inside the output directory and fed through the standard
+        projection path.
     --from_msa : Path to a (possibly aligned) FASTA from which to
         extract a single record by --seq_id, ungap, and project. Useful
         for in-sample replay without the FASTA-surgery boilerplate.
         Requires --seq_id; mutually exclusive with -i.
     --seq_id : First whitespace-delimited token of the target record's
-        header in --from_msa. Required with --from_msa.
+        header in --from_msa. Required with --from_msa. Also used as
+        the record ID when --raw is set (default: ``raw_input``).
     --scacore : Path to an ``sca-core`` output directory
         (contains ``ic_positions/ic_*_msaproc.npy`` and
         ``sca_results/v_ica_normalized.npy``).
@@ -31,6 +41,14 @@ COMMAND LINE ARGUMENTS:
         reference column as a match state, aligns new sequences with
         ``hmmalign --outformat afa``, and keeps only match columns.
         In-sample records bypass alignment entirely.
+    --align_target : Which reference MSA to align against. ``original``
+        (default) = unfiltered loaded MSA (``msa_orig.fasta-aln``,
+        length L_orig). ``processed`` = post-preprocessing MSA (length
+        L_proc, sliced from msa_obj_loaded by retained_sequences /
+        retained_positions). ``processed`` is denser and typically
+        yields cleaner alignments but more aggressively clips input
+        residues that exceed the reference column count; check
+        ``input_coverage_fraction`` in the output to detect.
     --align_bin : Explicit path to the alignment binary. For
         ``--aligner hmmalign`` this overrides the ``hmmalign`` binary;
         ``hmmbuild`` is resolved from PATH.
@@ -73,7 +91,11 @@ projection.json
     projection; 0.0 means full coverage),
     informative_positions_per_ic (length n_components — count of
     positions in each IC's support that contribute non-zero mass to
-    the Uᵖ math).
+    the Uᵖ math), align_target ('original' or 'processed' — which
+    reference MSA the aligner used; affects len(aligned_sequence)),
+    n_input_residues_dropped (count of input residues that did not
+    survive alignment), input_coverage_fraction (fraction of the
+    user-provided input that survived alignment; 1.0 = no clipping).
 
 per_sequence/<seqid>_residues.tsv
     One row per (IC, residue) pairing for readable inspection.
@@ -83,6 +105,21 @@ projection_args.json
 
 projection.log
     Run log.
+
+raw_input.fasta (only when --raw is set)
+    Materialized one-record FASTA for the literal sequence string
+    passed via -i. The record's header is --seq_id (default
+    'raw_input').
+
+from_msa_input.fasta (only when --from_msa is used)
+    Materialized one-record FASTA for the record extracted from
+    --from_msa.
+
+_align_workdir/processed_reference.fasta-aln (only when --align_target
+    processed is set AND at least one record needed alignment)
+    Materialized character-space FASTA of the processed MSA (rows =
+    retained_sequences, cols = retained_positions). Provided for
+    transparency / debug; safe to delete.
 
 seq_projections.tsv (only when --save_dataframe)
     Tab-separated table: seq_id, aligned_sequence, raw_sequence,
@@ -118,6 +155,13 @@ EXAMPLE USAGE:
         --scacore scacore_out \\
         -o projection_out
 
+    # Raw-string input: project a single sequence passed on the command
+    # line. --seq_id is optional; defaults to "raw_input".
+    sca-project -i ACDEFGHIKLMNPQRSTVWY --raw \\
+        --preprocessing preprocess_out \\
+        --scacore scacore_out \\
+        -o projection_out
+
 """
 
 import argparse
@@ -133,6 +177,9 @@ from Bio import SeqIO
 from mysca.logging_config import configure_logging
 from mysca.pl import plot_seq_projection_2d, resolve_color_values
 from mysca.project import project_sequences, ALIGNERS
+from mysca.project.projection import ALIGN_TARGET_CHOICES
+
+DEFAULT_RAW_SEQ_ID = "raw_input"
 
 
 def _safe_filename_component(s: str) -> str:
@@ -254,8 +301,18 @@ def parse_args(args):
     )
     parser.add_argument(
         "-i", "--input_fpath", type=str, default=None,
-        help="Path to an input FASTA of sequences to project. Mutually "
+        help="Path to an input FASTA of sequences to project, OR (when "
+        "--raw is set) a literal amino-acid sequence string. Mutually "
         "exclusive with --from_msa / --seq_id.",
+    )
+    parser.add_argument(
+        "--raw", action="store_true",
+        help="Interpret -i/--input_fpath as a literal amino-acid "
+        "sequence string instead of a file path. The string is "
+        "uppercased and whitespace-stripped; no alphabet validation "
+        "is performed. Empty / all-gap inputs are still rejected. "
+        "The record's seq_id defaults to 'raw_input' but can be "
+        "overridden with --seq_id.",
     )
     parser.add_argument(
         "--from_msa", type=str, default=None, metavar="FASTA",
@@ -266,7 +323,8 @@ def parse_args(args):
     parser.add_argument(
         "--seq_id", type=str, default=None, metavar="ID",
         help="Header (first whitespace-delimited token) of the record "
-        "to extract from --from_msa. Required with --from_msa.",
+        "to extract from --from_msa. Required with --from_msa. Also "
+        "used as the record's ID under --raw (default: 'raw_input').",
     )
     parser.add_argument(
         "--preprocessing", type=str, required=True, metavar="DIR",
@@ -292,6 +350,19 @@ def parse_args(args):
         "as a match state, aligns new sequences (`hmmalign --outformat "
         "afa`) and keeps only match columns. In-sample records bypass "
         "alignment entirely.",
+    )
+    parser.add_argument(
+        "--align_target", type=str, default="original",
+        choices=list(ALIGN_TARGET_CHOICES),
+        help="Which reference MSA to align against. 'original' "
+        "(default) uses the unfiltered loaded MSA "
+        "(msa_orig.fasta-aln, length L_orig). 'processed' uses the "
+        "post-preprocessing MSA (length L_proc, sliced from "
+        "msa_obj_loaded by retained_sequences and retained_positions). "
+        "'processed' is denser and typically yields cleaner alignments "
+        "but more aggressively clips input residues that exceed the "
+        "reference column count; check input_coverage_fraction in the "
+        "output to detect.",
     )
     parser.add_argument(
         "--align_bin", type=str, default=None,
@@ -348,18 +419,51 @@ def parse_args(args):
                         help="Verbosity level (0=warnings only).")
     parsed = parser.parse_args(args)
     has_input = parsed.input_fpath is not None
-    has_from_msa = parsed.from_msa is not None or parsed.seq_id is not None
-    if has_input and has_from_msa:
+    has_from_msa = parsed.from_msa is not None
+    if parsed.raw:
+        if not has_input:
+            parser.error("--raw requires -i/--input_fpath (the sequence "
+                         "string).")
+        if has_from_msa:
+            parser.error("--raw is mutually exclusive with --from_msa.")
+        return parsed
+    # Without --raw: keep the original FASTA-or-from_msa contract.
+    has_seq_id = parsed.seq_id is not None
+    if has_input and (has_from_msa or has_seq_id):
         parser.error("-i/--input_fpath is mutually exclusive with "
-                     "--from_msa / --seq_id.")
-    if not has_input and not has_from_msa:
+                     "--from_msa / --seq_id (unless --raw is set).")
+    if not has_input and not (has_from_msa or has_seq_id):
         parser.error("must provide -i/--input_fpath OR "
-                     "--from_msa + --seq_id.")
-    if has_from_msa and (
-        parsed.from_msa is None or parsed.seq_id is None
-    ):
+                     "--from_msa + --seq_id (use --raw to pass a literal "
+                     "sequence via -i).")
+    if (has_from_msa or has_seq_id) and not (has_from_msa and has_seq_id):
         parser.error("--from_msa requires --seq_id (and vice versa).")
     return parsed
+
+
+def _materialize_raw_input(seq: str, seq_id: str, outdir: str) -> str:
+    """Normalize a raw amino-acid string and write it as a one-record
+    FASTA inside outdir. Returns the path to the new file.
+
+    Strips whitespace and uppercases. No alphabet validation: any
+    character is forwarded to the projector, which handles symbol
+    mapping (and may emit its own WARNINGs for non-canonical chars
+    via the standard load_msa path). Empty (whitespace-only) and
+    all-gap inputs still raise, since neither has anything to project.
+    """
+    cleaned = "".join(seq.split()).upper()
+    if not cleaned:
+        raise ValueError(
+            "--raw input is empty (after whitespace stripping)."
+        )
+    if not cleaned.replace("-", ""):
+        raise ValueError(
+            "--raw input contains only gap characters; nothing to project."
+        )
+    out_fpath = os.path.join(outdir, "raw_input.fasta")
+    with open(out_fpath, "w") as f:
+        f.write(f">{seq_id}\n{cleaned}\n")
+    return out_fpath
 
 
 def _materialize_from_msa(msa_path: str, seq_id: str, outdir: str) -> str:
@@ -396,7 +500,16 @@ def main(args):
         logfile=os.path.join(outdir, PROJECT_LOG_FNAME),
     )
 
-    if args.input_fpath is not None:
+    if args.raw:
+        seq_id = args.seq_id or DEFAULT_RAW_SEQ_ID
+        input_fpath = _materialize_raw_input(
+            args.input_fpath, seq_id, outdir,
+        )
+        logger.info(
+            "Materialized --raw sequence (seq_id=%r) into %s",
+            seq_id, input_fpath,
+        )
+    elif args.input_fpath is not None:
         input_fpath = args.input_fpath
         if not os.path.isfile(input_fpath):
             raise FileNotFoundError(f"Input FASTA not found: {input_fpath}")
@@ -422,6 +535,7 @@ def main(args):
         sca_result_dir=args.scacore,
         preproc_result_dir=args.preprocessing,
         aligner=args.aligner,
+        align_target=args.align_target,
         workdir=os.path.join(outdir, "_align_workdir"),
         aligner_kwargs=aligner_kwargs,
         seq_metadata_path=args.seq_metadata,

@@ -203,7 +203,19 @@ sca-project \
 
 Records whose IDs are already in the reference MSA short-circuit the alignment step; the rest are aligned onto the reference MSA columns via MAFFT (default) or HMMER.
 
-To dump the per-sequence sequence-space scores (Uᵖ) for downstream analysis, pass `--save_dataframe`:
+To project a single amino-acid sequence passed directly on the command line (no FASTA file needed), use `--raw`:
+
+```bash
+sca-project -i ACDEFGHIKLMNPQRSTVWY --raw \
+    [--seq_id myseq] \
+    --preprocessing <preprocessing-outdir> \
+    --scacore <core-outdir> \
+    -o <project-outdir>
+```
+
+The string is uppercased and whitespace-stripped; no alphabet validation is performed (non-canonical chars pass through to the projector). Empty or all-gap inputs are rejected. The record's ID defaults to `raw_input` (override with `--seq_id`).
+
+To dump the per-sequence sequence-space scores ($U^P$) for downstream analysis, pass `--save_dataframe`:
 
 ```bash
 sca-project \
@@ -212,6 +224,7 @@ sca-project \
     --scacore <core-outdir> \
     -o <project-outdir> \
     --save_dataframe
+
 # inspect:
 head -5 <project-outdir>/seq_projections.tsv
 # columns: seq_id  aligned_sequence  raw_sequence  in_sample
@@ -222,22 +235,38 @@ head -5 <project-outdir>/seq_projections.tsv
 
 This works for both pure out-of-sample input (every record gets aligned via `--aligner`) and mixed batches (in-sample IDs short-circuit; out-of-sample go through MAFFT or HMMER).
 
+By default `sca-project` aligns out-of-sample queries against the **unfiltered** loaded MSA (length `L_orig`). For alignment against the *processed* MSA, pass `--align_target processed`, which aligns against the post-preprocessing MSA (length `L_proc`):
+
+```bash
+sca-project -i <new_sequences.fasta> \
+    --align_target processed \
+    --preprocessing <preprocessing-outdir> \
+    --scacore <core-outdir> \
+    -o <project-outdir>
+```
+
+When a sequence is aligned, insertions are dropped, so as to retain the positions of the MSA against which the alignment is performed.
+`--align_target processed` only changes `len(aligned_sequence)` and the derivation of `residue_by_processed_col`; `ic_residues` / `ic_loadings` / `ic_processed_cols` semantics are unchanged. Caveat: because the processed MSA has fewer columns, more input residues may be clipped during alignment (the aligner only retains residues that fall in a reference column). Each projection records `n_input_residues_dropped` and `input_coverage_fraction` so you can detect — and a per-record WARNING fires when coverage drops below 0.95.
+
 **Inputs:** a FASTA of sequences to project, plus the upstream `sca-preprocess` and `sca-core` output directories.
 
 **Outputs (under `<project-outdir>`):**
-- `projection.json` (per-sequence: `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col`, `ic_residues`, `ic_loadings`, `ic_processed_cols`, `in_sample`, `up_score` — the sequence's Uᵖ row of length `n_components`, or `null` when the source SCAResults lacks the eigendecomposition fields; plus `gap_fraction_per_ic` and `informative_positions_per_ic` — per-IC quality signals indicating how much of each IC's training-time support is gapped or non-canonical in this projection)
+- `projection.json` (per-sequence: `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col`, `ic_residues`, `ic_loadings`, `ic_processed_cols`, `in_sample`, `up_score` — the sequence's Uᵖ row of length `n_components`, or `null` when the source SCAResults lacks the eigendecomposition fields; plus `gap_fraction_per_ic` and `informative_positions_per_ic` — per-IC quality signals indicating how much of each IC's training-time support is gapped or non-canonical in this projection; plus `align_target`, `n_input_residues_dropped`, `input_coverage_fraction` — alignment-target marker and coverage diagnostics)
 - `per_sequence/<seqid>_residues.tsv` (one row per IC residue)
 - `projection_args.json`
 - `projection.log`
 - `images/seq_proj_ic*.png` (sequence-projection scatter plots; one per axis pair from `--seq_proj_axes`, optionally colored by `--seq_proj_color_by` against any `--seq_metadata` column — pass `--no-plot` to skip)
 - `seq_projections.tsv` (only with `--save_dataframe`; per-sequence Uᵖ scores plus the same per-IC quality columns in tabular form)
 - `sequence_metadata.tsv` (only with `--seq_metadata <tsv>`; persisted alongside results and merged into `seq_projections.tsv` via left-join on `seq_id`)
+- `raw_input.fasta` (only with `--raw`; the materialized one-record FASTA that was fed to the projector)
+- `from_msa_input.fasta` (only with `--from_msa`; the materialized one-record FASTA that was fed to the projector)
+- `_align_workdir/processed_reference.fasta-aln` (only with `--align_target processed` AND at least one record requiring alignment; the materialized processed-MSA character-space FASTA that was fed to the aligner)
 
 <!-- **Extra arguments:** -->
 
 ### Project a PDB structure
 
-`sca-structure` composes over `sca-project` to associate residues in the structure to ICs:
+`sca-structure` composes over `sca-project` to associate residues in the structure to positions (and thus components) in an MSA:
 
 ```bash
 # Single PDB

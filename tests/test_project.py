@@ -645,6 +645,513 @@ def test_sca_project_cli_input_args_mutually_exclusive(
 
 
 # ----------------------------------------------------------------------
+# --raw input path: literal AA string instead of a path / FASTA record.
+# ----------------------------------------------------------------------
+
+
+# An AA_STD20-only string. The prep fixture trains on a synthetic
+# alphabet (msa06 uses ABCD), so the projection won't be biologically
+# meaningful — but both --raw and -i FASTA paths funnel through the
+# same projector, so identical outputs are still the right invariant.
+_RAW_AA_STD20 = "ACDEF"
+
+
+@needs_mafft
+def test_sca_project_cli_raw_matches_input_fpath(
+        prep_and_sca_dirs, tmp_path,
+):
+    """`-i <SEQ> --raw` projects the literal sequence and lands the
+    same projection.json as feeding the same sequence via a one-record
+    FASTA at -i. Also confirms the materialized raw_input.fasta is
+    written and the default seq_id is 'raw_input'."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    raw = _RAW_AA_STD20
+
+    out_fpath = str(tmp_path / "out_input_fpath")
+    in_fasta = tmp_path / "single.fasta"
+    in_fasta.write_text(f">raw_input\n{raw}\n")
+    project_main(project_parse_args([
+        "-i", str(in_fasta),
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", out_fpath,
+        "-v", "0",
+    ]))
+
+    out_raw = str(tmp_path / "out_raw")
+    project_main(project_parse_args([
+        "-i", raw, "--raw",
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", out_raw,
+        "-v", "0",
+    ]))
+
+    assert os.path.isfile(os.path.join(out_raw, "raw_input.fasta")), (
+        "expected raw_input.fasta to be materialized inside outdir"
+    )
+
+    with open(os.path.join(out_fpath, "projection.json")) as f:
+        a = json.load(f)
+    with open(os.path.join(out_raw, "projection.json")) as f:
+        b = json.load(f)
+    assert len(a["projections"]) == len(b["projections"]) == 1
+    pa, pb = a["projections"][0], b["projections"][0]
+    assert pb["seq_id"] == "raw_input", (
+        "default seq_id under --raw should be 'raw_input'"
+    )
+    # Equivalence is the invariant: both paths must produce the same
+    # projection. We don't assert on the specific content (the MSA's
+    # synthetic alphabet means the projector may transform the input).
+    assert pa["raw_sequence"] == pb["raw_sequence"]
+    assert pa["aligned_sequence"] == pb["aligned_sequence"]
+    assert pa["ic_residues"] == pb["ic_residues"]
+    assert pa["ic_loadings"] == pb["ic_loadings"]
+    assert pa["in_sample"] == pb["in_sample"]
+
+
+@needs_mafft
+def test_sca_project_cli_raw_custom_seq_id(prep_and_sca_dirs, tmp_path):
+    """`--raw --seq_id ID` overrides the default record ID."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+
+    out = str(tmp_path / "out_raw_custom_id")
+    project_main(project_parse_args([
+        "-i", _RAW_AA_STD20, "--raw",
+        "--seq_id", "myseq",
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", out,
+        "-v", "0",
+    ]))
+    with open(os.path.join(out, "projection.json")) as f:
+        payload = json.load(f)
+    assert payload["projections"][0]["seq_id"] == "myseq"
+
+
+@needs_mafft
+def test_sca_project_cli_raw_normalizes_whitespace_and_case(
+        prep_and_sca_dirs, tmp_path,
+):
+    """Whitespace is stripped and lowercase is uppercased before
+    validation; the materialized record matches the canonical form."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    raw = _RAW_AA_STD20
+    half = len(raw) // 2
+    noisy = f"  {raw[:half]} \n{raw[half:].lower()} "
+
+    out = str(tmp_path / "out_raw_noisy")
+    project_main(project_parse_args([
+        "-i", noisy, "--raw",
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", out,
+        "-v", "0",
+    ]))
+    written = open(os.path.join(out, "raw_input.fasta")).read().splitlines()
+    assert written[0] == ">raw_input"
+    assert written[1] == raw
+
+
+def test_sca_project_cli_raw_accepts_non_canonical_chars(
+        prep_and_sca_dirs, tmp_path,
+):
+    """Non-canonical characters are forwarded to the projector
+    untouched (the materialization step does no alphabet check)."""
+    seq = "ABCDD"  # 'B' is outside AA_STD20 — must pass through
+    out = str(tmp_path / "out_raw_noncanonical")
+    prep_dir, sca_dir = prep_and_sca_dirs
+    project_parse_args([
+        "-i", seq, "--raw",
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", out,
+        "-v", "0",
+    ])
+    # We can't easily run the full projection without the right
+    # alphabet alignment, so call the materialization helper directly.
+    from mysca.run_project import _materialize_raw_input
+    os.makedirs(out, exist_ok=True)
+    fasta_path = _materialize_raw_input(seq, "raw_input", out)
+    assert open(fasta_path).read().splitlines() == [">raw_input", seq]
+
+
+def test_sca_project_cli_raw_rejects_all_gap(prep_and_sca_dirs, tmp_path):
+    """An all-gap input raises (nothing to project). Use the long
+    flag form (`--input_fpath=----`) since `-i ----` would trip
+    argparse's flag detection on the leading dashes."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    args = project_parse_args([
+        "--input_fpath=----", "--raw",
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", str(tmp_path / "out_raw_gaps"),
+        "-v", "0",
+    ])
+    with pytest.raises(ValueError, match="only gap characters"):
+        project_main(args)
+
+
+def test_sca_project_cli_raw_rejects_empty(prep_and_sca_dirs, tmp_path):
+    """An empty / whitespace-only input raises."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    args = project_parse_args([
+        "-i", "   \n  ", "--raw",
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", str(tmp_path / "out_raw_empty"),
+        "-v", "0",
+    ])
+    with pytest.raises(ValueError, match="empty"):
+        project_main(args)
+
+
+def test_sca_project_cli_raw_mutually_exclusive_with_from_msa(
+        prep_and_sca_dirs, tmp_path,
+):
+    """`--raw` + `--from_msa` is rejected at parse time."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    msa_path = os.path.join(prep_dir, "msa_orig.fasta-aln")
+    with pytest.raises(SystemExit):
+        project_parse_args([
+            "-i", "ACDE", "--raw",
+            "--from_msa", msa_path, "--seq_id", "x",
+            "--preprocessing", prep_dir,
+            "--scacore", sca_dir,
+            "-o", str(tmp_path / "out_raw_with_from_msa"),
+        ])
+
+
+def test_sca_project_cli_raw_requires_input_fpath(
+        prep_and_sca_dirs, tmp_path,
+):
+    """`--raw` without `-i` is rejected at parse time."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    with pytest.raises(SystemExit):
+        project_parse_args([
+            "--raw",
+            "--preprocessing", prep_dir,
+            "--scacore", sca_dir,
+            "-o", str(tmp_path / "out_raw_no_input"),
+        ])
+
+
+# ----------------------------------------------------------------------
+# --align_target {original,processed}: choose the alignment-reference MSA.
+#
+# Default is "original" (today's behavior; aligns against the unfiltered
+# msa_orig.fasta-aln of length L_orig). "processed" aligns against the
+# post-preprocessing MSA (length L_proc, sliced from msa_obj_loaded by
+# retained_sequences x retained_positions).
+#
+# In-sample paths short-circuit to a row read with optional column slice
+# (no aligner needed). Out-of-sample paths invoke the standard aligner
+# against the chosen reference.
+# ----------------------------------------------------------------------
+
+
+def test_sca_project_align_target_default_is_original(
+        prep_and_sca_dirs, tmp_path,
+):
+    """Default --align_target is 'original' when the flag is omitted."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    in_fasta = tmp_path / "x.fasta"
+    in_fasta.write_text(">x\nACDE\n")
+    args = project_parse_args([
+        "-i", str(in_fasta),
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", str(tmp_path / "out"),
+    ])
+    assert args.align_target == "original"
+
+
+def test_sca_project_align_target_processed_argparse_passthrough(
+        prep_and_sca_dirs, tmp_path,
+):
+    """`--align_target processed` is accepted at parse time."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    in_fasta = tmp_path / "x.fasta"
+    in_fasta.write_text(">x\nACDE\n")
+    args = project_parse_args([
+        "-i", str(in_fasta),
+        "--align_target", "processed",
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", str(tmp_path / "out"),
+    ])
+    assert args.align_target == "processed"
+
+
+def test_sca_project_align_target_rejects_unknown_value(
+        prep_and_sca_dirs, tmp_path,
+):
+    """Argparse choices reject any value other than original/processed."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    in_fasta = tmp_path / "x.fasta"
+    in_fasta.write_text(">x\nACDE\n")
+    with pytest.raises(SystemExit):
+        project_parse_args([
+            "-i", str(in_fasta),
+            "--align_target", "filtered",
+            "--preprocessing", prep_dir,
+            "--scacore", sca_dir,
+            "-o", str(tmp_path / "out"),
+        ])
+
+
+def _project_in_sample_to_compare(prep_dir, sca_dir, target_id, outdir,
+                                   align_target):
+    project_main(project_parse_args([
+        "--from_msa", os.path.join(prep_dir, "msa_orig.fasta-aln"),
+        "--seq_id", target_id,
+        "--align_target", align_target,
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", outdir,
+        "-v", "0",
+    ]))
+    with open(os.path.join(outdir, "projection.json")) as f:
+        return json.load(f)["projections"][0]
+
+
+def test_sca_project_align_target_processed_in_sample_matches_sliced_row(
+        prep_and_sca_dirs, tmp_path,
+):
+    """Under --align_target processed, an in-sample record's
+    aligned_sequence equals msa_obj_loaded[idx].seq sliced by
+    retained_positions, with no aligner invocation."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    target_id = prep.msa_obj_loaded[0].id
+    full_aligned = str(prep.msa_obj_loaded[0].seq)
+    expected = "".join(
+        full_aligned[int(c)] for c in prep.retained_positions
+    )
+
+    out = str(tmp_path / "out_proc_in_sample")
+    proj = _project_in_sample_to_compare(
+        prep_dir, sca_dir, target_id, out, "processed",
+    )
+    assert proj["aligned_sequence"] == expected
+    assert proj["align_target"] == "processed"
+    assert proj["in_sample"] is True
+    assert proj["n_input_residues_dropped"] == 0
+    assert proj["input_coverage_fraction"] == 1.0
+
+
+def test_sca_project_align_target_processed_aligned_sequence_length(
+        prep_and_sca_dirs, tmp_path,
+):
+    """len(aligned_sequence) == L_proc under processed and L_orig under
+    original. Driven via the in-sample path (no mafft required). The
+    msa06 fixture happens to have L_orig == L_proc; that's fine — the
+    test still verifies the per-mode length contract holds."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    target_id = prep.msa_obj_loaded[0].id
+    L_orig = prep.msa_obj_loaded.get_alignment_length()
+    L_proc = len(prep.retained_positions)
+
+    out_orig = str(tmp_path / "out_target_orig")
+    out_proc = str(tmp_path / "out_target_proc")
+    a = _project_in_sample_to_compare(
+        prep_dir, sca_dir, target_id, out_orig, "original",
+    )
+    b = _project_in_sample_to_compare(
+        prep_dir, sca_dir, target_id, out_proc, "processed",
+    )
+    assert len(a["aligned_sequence"]) == L_orig
+    assert len(b["aligned_sequence"]) == L_proc
+    assert a["align_target"] == "original"
+    assert b["align_target"] == "processed"
+
+
+def test_sca_project_align_target_processed_ic_residues_equivalent_in_sample(
+        prep_and_sca_dirs, tmp_path,
+):
+    """For an in-sample record, ic_residues / ic_loadings /
+    ic_processed_cols are identical under either align_target — they
+    are anchored to the IC structure, not to which reference the
+    aligned_sequence happens to span."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    target_id = prep.msa_obj_loaded[0].id
+
+    a = _project_in_sample_to_compare(
+        prep_dir, sca_dir, target_id,
+        str(tmp_path / "out_eq_orig"), "original",
+    )
+    b = _project_in_sample_to_compare(
+        prep_dir, sca_dir, target_id,
+        str(tmp_path / "out_eq_proc"), "processed",
+    )
+    assert a["ic_residues"] == b["ic_residues"]
+    assert a["ic_loadings"] == b["ic_loadings"]
+    assert a["ic_processed_cols"] == b["ic_processed_cols"]
+
+
+def test_sca_project_align_target_recorded_in_projection_json(
+        prep_and_sca_dirs, tmp_path,
+):
+    """`align_target`, `n_input_residues_dropped`, and
+    `input_coverage_fraction` appear on every projection record."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    target_id = prep.msa_obj_loaded[0].id
+
+    out = str(tmp_path / "out_fields_present")
+    proj = _project_in_sample_to_compare(
+        prep_dir, sca_dir, target_id, out, "original",
+    )
+    for field in ("align_target", "n_input_residues_dropped",
+                  "input_coverage_fraction"):
+        assert field in proj, f"missing {field} in projection.json"
+    assert proj["align_target"] == "original"
+
+
+def test_sca_project_align_target_filtered_in_sample_record(
+        prep_and_sca_dirs, tmp_path,
+):
+    """A record present in msa_obj_loaded but absent from
+    retained_sequence_ids (filtered out at preprocessing) still
+    projects cleanly under --align_target processed via the slice
+    path — no aligner invocation, no error."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    retained_ids = set(prep.retained_sequence_ids.tolist())
+    filtered_record = next(
+        (rec for rec in prep.msa_obj_loaded if rec.id not in retained_ids),
+        None,
+    )
+    if filtered_record is None:
+        pytest.skip(
+            "fixture has no filtered-out records — every loaded ID "
+            "survived preprocessing"
+        )
+
+    out = str(tmp_path / "out_filtered_in_sample")
+    proj = _project_in_sample_to_compare(
+        prep_dir, sca_dir, filtered_record.id, out, "processed",
+    )
+    # Came from the loaded MSA, so seq_id is in_sample by today's
+    # predicate even though preprocessing dropped it.
+    assert proj["in_sample"] is True
+    assert proj["align_target"] == "processed"
+    assert len(proj["aligned_sequence"]) == len(prep.retained_positions)
+
+
+def test_sca_project_align_target_writes_processed_reference_fasta(
+        prep_and_sca_dirs, tmp_path,
+):
+    """When --align_target processed AND at least one record needs
+    out-of-sample alignment, processed_reference.fasta-aln is
+    materialized inside _align_workdir/."""
+    pytest.importorskip("Bio")
+    import shutil
+    if shutil.which("mafft") is None:
+        pytest.skip("mafft not on PATH; can't trigger out-of-sample path")
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    L_proc = len(prep.retained_positions)
+    # An out-of-sample query (id absent from loaded MSA).
+    in_fasta = tmp_path / "oos.fasta"
+    # Pick chars from the fixture's actual alphabet so the projector
+    # has something meaningful to do.
+    in_fasta.write_text(">oos_query\nABCD\n")
+    out = str(tmp_path / "out_oos_proc_ref")
+    project_main(project_parse_args([
+        "-i", str(in_fasta),
+        "--align_target", "processed",
+        "--preprocessing", prep_dir,
+        "--scacore", sca_dir,
+        "-o", out,
+        "-v", "0",
+    ]))
+    proc_ref = os.path.join(out, "_align_workdir", "processed_reference.fasta-aln")
+    assert os.path.isfile(proc_ref), (
+        f"expected processed_reference.fasta-aln at {proc_ref}"
+    )
+    # File should have one record per retained sequence, each L_proc long.
+    from Bio import SeqIO
+    records = list(SeqIO.parse(proc_ref, "fasta"))
+    assert len(records) == len(prep.retained_sequence_ids)
+    for rec in records:
+        assert len(rec.seq) == L_proc
+
+
+def test_sca_project_coverage_fields_default_full_for_in_sample(
+        prep_and_sca_dirs, tmp_path,
+):
+    """For an in-sample record under either mode, the input came from
+    the loaded MSA itself, so input_coverage_fraction is 1.0 and
+    n_input_residues_dropped is 0."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    target_id = prep.msa_obj_loaded[0].id
+
+    for mode in ("original", "processed"):
+        out = str(tmp_path / f"out_cov_{mode}")
+        proj = _project_in_sample_to_compare(
+            prep_dir, sca_dir, target_id, out, mode,
+        )
+        assert proj["input_coverage_fraction"] == 1.0
+        assert proj["n_input_residues_dropped"] == 0
+
+
+def test_sca_project_coverage_warning_when_input_exceeds_reference(
+        prep_and_sca_dirs, tmp_path, caplog,
+):
+    """An out-of-sample input longer than the reference has its excess
+    residues clipped, producing nonzero n_input_residues_dropped, a
+    coverage_fraction < 1.0, and a logged WARNING.
+
+    Calls ``project_sequences`` directly (rather than going through
+    ``project_main``) so the entrypoint's ``configure_logging`` call —
+    which sets ``mysca.propagate = False`` — doesn't suppress caplog.
+    """
+    import logging as _logging
+    import shutil
+    if shutil.which("mafft") is None:
+        pytest.skip("mafft not on PATH")
+    from mysca.project import project_sequences
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    L_proc = len(prep.retained_positions)
+    long_seq = "ABCD" * (L_proc + 4)
+    in_fasta = tmp_path / "long.fasta"
+    in_fasta.write_text(f">oos_long\n{long_seq}\n")
+
+    mysca_logger = _logging.getLogger("mysca")
+    prev_propagate = mysca_logger.propagate
+    mysca_logger.propagate = True
+    try:
+        with caplog.at_level("WARNING", logger="mysca.project.projection"):
+            result = project_sequences(
+                str(in_fasta),
+                sca_result_dir=sca_dir,
+                preproc_result_dir=prep_dir,
+                aligner="mafft_add",
+                align_target="processed",
+                workdir=str(tmp_path / "wd"),
+            )
+    finally:
+        mysca_logger.propagate = prev_propagate
+
+    proj = result.projections[0]
+    assert proj.n_input_residues_dropped > 0
+    assert proj.input_coverage_fraction < 1.0
+    assert any(
+        "Low alignment coverage" in r.getMessage()
+        and "oos_long" in r.getMessage()
+        for r in caplog.records
+    ), (
+        f"expected a 'Low alignment coverage' WARNING for oos_long; "
+        f"got {[(r.name, r.levelname, r.getMessage()) for r in caplog.records]}"
+    )
+
+
+# ----------------------------------------------------------------------
 # Raw-sequence / aligned-sequence consistency invariant.
 #
 # For ic_residues[i] (raw residue indices) to dereference correctly

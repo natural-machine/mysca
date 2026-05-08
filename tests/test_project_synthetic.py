@@ -197,6 +197,54 @@ def test_queries_out_of_sample_mappings(prep_and_sca_dirs, expected, aligner):
 
 
 # ---------------------------------------------------------------------- #
+# --align_target processed: out-of-sample smoke against the processed MSA.
+# ---------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("aligner", [
+    pytest.param("mafft_add", marks=needs_mafft),
+    pytest.param("hmmalign", marks=needs_hmmer),
+])
+def test_align_target_processed_oos_smoke(
+        prep_and_sca_dirs, expected, aligner, tmp_path,
+):
+    """Out-of-sample query under --align_target processed produces an
+    aligned_sequence of length L_proc and a non-empty per-record output.
+    The materialized processed_reference.fasta-aln lands inside the
+    workdir."""
+    prep_dir, sca_dir = prep_and_sca_dirs
+    prep = PreprocessingResults.load(prep_dir)
+    L_proc = len(prep.retained_positions)
+    workdir = str(tmp_path / "wd_proc_oos")
+    result = project_sequences(
+        QUERIES_FPATH,
+        sca_result_dir=sca_dir,
+        preproc_result_dir=prep_dir,
+        aligner=aligner,
+        align_target="processed",
+        workdir=workdir,
+    )
+    proc_ref = os.path.join(workdir, "processed_reference.fasta-aln")
+    assert os.path.isfile(proc_ref), (
+        f"expected processed_reference.fasta-aln at {proc_ref}"
+    )
+    by_id = {p.seq_id: p for p in result.projections}
+    for q_id in expected["queries"]:
+        assert q_id in by_id
+        proj = by_id[q_id]
+        assert proj.align_target == "processed"
+        assert len(proj.aligned_sequence) == L_proc, (
+            f"{q_id} [{aligner}] expected aligned_sequence length "
+            f"{L_proc}, got {len(proj.aligned_sequence)}"
+        )
+        # Raw/aligned invariant must still hold under processed mode.
+        assert proj.raw_sequence == _gapless(proj.aligned_sequence)
+        # Coverage fields are populated.
+        assert proj.input_coverage_fraction <= 1.0
+        assert proj.n_input_residues_dropped >= 0
+
+
+# ---------------------------------------------------------------------- #
 # Internal consistency of residue_by_processed_col via retained_positions.
 # ---------------------------------------------------------------------- #
 

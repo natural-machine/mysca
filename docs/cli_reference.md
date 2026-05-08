@@ -133,7 +133,7 @@ sca-preprocess -i <input-msa> -o <output-dir> [options]
 
 Writes to the specified output directory:
 
-- `preprocessing_results.npz` — filtered MSA, retained indices, sequence weights, pre-truncation gap frequencies
+- `preprocessing_results.npz` — filtered MSA, retained indices, sequence weights, pre-truncation gap frequencies, and `seq_retained_fraction` (1D float array of length `M_input` — for every input MSA sequence, the fraction of its non-gap residues that survived column filtering; indexed by post-`load_msa` input order, NOT the retained subset; NaN where an input row has zero non-gap residues)
 - `preprocessing_args.json` — arguments used
 - `sym2int.json` — symbol-to-integer mapping
 - `msa_binary2d_sp.npz` — sparse one-hot MSA
@@ -175,6 +175,7 @@ sca-core -i <preprocessing-dir> -o <output-dir> [options]
 | `--weak_assignment` | [] | IC indices to exclude from the `exclusive`-assignment tie-break (variadic integers). Ignored under `overlap` |
 | `--n_logged_comps` | 10 | Number of top ICs to summarize in the log after assignment (significance marker, eigenvalue, and MSA positions in processed / unprocessed / reference coordinates). `0` disables the summary |
 | `--sectors_for` | None | Target sequences to expand into the per-seq output files (`ic_residues_per_seq.npz` + `ic_loadings_per_seq.npz`). `None`: reference only. `all`: every retained sequence. Otherwise: path to a text file with one sequence ID per line |
+| `--coverage_for` | `all` | Input-MSA sequences to compute per-component coverage fractions for (`component_coverage_per_seq.npz`). For each selected sequence, stores a length-`n_components` float vector: the fraction of each IC's high-load positions where the sequence has a non-gap residue. `all` (default): every input MSA sequence, including those filtered during preprocessing. `reference`: reference sequence only. Otherwise: path to a text file with one sequence ID per line |
 
 ### Optional Arguments
 
@@ -206,6 +207,7 @@ Writes to the specified output directory:
 - `scarun_args.json` — arguments used
 - `ic_residues_per_seq.npz` — per-target IC residues in **raw-sequence coordinates**, keyed `ic_{i}_{seqid}` → 1D int array of residue indices
 - `ic_loadings_per_seq.npz` — per-residue IC loadings parallel to `ic_residues_per_seq`, same `ic_{i}_{seqid}` key format. Only the top-`kstar` ICs are expanded per sequence; which target sequences appear is controlled by `--sectors_for`
+- `component_coverage_per_seq.npz` — per-input-sequence per-IC coverage fractions, keyed by `seq_id` → length-`n_components` float vector. The `i`-th entry is the fraction of IC `i`'s high-load positions where the sequence has a non-gap residue. Which sequences appear is controlled by `--coverage_for` (default: every input MSA sequence, including ones filtered during preprocessing). NaN flags an IC whose high-load position set is empty
 - `sca_results/` — `v_ica_normalized.npy`, `w_ica.npy`, `t_dists_info.json`, `evals_shuff.npy`, `sca_matrix_sector_subset.npy`, scalar text files (`kstar.txt`, `n_components.txt`, etc.)
 - `ic_positions/` — per-IC bundle: `ic_{i}_msaproc.npy` (high-load positions in processed-MSA coordinates), `ic_{i}_msaorig.npy` (the same positions in original-MSA coordinates), `ic_{i}_loadings.npy` (IC loadings at those positions)
 - `scarun.log` — run log
@@ -457,19 +459,26 @@ sca-project --from_msa <preprocess-dir>/msa_orig.fasta-aln \
     --preprocessing <preprocess-dir> \
     --scacore <scacore-dir> \
     -o <output-dir> [options]
+
+# Raw-string input: pass a single AA sequence on the command line.
+sca-project -i <AA_SEQUENCE_STRING> --raw [--seq_id <ID>] \
+    --preprocessing <preprocess-dir> \
+    --scacore <scacore-dir> \
+    -o <output-dir> [options]
 ```
 
 Records whose ID is already present in the reference MSA (under `--preprocessing`) are resolved in-sample (no external alignment). Other records are aligned onto the reference via the chosen aligner.
 
 ### Required Arguments
 
-Exactly one of `-i/--input_fpath` or (`--from_msa` + `--seq_id`) is required.
+Exactly one of `-i/--input_fpath`, (`--from_msa` + `--seq_id`), or (`-i/--input_fpath` + `--raw`) is required.
 
 | Argument | Description |
 |----------|-------------|
-| `-i, --input_fpath` | Path to an input FASTA of sequences to project. Mutually exclusive with `--from_msa` / `--seq_id` |
-| `--from_msa` | Path to a (possibly aligned) FASTA from which to extract a single record by `--seq_id`. The record is ungapped and projected. Requires `--seq_id` |
-| `--seq_id` | First whitespace-delimited token of the target record's header in `--from_msa`. Required with `--from_msa` |
+| `-i, --input_fpath` | Path to an input FASTA of sequences to project, **or** (with `--raw`) a literal amino-acid sequence string. Mutually exclusive with `--from_msa` / `--seq_id` unless `--raw` is set |
+| `--raw` | Treat `-i/--input_fpath` as a literal amino-acid sequence string rather than a path. The string is uppercased and whitespace-stripped; no alphabet validation is performed (non-canonical chars pass through to the projector). Empty / all-gap inputs are still rejected. Materialized as a one-record FASTA (`raw_input.fasta`) inside the output directory |
+| `--from_msa` | Path to a (possibly aligned) FASTA from which to extract a single record by `--seq_id`. The record is ungapped and projected. Requires `--seq_id`. Mutually exclusive with `--raw` |
+| `--seq_id` | First whitespace-delimited token of the target record's header in `--from_msa`. Required with `--from_msa`. Also used as the record's ID under `--raw` (default: `raw_input`) |
 | `--preprocessing` | `sca-preprocess` output directory (must include `msa_orig.fasta-aln`) |
 | `--scacore` | `sca-core` output directory (must include `ic_positions/ic_*_msaproc.npy` and `sca_results/v_ica_normalized.npy`) |
 | `-o, --outdir` | Output directory |
@@ -479,6 +488,7 @@ Exactly one of `-i/--input_fpath` or (`--from_msa` + `--seq_id`) is required.
 | Argument | Default | Description |
 |----------|---------|-------------|
 | `--aligner` | `mafft_add` | Out-of-sample alignment method. `mafft_add` uses `mafft --add --keeplength`. `hmmalign` builds a profile HMM (`hmmbuild --hand --amino`) with every reference column as a match state, then aligns new sequences (`hmmalign --outformat afa`) and keeps only match columns. In-sample records bypass alignment entirely |
+| `--align_target` | `original` | Which reference MSA the aligner uses. `original` = unfiltered loaded MSA (`msa_orig.fasta-aln`, length `L_orig`). `processed` = post-preprocessing MSA (length `L_proc`, sliced from `msa_obj_loaded` by `retained_sequences` / `retained_positions`). `processed` is denser and typically yields cleaner alignments but more aggressively clips input residues that exceed the reference column count — inspect `input_coverage_fraction` per record to detect. Affects `len(aligned_sequence)`; does **not** affect the meaning of `ic_residues` / `ic_loadings` / `ic_processed_cols` (those stay anchored to processed-MSA / raw-residue coordinates regardless) |
 | `--align_bin` | None | Explicit path to the alignment binary (default: resolve from PATH). For `--aligner hmmalign` this is `hmmalign`; `hmmbuild` is resolved from PATH |
 | `--align_threads` | 1 | Threads for the alignment tool (unused by `hmmalign`) |
 | `--save_dataframe` | off | Also write `seq_projections.tsv` with columns `seq_id`, `aligned_sequence`, `raw_sequence`, `in_sample`, `Up_0..Up_{n_components-1}`, `gap_frac_ic_0..gap_frac_ic_{n_components-1}`, `n_inform_ic_0..n_inform_ic_{n_components-1}`. When `--seq_metadata` is also supplied, the metadata's non-`seq_id` columns are merged in via left-join on `seq_id`. Requires pandas |
@@ -492,13 +502,15 @@ Exactly one of `-i/--input_fpath` or (`--from_msa` + `--seq_id`) is required.
 
 Writes to the specified output directory:
 
-- `projection.json` — top-level result: per-sequence dicts containing `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col` (length `L_proc`), `ic_residues` (per-IC raw residue indices), `ic_loadings`, `ic_processed_cols`, `in_sample`, `up_score` (length `n_components` — the sequence's `Uᵖ` row, or `null` when the source SCAResults lacks the eigendecomposition fields), `gap_fraction_per_ic` (length `n_components` — per-IC fraction of the IC's training-time support that is gapped or non-canonical in this projection; `0.0` means full coverage), `informative_positions_per_ic` (length `n_components` — count of positions in each IC's support that contribute non-zero mass to the Uᵖ math). The two quality fields are inherited verbatim by `structure_projection.json` via the nested `sequence_projection`. Per-sequence metadata is **not** carried in this JSON; it lives in the sibling `sequence_metadata.tsv` instead
+- `projection.json` — top-level result: per-sequence dicts containing `seq_id`, `raw_sequence`, `aligned_sequence`, `residue_by_processed_col` (length `L_proc`), `ic_residues` (per-IC raw residue indices), `ic_loadings`, `ic_processed_cols`, `in_sample`, `up_score` (length `n_components` — the sequence's `Uᵖ` row, or `null` when the source SCAResults lacks the eigendecomposition fields), `gap_fraction_per_ic` (length `n_components` — per-IC fraction of the IC's training-time support that is gapped or non-canonical in this projection; `0.0` means full coverage), `informative_positions_per_ic` (length `n_components` — count of positions in each IC's support that contribute non-zero mass to the Uᵖ math), `align_target` (`"original"` or `"processed"` — which reference MSA the aligner used), `n_input_residues_dropped` (count of input residues that did not survive alignment, e.g. because the input was longer than the reference), `input_coverage_fraction` (`len(raw_sequence) / max(1, len(input))`; below `0.95` triggers a per-record WARNING). The two quality fields and the three new alignment-target fields are inherited verbatim by `structure_projection.json` via the nested `sequence_projection`. Per-sequence metadata is **not** carried in this JSON; it lives in the sibling `sequence_metadata.tsv` instead
 - `per_sequence/<seqid>_residues.tsv` — one row per (IC, residue) for readable inspection
 - `seq_projections.tsv` — only when `--save_dataframe`; tab-separated table with `seq_id`, `aligned_sequence`, `raw_sequence`, `in_sample`, `Up_0..Up_{n_components-1}`, `gap_frac_ic_0..gap_frac_ic_{n_components-1}`, `n_inform_ic_0..n_inform_ic_{n_components-1}` columns; with `--seq_metadata`, also picks up the metadata's non-`seq_id` columns
 - `sequence_metadata.tsv` — only when `--seq_metadata` is supplied; verbatim copy of the user-supplied metadata TSV
 - `projection_args.json` — arguments used
 - `projection.log` — run log
 - `from_msa_input.fasta` — only when `--from_msa` is used: the materialized one-record FASTA actually fed to the projector
+- `raw_input.fasta` — only when `--raw` is set: the materialized one-record FASTA holding the validated sequence string actually fed to the projector
+- `_align_workdir/processed_reference.fasta-aln` — only when `--align_target processed` is set AND at least one record needed alignment: the materialized character-space FASTA of the processed MSA (rows = `retained_sequences`, cols = `retained_positions`) that was actually fed to the aligner. Provided for transparency / debug; safe to delete
 - `images/` — only when `--plot` is on (the default); one `seq_proj_ic{i}v{j}[_by_<col>].png` per axis pair from `--seq_proj_axes`, plotting the per-sequence Uᵖ scores. Optionally colored by `--seq_proj_color_by`
 
 ### External Binaries
