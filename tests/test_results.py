@@ -530,6 +530,27 @@ class TestSCAResults:
                 original.ic_loadings_per_seq[k],
             )
 
+    def test_round_trip_component_coverage_per_seq(self):
+        """Save then load and verify component_coverage_per_seq is
+        round-tripped key-for-key."""
+        rng = np.random.default_rng(7)
+        original = self._make_sample_results()
+        original.component_coverage_per_seq = {
+            "seq_a": rng.random(3),
+            "seq_b": np.array([0.5, np.nan, 1.0]),
+            "seq_c": np.array([1.0, 1.0, 1.0]),
+        }
+        original.save(OUTDIR_SCA)
+        loaded = SCAResults.load(OUTDIR_SCA)
+
+        assert set(loaded.component_coverage_per_seq.keys()) == set(
+            original.component_coverage_per_seq.keys()
+        )
+        for k, v in original.component_coverage_per_seq.items():
+            np.testing.assert_array_equal(
+                loaded.component_coverage_per_seq[k], v,
+            )
+
     def test_save_all_includes_large_arrays(self):
         """Verify save_all=True includes Cijab_raw and fijab."""
         rng = np.random.default_rng(0)

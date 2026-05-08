@@ -84,6 +84,7 @@ SCARUN_ARGS_FNAME = "scarun_args.json"
 SCARUN_EIGENDECOMP_FNAME = "sca_eigendecomp.npz"
 IC_RESIDUES_PER_SEQ_FNAME = "ic_residues_per_seq.npz"
 IC_LOADINGS_PER_SEQ_FNAME = "ic_loadings_per_seq.npz"
+COMPONENT_COVERAGE_PER_SEQ_FNAME = "component_coverage_per_seq.npz"
 EVALS_SHUFF_FNAME = "evals_shuff.npy"
 SEQUENCE_METADATA_FNAME = "sequence_metadata.tsv"
 
@@ -147,6 +148,15 @@ class PreprocessingResults:
                                              each retained sequence
             sequence_weights               : float array (M,)
             fi0_pretruncation              : float array, gap freq before truncation
+            seq_retained_fraction          : float array (optional, may be
+                                             absent from legacy bundles), length
+                                             M_input. Per-input-sequence fraction
+                                             of non-gap residues that survived
+                                             column filtering. Indexed by the
+                                             post-load_msa input order (parallel
+                                             to msa_obj_loaded), NOT the retained
+                                             subset; NaN when a row has zero
+                                             non-gap residues.
         preprocessing_args.json   : dict of preprocessing parameters
         sym2int.json              : dict mapping symbols to integers
         msa_binary2d_sp.npz       : sparse CSR (M x 20L), one-hot MSA
@@ -196,6 +206,14 @@ class PreprocessingResults:
             "Per-position gap frequency before the first truncation step "
             "(1D float array, length = original alignment length)."
         ),
+        "seq_retained_fraction": (
+            "Per-input-sequence fraction of non-gap residues that survived "
+            "column filtering: kept_AAs / total_non_gap_AAs_in_input. 1D "
+            "float array of length M_input, indexed by the post-load_msa "
+            "input order (parallel to msa_obj_loaded), NOT the retained "
+            "subset. NaN when a row has zero non-gap residues. May be None "
+            "for legacy bundles that pre-date this field."
+        ),
         "args": (
             "Dict of CLI arguments used to produce this result, for "
             "reproducibility. Includes reference_id, thresholds, etc."
@@ -241,6 +259,7 @@ class PreprocessingResults:
         msa_obj_loaded=None,
         filter_history=None,
         retained_sequence_descriptions=None,
+        seq_retained_fraction=None,
     ):
         self.msa = msa
         self.msa_binary3d = msa_binary3d
@@ -250,6 +269,7 @@ class PreprocessingResults:
         self.retained_sequence_descriptions = retained_sequence_descriptions
         self.sequence_weights = sequence_weights
         self.fi0_pretruncation = fi0_pretruncation
+        self.seq_retained_fraction = seq_retained_fraction
         self.args = args
         self.sym_map = sym_map
         self.msa_obj_loaded = msa_obj_loaded
@@ -283,6 +303,7 @@ class PreprocessingResults:
             retained_sequence_descriptions=results_dict.get(
                 "retained_sequence_descriptions",
             ),
+            seq_retained_fraction=results_dict.get("seq_retained_fraction"),
         )
 
     def save(self, outdir):
@@ -300,6 +321,10 @@ class PreprocessingResults:
         if self.retained_sequence_descriptions is not None:
             npz_kwargs["retained_sequence_descriptions"] = np.asarray(
                 self.retained_sequence_descriptions, dtype=object,
+            )
+        if self.seq_retained_fraction is not None:
+            npz_kwargs["seq_retained_fraction"] = np.asarray(
+                self.seq_retained_fraction, dtype=np.float64,
             )
         np.savez(
             os.path.join(outdir, PREPROCESSING_RESULTS_FNAME),
@@ -356,6 +381,11 @@ class PreprocessingResults:
         retained_sequence_descriptions = (
             list(data["retained_sequence_descriptions"])
             if "retained_sequence_descriptions" in data.files
+            else None
+        )
+        seq_retained_fraction = (
+            np.asarray(data["seq_retained_fraction"], dtype=np.float64)
+            if "seq_retained_fraction" in data.files
             else None
         )
 
@@ -416,6 +446,7 @@ class PreprocessingResults:
             msa_obj_loaded=msa_obj_loaded,
             filter_history=filter_history,
             retained_sequence_descriptions=retained_sequence_descriptions,
+            seq_retained_fraction=seq_retained_fraction,
         )
 
 
@@ -450,6 +481,15 @@ class SCAResults:
                                         coordinates, keyed `ic_<i>_<seqid>`
         ic_loadings_per_seq.npz       : per-residue IC loadings parallel to
                                         ic_residues_per_seq, same key format
+        component_coverage_per_seq.npz: per-sequence IC coverage fractions,
+                                        keyed by `seq_id`. Each value is a
+                                        1D float array of length
+                                        n_components: fraction of IC i's
+                                        high-load positions where the
+                                        sequence has a non-gap residue.
+                                        NaN for ICs with empty position
+                                        sets. Populated for sequences
+                                        selected by `--coverage_for`.
         ic_positions/
             ic_<i>_msaproc.npy        : high-load processed-MSA cols of IC i
             ic_<i>_msaorig.npy        : same positions in original-MSA cols
@@ -589,6 +629,16 @@ class SCAResults:
             "`ic_loadings_per_seq[ic_{i}_{seqid}]` is the IC i loading "
             "at the residue `ic_residues_per_seq[ic_{i}_{seqid}][j]`."
         ),
+        "component_coverage_per_seq": (
+            "Per-sequence IC coverage fractions, keyed by sequence id. "
+            "Each value is a 1D float array of length n_components: "
+            "fraction of IC i's high-load positions where the input "
+            "sequence has a non-gap residue (computed against the "
+            "original-MSA columns via retained_positions). Populated "
+            "for sequences selected by `--coverage_for` and includes "
+            "sequences dropped during preprocessing. NaN for ICs with "
+            "empty position sets."
+        ),
         "sca_matrix_sector_subset": (
             "Submatrix of `sca_matrix` restricted to all group positions "
             "(concatenated). Shape (sum_i len(groups[i])) squared."
@@ -605,7 +655,7 @@ class SCAResults:
             "Dict of CLI arguments used for this run (regularization, "
             "kstar, n_components, pstar, assignment, seed, n_boot, "
             "n_logged_comps, plot, freq_method, accelerator, precision, "
-            "bootstrap_chunk)."
+            "bootstrap_chunk, sectors_for, coverage_for)."
         ),
     }
 
@@ -653,6 +703,7 @@ class SCAResults:
         t_dists_info=None,
         ic_residues_per_seq=None,
         ic_loadings_per_seq=None,
+        component_coverage_per_seq=None,
         sca_matrix_sector_subset=None,
         sequence_metadata=None,
         # Args
@@ -683,6 +734,7 @@ class SCAResults:
         self.t_dists_info = t_dists_info
         self.ic_residues_per_seq = ic_residues_per_seq
         self.ic_loadings_per_seq = ic_loadings_per_seq
+        self.component_coverage_per_seq = component_coverage_per_seq
         self.sca_matrix_sector_subset = sca_matrix_sector_subset
         self.sequence_metadata = sequence_metadata
         self.args = args
@@ -986,6 +1038,11 @@ class SCAResults:
                 os.path.join(outdir, IC_LOADINGS_PER_SEQ_FNAME),
                 **self.ic_loadings_per_seq,
             )
+        if self.component_coverage_per_seq is not None:
+            np.savez_compressed(
+                os.path.join(outdir, COMPONENT_COVERAGE_PER_SEQ_FNAME),
+                **self.component_coverage_per_seq,
+            )
 
         # Optional sequence metadata table (always TSV — pandas is a
         # hard dep so loaders can rely on its presence).
@@ -1105,6 +1162,15 @@ class SCAResults:
                 np.load(loadings_path, allow_pickle=True)
             )
 
+        component_coverage_per_seq = None
+        coverage_path = os.path.join(
+            dirpath, COMPONENT_COVERAGE_PER_SEQ_FNAME,
+        )
+        if os.path.isfile(coverage_path):
+            component_coverage_per_seq = dict(
+                np.load(coverage_path, allow_pickle=True)
+            )
+
         sequence_metadata = None
         md_path = os.path.join(dirpath, SEQUENCE_METADATA_FNAME)
         if os.path.isfile(md_path):
@@ -1136,6 +1202,7 @@ class SCAResults:
             group_scores=group_scores,
             ic_residues_per_seq=ic_residues_per_seq,
             ic_loadings_per_seq=ic_loadings_per_seq,
+            component_coverage_per_seq=component_coverage_per_seq,
             t_dists_info=t_dists_info,
             sca_matrix_sector_subset=sca_matrix_sector_subset,
             sequence_metadata=sequence_metadata,

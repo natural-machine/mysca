@@ -51,6 +51,11 @@ preprocessing_results.npz
     retained_sequence_ids : IDs of retained sequences in the original MSA.
     sequence_weights : Sampling weights for the retained sequences.
     fi0_pretruncation : Gap frequency per position, prior to truncation.
+    seq_retained_fraction : Per-input-sequence fraction of non-gap residues
+        that survived column filtering. 1D float array of length M_input,
+        indexed by the post-load_msa input order (parallel to the original
+        MSA, NOT the retained subset). NaN where an input row has zero
+        non-gap residues.
 
 msa_binary2d_sp.npz
     MSA in a 2-dimensional sparse one-hot format of shape (M x DL), with D

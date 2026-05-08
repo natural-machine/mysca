@@ -257,3 +257,138 @@ def test_main(
     # Remove the output directory
     remove_dir(prep_args.outdir)
     # remove_dir(args.outdir)
+
+
+def test_main_writes_component_coverage_per_seq(tmp_path):
+    """End-to-end: with the default --coverage_for ('all'), sca-core
+    writes component_coverage_per_seq.npz with one key per *input* MSA
+    sequence (including any dropped during preprocessing) and each value
+    is a length-n_components float vector with values in [0, 1]."""
+    from mysca.io import load_msa
+    from mysca.mappings import SymMap
+    from mysca.results import COMPONENT_COVERAGE_PER_SEQ_FNAME
+
+    prep_argstring = get_args(
+        f"{DATDIR}/entrypoint_tests/preprocessing/argstrings/argstring6a.txt"
+    )
+    prep_args = prep_parse_args(prep_argstring)
+    prep_args.msa_fpath = f"{DATDIR}/{prep_args.msa_fpath}"
+    prep_args.outdir = f"{tmp_path}/{prep_args.outdir}"
+    prep_main(prep_args)
+
+    sca_argstring = get_args(
+        f"{DATDIR}/entrypoint_tests/sca_run/argstrings/argstring6a.txt"
+    )
+    sca_args = parse_args(sca_argstring)
+    sca_args.indir = f"{tmp_path}/{sca_args.indir}"
+    sca_args.outdir = f"{tmp_path}/{sca_args.outdir}"
+    if isinstance(sca_args.background, str) and sca_args.background.endswith(".json"):
+        sca_args.background = f"{DATDIR}/{sca_args.background}"
+    sca_args.n_boot = 2
+    main(sca_args)
+
+    cov_path = os.path.join(sca_args.outdir, COMPONENT_COVERAGE_PER_SEQ_FNAME)
+    assert os.path.isfile(cov_path), (
+        f"component_coverage_per_seq.npz missing at {cov_path}"
+    )
+
+    # Default --coverage_for=all → one key per *input* MSA sequence
+    # (post-load_msa). Compare against load_msa's view of the input.
+    sym_map = SymMap("ABCD", "-", gap_value=4)
+    _, _, msa_ids, _, _, _, _ = load_msa(
+        prep_args.msa_fpath, format="fasta", mapping=sym_map,
+    )
+    expected_ids = set(msa_ids)
+
+    with np.load(cov_path, allow_pickle=True) as cov:
+        keys = set(cov.files)
+        assert keys == expected_ids, (
+            f"coverage keys differ from input MSA ids. "
+            f"missing={expected_ids - keys}, extra={keys - expected_ids}"
+        )
+        # Determine n_components from the saved IC positions dir.
+        ic_dir = os.path.join(sca_args.outdir, "ic_positions")
+        n_comp = sum(
+            1 for f in os.listdir(ic_dir)
+            if f.startswith("ic_") and f.endswith("_msaproc.npy")
+        )
+        assert n_comp >= 1
+        for sid in keys:
+            vec = cov[sid]
+            assert vec.shape == (n_comp,), (
+                f"{sid}: expected ({n_comp},), got {vec.shape}"
+            )
+            # Values in [0, 1] (or NaN for empty IC groups).
+            finite = np.isfinite(vec)
+            assert np.all((vec[finite] >= 0.0) & (vec[finite] <= 1.0))
+
+
+def test_main_coverage_for_reference_only(tmp_path):
+    """--coverage_for='reference' restricts the keyset to the single
+    reference id."""
+    from mysca.results import COMPONENT_COVERAGE_PER_SEQ_FNAME
+
+    prep_argstring = get_args(
+        f"{DATDIR}/entrypoint_tests/preprocessing/argstrings/argstring6a.txt"
+    )
+    prep_args = prep_parse_args(prep_argstring)
+    prep_args.msa_fpath = f"{DATDIR}/{prep_args.msa_fpath}"
+    prep_args.outdir = f"{tmp_path}/{prep_args.outdir}"
+    prep_main(prep_args)
+
+    sca_argstring = get_args(
+        f"{DATDIR}/entrypoint_tests/sca_run/argstrings/argstring6a.txt"
+    )
+    sca_args = parse_args(sca_argstring)
+    sca_args.indir = f"{tmp_path}/{sca_args.indir}"
+    sca_args.outdir = f"{tmp_path}/{sca_args.outdir}"
+    if isinstance(sca_args.background, str) and sca_args.background.endswith(".json"):
+        sca_args.background = f"{DATDIR}/{sca_args.background}"
+    sca_args.n_boot = 2
+    sca_args.coverage_for = "reference"
+    main(sca_args)
+
+    cov_path = os.path.join(sca_args.outdir, COMPONENT_COVERAGE_PER_SEQ_FNAME)
+    with np.load(cov_path, allow_pickle=True) as cov:
+        keys = list(cov.files)
+        # The reference id from the prep argstring is "msa06_sequence0".
+        assert keys == ["msa06_sequence0"], f"got keys={keys}"
+
+
+def test_main_coverage_for_id_list(tmp_path):
+    """--coverage_for=<path> restricts coverage keys to listed input IDs,
+    including IDs filtered during preprocessing (a difference from
+    --sectors_for, which is gated on retained sequences only)."""
+    from mysca.results import COMPONENT_COVERAGE_PER_SEQ_FNAME
+
+    prep_argstring = get_args(
+        f"{DATDIR}/entrypoint_tests/preprocessing/argstrings/argstring6a.txt"
+    )
+    prep_args = prep_parse_args(prep_argstring)
+    prep_args.msa_fpath = f"{DATDIR}/{prep_args.msa_fpath}"
+    prep_args.outdir = f"{tmp_path}/{prep_args.outdir}"
+    prep_main(prep_args)
+
+    # msa06.faa has 23 sequences (msa06_sequence0..22). Pick the
+    # reference plus another one and a deliberately-missing id; the
+    # missing id should be skipped silently with a log.
+    coverage_list = tmp_path / "ids.txt"
+    coverage_list.write_text(
+        "msa06_sequence0\nmsa06_sequence5\nnonexistent_id\n"
+    )
+
+    sca_argstring = get_args(
+        f"{DATDIR}/entrypoint_tests/sca_run/argstrings/argstring6a.txt"
+    )
+    sca_args = parse_args(sca_argstring)
+    sca_args.indir = f"{tmp_path}/{sca_args.indir}"
+    sca_args.outdir = f"{tmp_path}/{sca_args.outdir}"
+    if isinstance(sca_args.background, str) and sca_args.background.endswith(".json"):
+        sca_args.background = f"{DATDIR}/{sca_args.background}"
+    sca_args.n_boot = 2
+    sca_args.coverage_for = str(coverage_list)
+    main(sca_args)
+
+    cov_path = os.path.join(sca_args.outdir, COMPONENT_COVERAGE_PER_SEQ_FNAME)
+    with np.load(cov_path, allow_pickle=True) as cov:
+        assert set(cov.files) == {"msa06_sequence0", "msa06_sequence5"}

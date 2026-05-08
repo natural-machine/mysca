@@ -645,3 +645,159 @@ def test_preprocessing_results_load_legacy_bundle_without_descriptions(tmp_path)
     )
     reloaded = PreprocessingResults.load(str(outdir))
     assert reloaded.retained_sequence_descriptions is None
+
+
+# --------------------------------------------------------------------------- #
+# Per-input-sequence column-retention fraction (seq_retained_fraction).       #
+# --------------------------------------------------------------------------- #
+
+
+def test_seq_retained_fraction_hand_computable(tmp_path):
+    """Hand-computable check that the fraction is per-input-sequence
+    (sequence-side normalization), indexed in input order, and
+    includes sequences later dropped by sequence-level filters."""
+    fa = tmp_path / "input.fasta"
+    # 5 input sequences x 5 columns. With gap_truncation_thresh=0.4,
+    # col-gap freqs are: c0=0.2, c1=0.4, c2=0.4, c3=0.2, c4=0.4. Cols
+    # 1, 2, 4 fail `< 0.4` → dropped. Retained_positions = [0, 3].
+    # sequence_gap_thresh=0.5 then drops the all-gap row (e), but the
+    # fraction remains length-5 indexed by INPUT order.
+    fa.write_text(
+        ">a\nACDED\n"
+        ">b\nA-DED\n"
+        ">c\nAC-ED\n"
+        ">d\nACDE-\n"
+        ">e\n-----\n"
+    )
+    sym_map = SymMap("ACDE", "-")
+    _, msa_loaded, msa_ids, _, _, _, _ = load_msa(
+        str(fa), format="fasta", mapping=sym_map,
+    )
+
+    _, results = preprocess_msa(
+        msa_loaded, list(msa_ids),
+        mapping=sym_map,
+        gap_truncation_thresh=0.4,
+        sequence_gap_thresh=0.5,
+        reference_id=None,
+        reference_similarity_thresh=0.0,
+        sequence_similarity_thresh=1.0,
+        position_gap_thresh=1.0,
+    )
+    assert list(results["retained_positions"]) == [0, 3]
+
+    frac = results["seq_retained_fraction"]
+    assert frac.shape == (5,), f"expected length 5, got {frac.shape}"
+    # a: 5 residues; cols {0,3} → 2 retained → 2/5
+    assert np.isclose(frac[0], 2 / 5)
+    # b: 4 residues (col 1 is gap); cols {0,3} → 2 retained → 2/4
+    assert np.isclose(frac[1], 2 / 4)
+    # c: 4 residues (col 2 is gap); cols {0,3} → 2 retained → 2/4
+    assert np.isclose(frac[2], 2 / 4)
+    # d: 4 residues (col 4 is gap); cols {0,3} → 2 retained → 2/4
+    assert np.isclose(frac[3], 2 / 4)
+    # e: 0 non-gap residues → NaN. Note e was filtered at the
+    # sequence-gap step, but the fraction is still recorded by INPUT
+    # order.
+    assert np.isnan(frac[4])
+    assert len(frac) == len(msa_loaded)
+
+
+def test_seq_retained_fraction_partial_retention(tmp_path):
+    """When column filtering drops some residue-bearing positions for a
+    sequence, the fraction reflects partial retention (kept / total)."""
+    fa = tmp_path / "input.fasta"
+    # 5 columns. Column 1 has 3/4 gaps; column 3 has 3/4 gaps. Both
+    # exceed gap_truncation_thresh=0.5 and get dropped.
+    fa.write_text(
+        ">a\nACDED\n"  # has residues at all 5 cols
+        ">b\nA--ED\n"  # cols 1,2 gap
+        ">c\nA-C-D\n"  # cols 1,3 gap
+        ">d\nA-C-D\n"  # cols 1,3 gap
+    )
+    sym_map = SymMap("ACDE", "-")
+    _, msa_loaded, msa_ids, _, _, _, _ = load_msa(
+        str(fa), format="fasta", mapping=sym_map,
+    )
+
+    _, results = preprocess_msa(
+        msa_loaded, list(msa_ids),
+        mapping=sym_map,
+        gap_truncation_thresh=0.5,
+        sequence_gap_thresh=1.0,
+        reference_id=None,
+        reference_similarity_thresh=0.0,
+        sequence_similarity_thresh=1.0,
+        position_gap_thresh=1.0,
+    )
+    retained = results["retained_positions"]
+    # Sanity: only cols 0,2,4 survive the position_gap step.
+    assert list(retained) == [0, 2, 4]
+
+    frac = results["seq_retained_fraction"]
+    # a has 5 residues, kept 3 (at cols 0,2,4) → 3/5
+    assert np.isclose(frac[0], 3 / 5)
+    # b has 3 residues at cols 0,3,4. cols 0,4 retained → 2/3
+    assert np.isclose(frac[1], 2 / 3)
+    # c has 3 residues at cols 0,2,4. all retained → 3/3
+    assert np.isclose(frac[2], 1.0)
+    # d same as c → 1.0
+    assert np.isclose(frac[3], 1.0)
+
+
+def test_seq_retained_fraction_round_trips_through_save_load(tmp_path):
+    """PreprocessingResults.save() persists seq_retained_fraction and
+    load() reads it back identically."""
+    from mysca.results import PreprocessingResults
+    fa = tmp_path / "input.fasta"
+    fa.write_text(
+        ">a\nACDE\n"
+        ">b\nA-DE\n"
+    )
+    sym_map = SymMap("ACDE", "-")
+    _, msa_loaded, msa_ids, _, _, _, _ = load_msa(
+        str(fa), format="fasta", mapping=sym_map,
+    )
+    msa, results_dict = preprocess_msa(
+        msa_loaded, list(msa_ids),
+        mapping=sym_map,
+        gap_truncation_thresh=1.0,
+        sequence_gap_thresh=1.0,
+        reference_id=None,
+        reference_similarity_thresh=0.0,
+        sequence_similarity_thresh=1.0,
+        position_gap_thresh=1.0,
+    )
+    results = PreprocessingResults.from_preprocess_output(
+        msa, results_dict, sym_map=sym_map,
+    )
+    assert results.seq_retained_fraction is not None
+
+    outdir = tmp_path / "out"
+    results.save(str(outdir))
+    reloaded = PreprocessingResults.load(str(outdir))
+    assert reloaded.seq_retained_fraction is not None
+    np.testing.assert_allclose(
+        reloaded.seq_retained_fraction, results.seq_retained_fraction,
+    )
+
+
+def test_seq_retained_fraction_legacy_bundle_loads_as_none(tmp_path):
+    """Legacy bundles without the seq_retained_fraction key load with
+    seq_retained_fraction=None (back-compat)."""
+    from mysca.results import (
+        PreprocessingResults, PREPROCESSING_RESULTS_FNAME,
+    )
+    outdir = tmp_path / "legacy"
+    outdir.mkdir()
+    np.savez(
+        outdir / PREPROCESSING_RESULTS_FNAME,
+        msa=np.array([[0, 1], [1, 0]], dtype=int),
+        retained_sequences=np.array([0, 1]),
+        retained_positions=np.array([0, 1]),
+        retained_sequence_ids=np.array(["a", "b"]),
+        sequence_weights=np.array([1.0, 1.0]),
+        fi0_pretruncation=np.array([0.0, 0.0]),
+    )
+    reloaded = PreprocessingResults.load(str(outdir))
+    assert reloaded.seq_retained_fraction is None

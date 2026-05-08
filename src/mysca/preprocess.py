@@ -143,6 +143,11 @@ def preprocess_msa(
             retained_sequences_ids: (list[str]) retained sequence IDs.
             sequence_weights: (NDArray[float]) sequence weights.
             fi0_pretruncation: (NDArray[float]) gap frequency fi0.
+            seq_retained_fraction: (NDArray[float]) per-input-sequence
+                fraction of non-gap residues that survived column
+                filtering. Length M_input; indexed by post-load_msa
+                input order, NOT the retained subset. NaN where an
+                input row has zero non-gap residues.
             reference_results: (dict): reference similarity results. If a
                 reference ID is specified, contains keys reference_id, ref_idx,
                 and ref_similarity.
@@ -449,6 +454,21 @@ def preprocess_msa(
 
     xmsa = onehot_without_gap(msa, NUM_SYMS, GAP)
 
+    # Per-input-sequence column-retention fraction. Indexed by the
+    # post-load_msa input order (parallel to msa_loaded / seqids_loaded);
+    # includes sequences later dropped by sequence-level filters so users
+    # can diagnose why a sequence was filtered. NaN when an input row has
+    # zero non-gap residues.
+    nongap_mask = (msa_loaded != GAP)
+    total_nongap = nongap_mask.sum(axis=1).astype(np.int64)
+    kept_nongap = nongap_mask[:, retained_positions].sum(axis=1).astype(np.int64)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        seq_retained_fraction = np.where(
+            total_nongap > 0,
+            kept_nongap / np.maximum(total_nongap, 1),
+            np.nan,
+        ).astype(np.float64)
+
     preprocessing_results = {
         "msa_binary3d": xmsa.astype(int),
         "retained_sequences": retained_sequences,
@@ -457,6 +477,7 @@ def preprocess_msa(
         "retained_sequence_descriptions": descriptions,
         "sequence_weights": ws,
         "fi0_pretruncation": fi0,
+        "seq_retained_fraction": seq_retained_fraction,
         "reference_results": ref_results,
         "args": args,
         "filter_history": filter_history,

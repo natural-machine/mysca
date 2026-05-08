@@ -44,6 +44,18 @@ SCA parameters (see SI of [1]):
                             only. Pass "all" to include every retained
                             sequence, or a path to a text file listing
                             sequence IDs (one per line).
+    --coverage_for        : input-MSA sequences to compute per-component
+                            coverage fractions for
+                            (component_coverage_per_seq.npz). For each
+                            selected sequence, stores a length-
+                            n_components float vector: the fraction of
+                            each IC's high-load positions where the
+                            sequence has a non-gap residue. Default:
+                            "all" — every input MSA sequence, including
+                            those filtered during preprocessing. Pass
+                            "reference" for the reference sequence only,
+                            or a path to a text file listing sequence
+                            IDs (one per line).
 
 Optional:
     --seed                : random seed (None or non-positive auto-picks).
@@ -117,6 +129,13 @@ ic_residues_per_seq.npz
 ic_loadings_per_seq.npz
     Per-residue IC loadings parallel to ic_residues_per_seq, same
     `ic_{i}_{seqid}` key format.
+
+component_coverage_per_seq.npz
+    Per-input-sequence per-IC coverage fractions, keyed by `seq_id`.
+    Each value is a length-n_components float vector. Populated for
+    sequences selected by --coverage_for (default: every input MSA
+    sequence, including those filtered during preprocessing). NaN
+    entries flag ICs whose high-load position set is empty.
 
 sca_results/
     v_ica_normalized.npy, w_ica.npy, t_dists_info.json, evals_shuff.npy,
@@ -387,6 +406,22 @@ def parse_args(args):
                              "retained sequence, or a path to a text file "
                              "with one sequence ID per line.")
 
+    parser.add_argument("--coverage_for", type=str, default="all",
+                        help="Which input-MSA sequences to compute "
+                             "per-component coverage fractions for "
+                             "(component_coverage_per_seq.npz). For each "
+                             "selected sequence, stores a length-"
+                             "n_components float vector: the fraction of "
+                             "each IC's high-load positions where the "
+                             "sequence has a non-gap residue. Default: "
+                             "'all' input MSA sequences, including those "
+                             "filtered during preprocessing (so coverage "
+                             "explains why a sequence was dropped). Pass "
+                             "a path to a text file with one sequence ID "
+                             "per line to restrict, or the literal string "
+                             "'reference' to compute only for the "
+                             "reference sequence.")
+
     return parser.parse_args(args)
 
 
@@ -435,6 +470,7 @@ def main(args):
     assignment_method = args.assignment
     weak_assignment = args.weak_assignment
     sectors_for = args.sectors_for
+    coverage_for = args.coverage_for
 
     regularization = args.regularization
     background_freq = args.background
@@ -860,6 +896,96 @@ def main(args):
                     "Skipping per-sequence sector mappings."
                 )
 
+    # Determine which input-MSA sequences to compute per-component
+    # coverage fractions for. Resolves against ALL input MSA sequences
+    # (i.e. msa_obj_loaded), not just retained_sequences — sequences
+    # dropped during preprocessing still have meaningful coverage stats
+    # that explain *why* they were dropped.
+    input_ids = [rec.id for rec in msa_obj_loaded]
+    input_ids_set = set(input_ids)
+    M_input = len(msa_obj_loaded)
+    if coverage_for is not None and coverage_for.lower() == "all":
+        coverage_seqidxs = np.arange(M_input)
+    elif coverage_for is not None and coverage_for.lower() == "reference":
+        ref_id = prep.args.get("reference_id") if prep.args else None
+        if ref_id is not None and ref_id in input_ids_set:
+            coverage_seqidxs = np.array(
+                [m for m, sid in enumerate(input_ids) if sid == ref_id],
+                dtype=int,
+            )
+        else:
+            coverage_seqidxs = np.array([], dtype=int)
+            if ref_id is None:
+                logger.info(
+                    "No reference sequence specified. "
+                    "Skipping per-sequence component coverage."
+                )
+            else:
+                logger.info(
+                    "Reference sequence '%s' not found in input MSA. "
+                    "Skipping per-sequence component coverage.",
+                    ref_id,
+                )
+    elif coverage_for is not None:
+        with open(coverage_for, "r") as f:
+            requested_ids = set(
+                line.strip() for line in f if line.strip()
+            )
+        missing_ids = requested_ids - input_ids_set
+        if missing_ids:
+            logger.info(
+                "Note: %d requested coverage sequence(s) not found in "
+                "the input MSA: %s",
+                len(missing_ids), ", ".join(sorted(missing_ids)),
+            )
+        found_ids = requested_ids & input_ids_set
+        coverage_seqidxs = np.array(
+            [m for m, sid in enumerate(input_ids) if sid in found_ids],
+            dtype=int,
+        )
+        logger.info(
+            "Computing per-component coverage for %d/%d input MSA "
+            "sequences.",
+            len(coverage_seqidxs), M_input,
+        )
+    else:
+        coverage_seqidxs = np.array([], dtype=int)
+
+    if len(coverage_seqidxs) > 0 and len(groups) > 0:
+        gapsym = (
+            sym_map.gapsym if hasattr(sym_map, "gapsym") else "-"
+        )
+        gap_byte = gapsym.encode("ascii")
+        L_orig = msa_obj_loaded.get_alignment_length()
+        seq_bytes = np.empty(
+            (len(coverage_seqidxs), L_orig), dtype="S1",
+        )
+        for j, m in enumerate(coverage_seqidxs):
+            seq_bytes[j] = np.frombuffer(
+                str(msa_obj_loaded[int(m)].seq).encode("ascii"),
+                dtype="S1",
+            )
+        nongap_mask = seq_bytes != gap_byte
+        n_components_total = len(groups)
+        coverage_matrix = np.empty(
+            (len(coverage_seqidxs), n_components_total), dtype=np.float64,
+        )
+        for i in range(n_components_total):
+            grp = np.asarray(groups[i], dtype=int)
+            if grp.size == 0:
+                coverage_matrix[:, i] = np.nan
+            else:
+                orig_cols = retained_positions[grp]
+                non_gap_count = nongap_mask[:, orig_cols].sum(axis=1)
+                coverage_matrix[:, i] = non_gap_count / grp.size
+        component_coverage_per_seq = {}
+        for j, m in enumerate(coverage_seqidxs):
+            sid = msa_obj_loaded[int(m)].id
+            component_coverage_per_seq[sid] = coverage_matrix[j].copy()
+        results.component_coverage_per_seq = component_coverage_per_seq
+    else:
+        results.component_coverage_per_seq = {}
+
     # Map processed MSA positions to original sequence positions
     rawseq_idxs = get_rawseq_indices_of_msa(msa_obj_loaded)
     rawseq_idxs = rawseq_idxs[retained_sequences,:]
@@ -925,6 +1051,8 @@ def main(args):
         "accelerator": ACCELERATOR,
         "precision": PRECISION,
         "bootstrap_chunk": int(BOOTSTRAP_CHUNK),
+        "sectors_for": sectors_for,
+        "coverage_for": coverage_for,
     }
     if SEQ_METADATA_PATH is not None:
         import pandas as pd
