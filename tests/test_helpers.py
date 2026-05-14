@@ -155,6 +155,43 @@ def test_get_rawseq_indices_of_msa(
     assert not errors, "Errors occurred:\n{}".format("\n".join(errors))
 
 
+@pytest.mark.parametrize('seqidxs, arr_exp', [
+    [
+        np.array([0]),
+        np.array([[-1, -1, 0, 1, 2, -1, -1, 3, 4, 5]]),
+    ],
+    [
+        np.array([2, 0]),  # out-of-order
+        np.array([
+            [0, 1, 2, 3, 4, -1, -1, -1, -1, -1],
+            [-1, -1, 0, 1, 2, -1, -1, 3, 4, 5],
+        ]),
+    ],
+    [
+        np.array([], dtype=int),
+        np.empty((0, 10), dtype=int),
+    ],
+])
+def test_get_rawseq_indices_of_msa_seqidxs_subset(seqidxs, arr_exp):
+    """When ``seqidxs`` is given, only those rows are materialized — in
+    ``seqidxs`` order — without allocating the full ``(nseqs, npos)``
+    matrix. Avoids OOM on large MSAs where only the reference (or a
+    small subset) is actually consumed downstream.
+    """
+    msa_obj = msa_from_aligned_seqs([
+        "--ABC--DEF",
+        "ABCDEFGHIJ",
+        "ABCDE-----",
+    ])
+    arr = get_rawseq_indices_of_msa(msa_obj, seqidxs=seqidxs)
+    assert arr.shape == arr_exp.shape, (
+        f"Expected shape {arr_exp.shape}, got {arr.shape}"
+    )
+    assert np.array_equal(arr, arr_exp), (
+        f"Expected:\n{arr_exp}\nGot:\n{arr}"
+    )
+
+
 def test_get_rawseq_indices_of_msa_treats_dot_as_gap():
     """Defensive: `.` is the Stockholm insert-column gap. Biopython
     normalizes it on read, so msa_obj_loaded never contains `.` in

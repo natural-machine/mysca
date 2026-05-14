@@ -73,6 +73,7 @@ def map_msa_positions_to_sequence(
 def get_rawseq_indices_of_msa(
         msa_obj: MultipleSeqAlignment,
         gapstr: str = "-.",
+        seqidxs: NDArray[np.int_] | None = None,
 ) -> NDArray[np.int_]:
     """Get indices of non-gap positions with respect to the raw sequence.
 
@@ -85,16 +86,26 @@ def get_rawseq_indices_of_msa(
             but this helper is defensive so a hand-crafted MSA that
             leaks ``.`` through a library caller doesn't silently get
             counted as a residue.
+        seqidxs (NDArray[np.int_] | None, optional): When given, compute
+            only the listed MSA rows; output shape is ``(len(seqidxs),
+            npos)`` in the order of ``seqidxs``. Avoids the full
+            ``(n_total_seqs, n_total_positions)`` int allocation, which
+            for "full" SCA inputs can be tens of GB and trigger OOM
+            kills. Defaults to None (all rows).
 
     Returns:
         NDArray[np.int_]: Screen of the msa with -1 at gaps and positional
-            indices at amino acids. Same shape as the MultipleSeqAlignment.
+            indices at amino acids. Shape is ``(nseqs, npos)`` when
+            ``seqidxs`` is None, else ``(len(seqidxs), npos)``.
     """
     gap_chars = frozenset(gapstr)
-    nseqs = len(msa_obj)
-    npos = len(msa_obj[0].seq)
-    rawseq_idxs = -1 * np.ones([nseqs, npos], dtype=int)
-    for i, entry in enumerate(msa_obj):
+    npos = len(msa_obj[0].seq) if len(msa_obj) > 0 else 0
+    if seqidxs is None:
+        rows = list(enumerate(msa_obj))
+    else:
+        rows = [(i, msa_obj[int(s)]) for i, s in enumerate(seqidxs)]
+    rawseq_idxs = -1 * np.ones([len(rows), npos], dtype=int)
+    for i, entry in rows:
         aln_seq = entry.seq
         aa_screen = np.array(
             [c not in gap_chars for c in aln_seq], dtype=bool,

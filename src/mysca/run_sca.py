@@ -994,15 +994,15 @@ def main(args):
     else:
         results.component_coverage_per_seq = {}
 
-    # Map processed MSA positions to original sequence positions
-    rawseq_idxs = get_rawseq_indices_of_msa(msa_obj_loaded)
-    rawseq_idxs = rawseq_idxs[retained_sequences,:]
-    rawseq_idxs = rawseq_idxs[:,retained_positions]
-
-    # Compute residue groups by raw sequence position (for subset only)
-    sector_rawseq_idxs = rawseq_idxs[
-        np.isin(retained_sequences, sector_seqidxs)
-    ]
+    # Map processed MSA positions to original sequence positions for the
+    # rows that actually need it. Computing for `msa_obj_loaded` in full
+    # before slicing down to `sector_seqidxs` would allocate
+    # ``(n_total_seqs, n_total_positions)`` int64 — easily tens of GB on
+    # large "full" SCA inputs — only to throw all but a handful of rows
+    # away.
+    sector_rawseq_idxs = get_rawseq_indices_of_msa(
+        msa_obj_loaded, seqidxs=sector_seqidxs,
+    )[:, retained_positions]
     group_rawseq_positions = get_rawseq_positions_in_groups(
         sector_rawseq_idxs, groups
     )
@@ -1248,8 +1248,9 @@ def log_top_ic_summary(
         if reference_id in ids:
             ref_row = ids.index(reference_id)
             aligned_ref = str(msa_obj_loaded[ref_row].seq)
-            all_raw = get_rawseq_indices_of_msa(msa_obj_loaded)
-            ref_raw_positions = all_raw[ref_row]  # shape (npos_orig,)
+            ref_raw_positions = get_rawseq_indices_of_msa(
+                msa_obj_loaded, seqidxs=np.array([ref_row]),
+            )[0]  # shape (npos_orig,)
 
     n_show = min(n_logged_comps, len(groups))
     header_tag = (
