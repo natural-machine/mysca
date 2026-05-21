@@ -1,0 +1,16 @@
+{
+  "data_dirs": [
+    {
+      "label": "Demo (SH3)",
+      "path": "demo/SH3/out/"
+    },
+    {
+      "label": "Outputs",
+      "path": "out/"
+    },
+    {
+      "label": "Test data",
+      "path": "tests/_data/"
+    }
+  ]
+}
