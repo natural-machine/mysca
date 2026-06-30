@@ -34,3 +34,8 @@ def run_structure():
     from mysca.run_structure import parse_args, main
     args = parse_args(sys.argv[1:])
     main(args)
+
+def run_examine():
+    from mysca.run_examine import parse_args, main
+    args = parse_args(sys.argv[1:])
+    main(args)
