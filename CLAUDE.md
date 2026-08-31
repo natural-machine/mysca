@@ -5,14 +5,16 @@ Project notes for Claude Code. See [README.md](README.md) for the user-facing in
 ## What this is
 
 `mysca` — Statistical Coupling Analysis (SCA) pipeline for identifying co-evolving
-amino acid sectors in protein multiple sequence alignments. Exposes seven CLIs:
+amino acid sectors in protein multiple sequence alignments. Exposes eight CLIs:
 `sca-prealign`, `sca-preprocess`, `sca-core`,
 `sca-pymol` (renders sectors from `sca-structure` output; protein-specific
 annotations live in a user `--features_py` Python file),
 `sca-plots` (replay plotter that regenerates diagnostic figures from
 persisted results), `sca-project` (project primary-sequence records onto an
-existing SCA result), and `sca-structure` (project PDB structures, composing
-over `sca-project`).
+existing SCA result), `sca-structure` (project PDB structures, composing
+over `sca-project`), and `sca-examine` (characterize each significant IC by
+conservation / phylogeny / structural contiguity, then group ICs into
+sectors, co-sectors, and pseudo-sectors).
 
 ## Layout
 
@@ -21,7 +23,12 @@ over `sca-project`).
   `run_pymol.py` / `run_plots.py` / `run_project.py` / `run_structure.py`.
   On-disk result containers in `results.py`; out-of-sample projection
   lives in `project/` (library) + `run_project.py` (CLI); PDB /
-  tertiary integration in `structure/` + `run_structure.py`.
+  tertiary integration in `structure/` + `run_structure.py`. IC
+  characterization (phylogeny via Pagel's lambda + clade splits, structural
+  contiguity, sector grouping) lives in `examine/` (library kernels) +
+  `run_examine.py` (CLI); the structure leg reuses `structure.project_pdb`
+  for robust IC→residue mapping, and `examine/` carries its own iterative
+  Newick parser so it needs no tree-library dependency.
 - `tests/` — pytest suite. Fixtures in `conftest.py`; shared test MSAs/PDBs in
   `tests/_data/`; tmp output in `tests/_tmp/` (gitignored).
 - `docs/.claude_sessions/` — per-session notes (prior agent work, context).

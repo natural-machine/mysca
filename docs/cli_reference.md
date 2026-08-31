@@ -652,3 +652,109 @@ path = download_pdb_file(
 ```
 
 Missing files (with `fetch=False` or after a failed fetch) raise `FileNotFoundError` under `strict=True` (the default) or are logged and skipped under `strict=False`.
+
+---
+
+## sca-examine
+
+Characterize the independent components (ICs) of a finished SCA run and group them into sectors, following Andrews, *"How to characterize independent components after performing SCA"*. Each significant IC (the first `kstar`, ordered by descending SCA eigenvalue) is scored along three independent axes, then the ICs are merged into **sectors**, **co-sectors**, and **pseudo-sectors**.
+
+1. **Conservation** — Pearson correlation of the IC's position loadings (`v_ica[:, k]`) with per-position conservation (relative entropy). `r > --cons_r` marks the IC conservation-associated ("core") and protects it from filtering.
+2. **Phylogeny** — Pagel's lambda phylogenetic-signal test on the sequence projections (Uᵖ) over a guide tree, calibrated against a random-projection null (`--null_projections`), plus the best clade split by Mann-Whitney U + Cliff's delta. `lrt_z > --phylo_z` → phylogeny pseudo-sector; `|delta| > --subclade_delta` → subclade pseudo-sector.
+3. **Structure** — PAE-masked minimum heavy-atom distances on a supplied or AlphaFold-fetched structure: per-IC contiguity vs a size-matched null, and cross-IC neighbour distances. ICs that sit closer to one another than to themselves (reciprocally) are merged into one sector; a one-directional reach makes the reaching IC a co-sector.
+
+Each leg is optional and degrades gracefully: with no structure source only the sequence-based legs run; with `--no_phylogeny` only conservation (+ structure) run. The SCA result folder is never modified.
+
+### Usage
+
+```bash
+# Sequence-only (conservation + phylogeny; builds a FAMSA guide tree):
+sca-examine --scacore <scacore-dir> --preprocessing <preprocess-dir> -o <out>
+
+# Add structure via automated AlphaFold lookup:
+sca-examine --scacore <scacore-dir> --preprocessing <preprocess-dir> \
+    --fetch_alphafold -o <out>
+
+# Bring your own structure (+ optional PAE), naming the family sequence it represents:
+sca-examine --scacore <scacore-dir> --preprocessing <preprocess-dir> \
+    --structure my_model.pdb --pae my_pae.json \
+    --ref_seq_id 'MYSEQ_HUMAN/1-100' -o <out>
+
+# Bring your own guide tree instead of building one with FAMSA:
+sca-examine --scacore <scacore-dir> --preprocessing <preprocess-dir> \
+    --tree my_tree.nwk -o <out>
+```
+
+### Required Arguments
+
+| Argument | Description |
+|----------|-------------|
+| `--scacore` | `sca-core` output directory |
+| `--preprocessing` | `sca-preprocess` output directory |
+| `-o, --outdir` | Output directory |
+
+### Phylogeny leg
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--no_phylogeny` | off | Skip the Pagel's-lambda + clade-split analysis |
+| `--tree` | (build with FAMSA) | User-supplied Newick guide tree; leaves joined to sequences by accession |
+| `--projections` | — | User-supplied projection TSV (`seq_id`, `aligned_sequence`, `Up_*`); requires `--tree` |
+| `--n_subsample` | 1000 | Sequences to subsample for the guide tree |
+| `--gt_method` | `nj` | FAMSA guide-tree method: `sl`, `upgma`, `nj` |
+| `--famsa_bin` | (from PATH) | Explicit path to the FAMSA binary |
+| `--threads` | 0 | FAMSA threads (0 = half the logical cores) |
+| `--min_side_size` | 10 | Min valid leaves on each side of a clade split |
+| `--null_projections` | 200 | Random alignment projections to calibrate Pagel lambda/LRT (0 disables; `lrt_z` then NaN) |
+| `--no_transform` | off | Skip the van der Waerden transform for Pagel's lambda |
+
+### Structure leg (pick at most one source)
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `-s, --structure` | — | User-supplied PDB file |
+| `--pae` | — | Predicted-aligned-error JSON for `--structure` (no masking if omitted) |
+| `--chain` | first chain | Chain ID within `--structure` |
+| `--fetch_alphafold` | off | Download an AlphaFold model + PAE for a family member |
+| `--ref_seq_id` | random member | Family sequence the structure represents / to fetch |
+| `--max_tries` | 5 | AlphaFold fetch attempts before giving up |
+| `--pae_max_err` | 5.0 | PAE mask: drop residue pairs with PAE ≥ this (Å) |
+| `--cross_thresh` | 5.0 | Mean cross-neighbour distance (Å) flagging touching ICs |
+| `--n_null` | 1000 | Resamples per IC for the contiguity null |
+| `--aligner` | `mafft_add` | Out-of-sample alignment method for `--structure` mapping |
+| `--align_bin` | (from PATH) | Explicit path to the alignment binary |
+| `--align_threads` | 1 | Threads for the alignment tool |
+
+`--ref_seq_id` matters for mapping IC positions onto the structure: when it names a sequence already in the reference MSA, the in-sample short-circuit reuses the stored alignment (no external aligner needed, and the full-length-vs-domain offset is reconciled automatically); otherwise the structure is aligned out-of-sample with `--aligner`.
+
+### Sector-grouping thresholds
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--no_sectors` | off | Skip grouping ICs into sectors |
+| `--cons_r` | 0.5 | `cons_corr_r` above which an IC is kept as conservation-associated |
+| `--subclade_delta` | 0.95 | abs Cliff's delta above which an IC is a subclade pseudo-sector |
+| `--phylo_z` | 7.0 | Pagel LRT z above which an IC is a phylogeny pseudo-sector |
+
+### Other
+
+| Argument | Default | Description |
+|----------|---------|-------------|
+| `--family` | basename of `--scacore`'s parent | Label for output feature names |
+| `--seed` | 0 | RNG seed |
+| `-v, --verbosity` | 1 | Verbosity level (0 = warnings only) |
+
+### Outputs (under `--outdir`)
+
+| File | When | Contents |
+|------|------|----------|
+| `per_ic_characterization.tsv` | always | One row per significant IC: conservation, Pagel/split statistics, within-IC structural neighbour distance |
+| `sector_features.tsv` | unless `--no_sectors` | One row per feature (sector / co-sector / pseudo-sector) with member components and labels |
+| `ic_cross_neighbor_distance.tsv` | structure leg | K × K mean cross-neighbour distance matrix |
+| `subsample_projections.tsv` | phylogeny leg (normal path) | `label` / `seq_id` / `Up_*` for the subsample |
+| `guide_tree.nwk` | phylogeny leg (FAMSA path) | The guide tree FAMSA built over the subsample |
+| `structure_source.json` | `--fetch_alphafold` | Metadata for the downloaded AlphaFold model + PAE |
+| `examine_args.json` | always | Mapping from CLI argument to value |
+| `examine.log` | always | Run log |
+
+> **FAMSA** is required for the default phylogeny path (guide-tree construction). Install it (e.g. `conda install -c bioconda famsa`), pass `--famsa_bin`, or supply your own tree with `--tree`. The structure leg's lazy AlphaFold fetch needs network access; for offline use, pass `--structure`.
