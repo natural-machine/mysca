@@ -758,6 +758,25 @@ def _compute_weights_gpu(**kwargs):
     return ws
 
 
+def _sparse_index_dtype(maxval):
+    """Narrowest scipy sparse index dtype that can hold ``maxval``."""
+    return np.int32 if maxval <= np.iinfo(np.int32).max else np.int64
+
+
+def _check_symbol_range(msa, num_aa):
+    """Raise if any entry falls outside [0, num_aa].
+
+    The one-hot builders write CSR index arrays directly, which scipy does
+    not bounds-check, so an out-of-range entry would silently index another
+    position's columns.
+    """
+    if msa.size and (msa.min() < 0 or msa.max() > num_aa):
+        raise ValueError(
+            f"msa entries must be in [0, num_aa={num_aa}]; "
+            f"got range [{msa.min()}, {msa.max()}]"
+        )
+
+
 def get_onehotmsa_sparse(msa, num_aa, gap):
     """
     Convert a numeric alignment (Nseq x Npos) to a sparse binary one-hot matrix,
@@ -788,15 +807,19 @@ def get_onehotmsa_sparse(msa, num_aa, gap):
         raise ValueError(
             f"gap must be in [0, num_aa={num_aa}]; got gap={gap}"
         )
+    _check_symbol_range(msa, num_aa)
     num_symbols = num_aa + 1  # include gap
     nseqs, npos = msa.shape
-    a = msa.astype(np.int8, copy=False).ravel()
-    rows = np.repeat(np.arange(nseqs, dtype=np.uint16), npos)
-    pos = np.tile(np.arange(npos, dtype=np.uint16), nseqs)
-    cols = pos * num_symbols + a
-    data = np.ones(cols.shape[0], dtype=np.int16)
+    idx_dtype = _sparse_index_dtype(max(nseqs * npos, num_symbols * npos))
+    a = msa.astype(np.int8, copy=False)
+    # Each row holds exactly npos entries, so the CSR arrays are written
+    # directly rather than through (row, col) triplets.
+    offsets = np.arange(npos, dtype=idx_dtype) * num_symbols
+    indices = (offsets + a).ravel()
+    indptr = np.arange(nseqs + 1, dtype=idx_dtype) * npos
+    data = np.ones(indices.shape[0], dtype=np.int16)
     onehotmsa = sp.csr_matrix(
-        (data, (rows, cols)),
+        (data, indices, indptr),
         shape=(nseqs, num_symbols * npos)
     )
     return onehotmsa
@@ -834,18 +857,21 @@ def get_onehotmsa_sparse_nogap(msa, num_aa, gap):
         raise ValueError(
             f"gap must be in [0, num_aa={num_aa}]; got gap={gap}"
         )
+    _check_symbol_range(msa, num_aa)
     nseqs, npos = msa.shape
-    a = msa.astype(np.int8, copy=False).ravel()
-    rows = np.repeat(np.arange(nseqs, dtype=np.uint16), npos)
-    pos = np.tile(np.arange(npos, dtype=np.uint16), nseqs)
+    idx_dtype = _sparse_index_dtype(max(nseqs * npos, num_aa * npos))
+    a = msa.astype(np.int8, copy=False)
     mask = a != gap
     a_masked = a[mask]
     aa_idx = a_masked - (a_masked > gap).astype(a_masked.dtype)
-    cols = pos[mask] * num_aa + aa_idx
-    data = np.ones(cols.shape[0], dtype=np.int16)
+    offsets = np.arange(npos, dtype=idx_dtype) * num_aa
+    indices = np.broadcast_to(offsets, a.shape)[mask] + aa_idx
+    indptr = np.zeros(nseqs + 1, dtype=idx_dtype)
+    indptr[1:] = np.cumsum(mask.sum(axis=1))
+    data = np.ones(indices.shape[0], dtype=np.int16)
 
     onehotmsa = sp.csr_matrix(
-        (data, (rows[mask], cols)),
+        (data, indices, indptr),
         shape=(nseqs, num_aa * npos)
     )
     return onehotmsa
