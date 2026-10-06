@@ -9,6 +9,8 @@ n_components >= kstar and <= L.
 """
 
 import os
+import warnings
+
 import pytest
 import numpy as np
 
@@ -123,6 +125,27 @@ def test_n_components_int_above_kstar(prepped_indir):
     _run_sca(prepped_indir, outdir, n_components=target)
     assert _load_n_components(outdir) == target
     assert _load_v_ica(outdir).shape[1] == target
+    remove_dir(outdir)
+
+
+def test_n_components_above_kstar_warns(prepped_indir):
+    """ICA on more than kstar eigenvectors alters the leading kstar ICs, so
+    requesting it must be announced."""
+    outdir = f"{TMPDIR}/scarun_nc_warn"
+    with pytest.warns(UserWarning, match="exceeds kstar"):
+        _run_sca(prepped_indir, outdir, kstar=2, n_components=4)
+    assert _load_kstar(outdir) == 2
+    assert _load_n_components(outdir) == 4
+    remove_dir(outdir)
+
+
+def test_n_components_at_kstar_does_not_warn(prepped_indir):
+    outdir = f"{TMPDIR}/scarun_nc_nowarn"
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _run_sca(prepped_indir, outdir, kstar=2)
+    assert _load_n_components(outdir) == 2
+    assert not [w for w in caught if "exceeds kstar" in str(w.message)]
     remove_dir(outdir)
 
 

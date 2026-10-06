@@ -179,7 +179,7 @@ sca-core -i <preprocessing-dir> -o <output-dir> [options]
 | `--background` | None | Optional JSON file mapping each amino-acid symbol to a background frequency. When omitted, the built-in default (`DEFAULT_BACKGROUND_FREQ`) is used |
 | `-nb, --n_boot` | 10 | Number of bootstrap iterations used to determine the eigenvalue significance cutoff. `0` loads existing bootstrap output if available; `-1` skips bootstrapping and treats all components as significant |
 | `-k, --kstar` | 0 | Override the bootstrap-derived number of significant components. `0` (default) uses the bootstrap estimate |
-| `--n_components` | None | Number of ICs to compute. Positive integer or `all` (meaning `L`, the number of retained positions). Default: `kstar`. Values below `kstar` are clamped up |
+| `--n_components` | None | Number of ICs to compute. Positive integer or `all` (meaning `L`, the number of retained positions). Default: `kstar`. Values below `kstar` are clamped up. Values above `kstar` trigger a warning: ICA is solved jointly over all input eigenvectors, so the leading `kstar` ICs then differ from those computed with `n_components=kstar` (unlike eigenvectors, ICs are not preserved as components are added) |
 | `-p, --pstar` | 95 | Percentile defining the t-distribution cutoff that nominates positions for IC groups |
 | `--assignment` | `overlap` | How to assign a position that clears the cutoff on multiple ICs. `overlap`: keep it in every qualifying IC (default). `exclusive`: assign only to the IC where its projection is maximal. `--weak_assignment` applies only under `exclusive` |
 | `--weak_assignment` | [] | IC indices to exclude from the `exclusive`-assignment tie-break (variadic integers). Ignored under `overlap` |

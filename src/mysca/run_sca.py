@@ -27,7 +27,11 @@ SCA parameters (see SI of [1]):
                             the bootstrap estimate).
     --n_components        : number of ICs to compute (>= kstar). Integer
                             or "all" (=L, the number of retained
-                            positions). Default: kstar.
+                            positions). Default: kstar. Values above kstar
+                            trigger a warning: ICA is solved jointly over
+                            all input eigenvectors, so the leading kstar ICs
+                            then differ from those computed with
+                            n_components=kstar.
     -p --pstar            : percentile defining the t-distribution cutoff
                             that nominates positions per IC (default 95).
     --assignment          : "overlap" (default) keeps a qualifying
@@ -189,6 +193,7 @@ EXAMPLE USAGE:
 import argparse
 import logging
 import os, sys
+import textwrap
 import warnings
 import numpy as np
 import tqdm as tqdm
@@ -383,7 +388,9 @@ def parse_args(args):
         "or the string 'all' (meaning L, the number of retained positions). "
         "Default: kstar (the number of significant eigenvalues). "
         "Clamped to kstar as a lower bound; i.e. if n_components < kstar the "
-        "effective value is kstar.",
+        "effective value is kstar. Values above kstar trigger a warning: "
+        "ICA is solved jointly over all input eigenvectors, so the leading "
+        "kstar ICs then differ from those computed with n_components=kstar.",
     )
     sca_params.add_argument("-p", "--pstar", type=int, default=95,
                     help="Percentile defining IC groups.")
@@ -763,6 +770,24 @@ def main(args):
             n_components, L_evecs,
         )
         n_components = L_evecs
+    if n_components > kstar:
+        # ICA solves for all components jointly, so unlike eigenvectors the
+        # leading ICs are not preserved when more input modes are added.
+        msg = (
+            f"n_components={n_components} exceeds kstar={kstar}. ICA is "
+            f"solved jointly over all {n_components} input eigenvectors, so "
+            f"the first {kstar} ICs are NOT the ICs obtained with "
+            f"n_components=kstar: they mix in the {n_components - kstar} "
+            "non-significant eigenmodes, and the positions assigned to "
+            "them can differ. They are still reported as the significant "
+            "ICs. Omit --n_components to compute ICs from the significant "
+            "eigenmodes only."
+        )
+        rule = "!" * 72
+        logger.warning(
+            "\n%s\n%s\n%s", rule, textwrap.fill(msg, width=72), rule
+        )
+        warnings.warn(msg)
     logger.info(
         "Computing ICA on top %d eigenvectors (kstar=%d, L=%d).",
         n_components, kstar, L_evecs,
