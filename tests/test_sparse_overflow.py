@@ -12,11 +12,19 @@ Also covers a second bug of the same family, where the one-hot row and
 column indices were built as np.uint16. Rows wrapped beyond 65,536
 sequences and columns wrapped beyond 65,536 (position, symbol) pairs,
 i.e. from 3,122 positions with the gap symbol and 3,278 without.
+
+Finally covers the int16 data that replaced uint8: pairwise match counts
+reach the number of positions, so they wrapped for MSAs with more than
+32,767 positions. Data and index dtypes are now sized to the MSA, with a
+WARNING whenever a default dtype is too small.
 """
+
+import logging
 
 import numpy as np
 import pytest
 
+from mysca import preprocess
 from mysca.preprocess import (
     compute_weights,
     get_onehotmsa_sparse,
@@ -208,3 +216,148 @@ class TestSparseOneHotIndexOverflow:
         n_match = (msa[:, None, :] == msa[None, :, :]).sum(axis=2)
         expected = 1.0 / (n_match >= thresh * npos).sum(axis=1)
         np.testing.assert_allclose(ws, expected)
+
+    @pytest.mark.parametrize(
+        "builder, num_symbols",
+        [(get_onehotmsa_sparse, NUM_AA + 1), (get_onehotmsa_sparse_nogap, NUM_AA)],
+    )
+    def test_onehot_correct_with_int64_indices(
+            self, monkeypatch, builder, num_symbols
+    ):
+        """The index arithmetic holds when 64-bit indices are selected."""
+        monkeypatch.setattr(
+            preprocess, "_onehot_dtypes", lambda *args: (np.int64, np.int16)
+        )
+        rng = np.random.default_rng(3)
+        msa = rng.integers(0, NUM_AA + 1, size=(40, 30))
+        expected = _dense_onehot(msa, NUM_AA + 1)
+        if num_symbols == NUM_AA:
+            expected = np.delete(expected, GAP, axis=2)
+
+        sp = builder(msa, NUM_AA, GAP)
+
+        assert np.array_equal(sp.toarray(), expected.reshape(40, -1))
+
+    def test_onehot_correct_for_large_alphabet(self):
+        """Symbol values beyond the int8 range keep their own columns."""
+        num_aa = 200
+        rng = np.random.default_rng(4)
+        msa = rng.integers(0, num_aa + 1, size=(30, 20))
+        expected = _dense_onehot(msa, num_aa + 1)
+
+        sp = get_onehotmsa_sparse(msa, num_aa, num_aa)
+        sp_nogap = get_onehotmsa_sparse_nogap(msa, num_aa, num_aa)
+
+        assert np.array_equal(sp.toarray(), expected.reshape(30, -1))
+        assert np.array_equal(
+            sp_nogap.toarray(),
+            np.delete(expected, num_aa, axis=2).reshape(30, -1),
+        )
+
+
+class TestMatchCountOverflow:
+
+    @pytest.mark.parametrize("npos", [32767, 32768, 40000, 70000])
+    @pytest.mark.parametrize(
+        "builder", [get_onehotmsa_sparse, get_onehotmsa_sparse_nogap]
+    )
+    def test_dot_product_beyond_int16(self, builder, npos):
+        """Match counts above 32,767 are not wrapped."""
+        rng = np.random.default_rng(5)
+        msa = np.tile(rng.integers(0, NUM_AA, size=npos), (2, 1))
+
+        sp = builder(msa, NUM_AA, GAP)
+        counts = (sp @ sp.T).toarray()
+
+        assert counts[0, 0] == npos
+        assert counts[0, 1] == npos
+
+    @pytest.mark.parametrize("version", ["_v4", "sparse"])
+    def test_weights_correct_beyond_int16(self, version):
+        """Identical sequences stay neighbors on a 33,000-position MSA.
+
+        With wrapped counts every pair falls below the threshold and each
+        sequence gets weight 1.0 instead of 1/nseqs.
+        """
+        npos, nseqs = 33000, 5
+        rng = np.random.default_rng(6)
+        msa = np.tile(rng.integers(0, NUM_AA, size=npos), (nseqs, 1))
+
+        ws = compute_weights(
+            version=version,
+            msa=msa,
+            seqsim_thresh=1.0,
+            gap=GAP,
+            num_aas=NUM_AA,
+            use_pbar=False,
+            block_size=512,
+        )
+
+        np.testing.assert_allclose(ws, np.full(nseqs, 1.0 / nseqs))
+
+
+@pytest.fixture
+def size_warnings(monkeypatch, caplog):
+    """WARNING records from mysca.preprocess, whatever the logging setup."""
+    monkeypatch.setattr(logging.getLogger("mysca"), "propagate", True)
+    with caplog.at_level(logging.WARNING, logger="mysca.preprocess"):
+        yield caplog
+
+
+class TestSizeAnnouncements:
+
+    def test_silent_within_default_dtypes(self, size_warnings):
+        msa = np.zeros((2, 32767), dtype=int)
+        sp = get_onehotmsa_sparse(msa, NUM_AA, GAP)
+
+        assert sp.dtype == np.int16
+        assert sp.indices.dtype == np.int32
+        assert not size_warnings.records
+
+    @pytest.mark.parametrize(
+        "builder", [get_onehotmsa_sparse, get_onehotmsa_sparse_nogap]
+    )
+    def test_warns_when_positions_exceed_int16(self, size_warnings, builder):
+        msa = np.zeros((2, 32768), dtype=int)
+        sp = builder(msa, NUM_AA, GAP)
+
+        assert sp.dtype == np.int32
+        messages = [rec.getMessage() for rec in size_warnings.records]
+        assert len(messages) == 1
+        assert "32768 positions" in messages[0]
+        assert "int16" in messages[0] and "int32" in messages[0]
+
+    def test_warns_when_indices_exceed_int32(self, size_warnings):
+        """3M sequences x 1,000 positions holds more entries than int32."""
+        idx_dtype, data_dtype = preprocess._onehot_dtypes(
+            3_000_000, 1000, NUM_AA + 1
+        )
+
+        assert idx_dtype is np.int64
+        assert data_dtype is np.int16
+        messages = [rec.getMessage() for rec in size_warnings.records]
+        assert len(messages) == 1
+        assert "3000000 sequences" in messages[0]
+        assert "int32" in messages[0] and "int64" in messages[0]
+
+    @pytest.mark.parametrize("version", ["sparse", "gpu", "_v3", "_v4"])
+    def test_compute_weights_rejects_too_many_sequences(
+            self, monkeypatch, version
+    ):
+        """An MSA beyond the neighbor-count limit is refused, not miscounted.
+
+        The real limit (2**31 - 1 sequences) is lowered so that a missing
+        guard fails this test instead of launching a huge computation.
+        """
+        monkeypatch.setattr(preprocess, "_MAX_NSEQS", 3)
+        msa = np.zeros((4, 5), dtype=int)
+        with pytest.raises(ValueError, match="4 sequences"):
+            compute_weights(
+                version=version,
+                msa=msa,
+                seqsim_thresh=0.8,
+                gap=GAP,
+                num_aas=NUM_AA,
+                use_pbar=False,
+                block_size=512,
+            )

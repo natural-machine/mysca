@@ -504,6 +504,10 @@ def compute_background_freqs(msa_obj, gapstr="-"):
     return background_freqs
 
 
+# Every weight backend accumulates per-sequence neighbor counts in 32 bits.
+_MAX_NSEQS = np.iinfo(np.int32).max
+
+
 def compute_weights(version="sparse", **kwargs):
     """Dispatch to a sequence-weight implementation by version string.
 
@@ -518,7 +522,15 @@ def compute_weights(version="sparse", **kwargs):
       - ``"_v3"``: naive O(N²) pairwise comparison, blockwise.
       - ``"_v4"``: sparse dot-product with a dense threshold per row.
       - ``"_v6"``: JAX-compiled CSR row counting.
+
+    Raises ValueError for an MSA with more than ``_MAX_NSEQS`` sequences.
     """
+    nseqs = kwargs["msa"].shape[0]
+    if nseqs > _MAX_NSEQS:
+        raise ValueError(
+            f"MSA has {nseqs} sequences, more than the {_MAX_NSEQS} that "
+            "the 32-bit neighbor counts of the weight computation can hold."
+        )
     if version == "sparse":
         return _compute_weights_sparse(**kwargs)
     elif version == "gpu":
@@ -758,9 +770,32 @@ def _compute_weights_gpu(**kwargs):
     return ws
 
 
-def _sparse_index_dtype(maxval):
-    """Narrowest scipy sparse index dtype that can hold ``maxval``."""
-    return np.int32 if maxval <= np.iinfo(np.int32).max else np.int64
+def _onehot_dtypes(nseqs, npos, num_symbols):
+    """Choose the index and data dtypes for a sparse one-hot MSA encoding.
+
+    Indices default to int32 and data to int16. The data dtype carries over
+    to the pairwise match counts of ``onehot @ onehot.T``, which reach
+    ``npos``. An MSA too large for a default gets the next wider dtype and a
+    WARNING, so that no size limit is ever crossed silently.
+    """
+    requirements = (
+        ("sparse matrix indices", (np.int32, np.int64),
+         max(nseqs * npos, num_symbols * npos)),
+        ("pairwise match counts", (np.int16, np.int32, np.int64), npos),
+    )
+    chosen = []
+    for purpose, dtypes, maxval in requirements:
+        dtype = next(d for d in dtypes if maxval <= np.iinfo(d).max)
+        if dtype is not dtypes[0]:
+            logger.warning(
+                "MSA of %d sequences x %d positions is too large for %s %s "
+                "(needs %d, limit %d). Using %s instead, which takes more "
+                "memory.",
+                nseqs, npos, np.dtype(dtypes[0]).name, purpose, maxval,
+                np.iinfo(dtypes[0]).max, np.dtype(dtype).name,
+            )
+        chosen.append(dtype)
+    return tuple(chosen)
 
 
 def _check_symbol_range(msa, num_aa):
@@ -798,7 +833,9 @@ def get_onehotmsa_sparse(msa, num_aa, gap):
     -------
     Abin : scipy.sparse.csr_matrix, shape (Nseq, (num_aa + 1) * Npos)
         One-hot encoding (sparse), with gaps encoded as their own symbol.
-        Each (position, symbol) pair maps to a unique column.
+        Each (position, symbol) pair maps to a unique column. Data are int16
+        and indices int32 unless the MSA needs wider types (see
+        ``_onehot_dtypes``), so ``Abin @ Abin.T`` match counts cannot wrap.
     """
     msa = np.asarray(msa)
     if msa.ndim != 2:
@@ -810,14 +847,14 @@ def get_onehotmsa_sparse(msa, num_aa, gap):
     _check_symbol_range(msa, num_aa)
     num_symbols = num_aa + 1  # include gap
     nseqs, npos = msa.shape
-    idx_dtype = _sparse_index_dtype(max(nseqs * npos, num_symbols * npos))
-    a = msa.astype(np.int8, copy=False)
+    idx_dtype, data_dtype = _onehot_dtypes(nseqs, npos, num_symbols)
+    a = msa.astype(np.min_scalar_type(num_aa), copy=False)
     # Each row holds exactly npos entries, so the CSR arrays are written
     # directly rather than through (row, col) triplets.
     offsets = np.arange(npos, dtype=idx_dtype) * num_symbols
     indices = (offsets + a).ravel()
     indptr = np.arange(nseqs + 1, dtype=idx_dtype) * npos
-    data = np.ones(indices.shape[0], dtype=np.int16)
+    data = np.ones(indices.shape[0], dtype=data_dtype)
     onehotmsa = sp.csr_matrix(
         (data, indices, indptr),
         shape=(nseqs, num_symbols * npos)
@@ -848,7 +885,8 @@ def get_onehotmsa_sparse_nogap(msa, num_aa, gap):
         One-hot encoding (sparse). The ``num_aa`` columns per position follow
         the order of the amino-acid symbols with the gap integer excised (i.e.
         input value ``a`` maps to AA-index ``a`` if ``a < gap`` and
-        ``a - 1`` if ``a > gap``).
+        ``a - 1`` if ``a > gap``). Dtypes are chosen as in
+        ``get_onehotmsa_sparse``.
     """
     msa = np.asarray(msa)
     if msa.ndim != 2:
@@ -859,8 +897,8 @@ def get_onehotmsa_sparse_nogap(msa, num_aa, gap):
         )
     _check_symbol_range(msa, num_aa)
     nseqs, npos = msa.shape
-    idx_dtype = _sparse_index_dtype(max(nseqs * npos, num_aa * npos))
-    a = msa.astype(np.int8, copy=False)
+    idx_dtype, data_dtype = _onehot_dtypes(nseqs, npos, num_aa)
+    a = msa.astype(np.min_scalar_type(num_aa), copy=False)
     mask = a != gap
     a_masked = a[mask]
     aa_idx = a_masked - (a_masked > gap).astype(a_masked.dtype)
@@ -868,7 +906,7 @@ def get_onehotmsa_sparse_nogap(msa, num_aa, gap):
     indices = np.broadcast_to(offsets, a.shape)[mask] + aa_idx
     indptr = np.zeros(nseqs + 1, dtype=idx_dtype)
     indptr[1:] = np.cumsum(mask.sum(axis=1))
-    data = np.ones(indices.shape[0], dtype=np.int16)
+    data = np.ones(indices.shape[0], dtype=data_dtype)
 
     onehotmsa = sp.csr_matrix(
         (data, indices, indptr),
