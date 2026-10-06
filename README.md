@@ -49,7 +49,7 @@ conda activate ./env
 python -m pip install 'git+https://github.com/natural-machine/mysca.git'
 ```
 
-Pin a specific version with `@<tag-or-sha>`, e.g. `git+https://github.com/natural-machine/mysca.git@v0.1.5`.
+Pin a specific version with `@<tag-or-sha>`, e.g. `git+https://github.com/natural-machine/mysca.git@v0.1.6`.
 
 ### Optional alignment packages
 
